@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/elements/gui/drag_resize.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use std::sync::{Arc, Mutex};
 
 use pathfinder_geometry::vector::Vector2F;

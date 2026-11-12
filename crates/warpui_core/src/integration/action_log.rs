@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/integration/action_log.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use std::io::Write;
 use std::path::Path;
 use std::time::Duration;

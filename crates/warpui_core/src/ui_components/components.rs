@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/ui_components/components.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use crate::color::ColorU;
 use crate::elements::{Element, Fill};
 use crate::fonts::{FamilyId, Properties, Weight};

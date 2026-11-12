@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/elements/shimmer_math_tests.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use std::time::Duration;
 
 use super::{ShimmerConfig, intensity_at, shimmer_center, shimmer_color_at};

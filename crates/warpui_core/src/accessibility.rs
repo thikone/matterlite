@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/accessibility.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! # What is accessibility?
 //! Accessibility (or a11y) is the umbrella term used to describe features that enable people with
 //! disabilities to use certain software. In our case: we focus on blind users and their day-to-day

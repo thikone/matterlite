@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/zoom.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Module containing definitions related to UI magnification via a [`ZoomFactor`].
 
 use pathfinder_geometry::vector::Vector2F;

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/ui_components/link.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use crate::EventContext;
 use crate::elements::{Border, Container, Element, Hoverable, MouseState, MouseStateHandle, Text};
 use crate::fonts::Properties;

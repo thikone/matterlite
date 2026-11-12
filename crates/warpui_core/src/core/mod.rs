@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/core/mod.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 mod action;
 mod app;
 mod autotracking;
@@ -673,7 +677,3 @@ impl<T> RequestState<T> {
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
-
-#[cfg(all(test, feature = "tui"))]
-#[path = "tui_view_tests.rs"]
-mod tui_view_tests;

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/integration/driver.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use super::action_log::{self, ACTION_LOG_KEY, ActionLog};
 use super::artifacts::{self, ARTIFACTS_KEY, TestArtifacts};
 use super::overlay::{OVERLAY_LOG_KEY, OverlayLog};

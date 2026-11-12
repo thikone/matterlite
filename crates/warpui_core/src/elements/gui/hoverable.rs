@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/elements/gui/hoverable.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use std::mem;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -111,13 +115,6 @@ impl MouseState {
     /// in the corresponding mouse down event.
     pub fn click_count(&self) -> Option<u32> {
         self.click_count
-    }
-
-    /// Sets or clears the pressed state used for press-then-release click
-    /// pairing (the TUI hoverable arms this on mouse-down).
-    #[cfg(feature = "tui")]
-    pub(crate) fn set_click_count(&mut self, click_count: Option<u32>) {
-        self.click_count = click_count;
     }
 
     /// True iff the element is considered hovered.

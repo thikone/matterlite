@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/elements/shimmer_math.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Backend-agnostic math for the "shimmer" animation: a highlight band that
 //! sweeps across a run of glyphs, lerping each glyph from a base color toward
 //! a shimmer color based on its distance from the band's center.

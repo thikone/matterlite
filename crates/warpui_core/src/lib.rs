@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/lib.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 #[macro_use]
 extern crate num_derive;
 
@@ -22,8 +26,6 @@ pub mod platform;
 pub mod prelude;
 pub mod presenter;
 pub mod rendering;
-#[cfg(feature = "tui")]
-pub mod runtime;
 pub mod scene;
 pub mod telemetry;
 #[cfg(test)]

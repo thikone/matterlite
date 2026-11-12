@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/image_cache.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use core::fmt;
 use std::collections::HashMap;
 use std::error;
@@ -32,7 +36,7 @@ static SVG_FONT_DB: LazyLock<Arc<usvg::fontdb::Database>> = LazyLock::new(|| {
 
 fn load_svg_fallback_fonts(fontdb: &mut usvg::fontdb::Database) {
     fontdb.load_font_data(
-        include_bytes!("../../../app/assets/bundled/fonts/roboto/Roboto-Regular.ttf").to_vec(),
+        include_bytes!("../../../assets/bundled/fonts/roboto/Roboto-Regular.ttf").to_vec(),
     );
     fontdb.set_sans_serif_family("Roboto");
 }

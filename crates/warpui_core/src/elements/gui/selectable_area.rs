@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/elements/gui/selectable_area.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! This element adds cross-element selectability to the UI framework.
 //!
 //! Any elements underneath a SelectableArea which both implement SelectableElement and

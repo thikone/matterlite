@@ -1,12 +1,12 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/core/view/mod.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 mod context;
 mod handle;
-#[cfg(feature = "tui")]
-mod tui;
 
 pub use self::context::*;
 pub use self::handle::*;
-#[cfg(feature = "tui")]
-pub use self::tui::*;
 use super::EntityId;
 use crate::accessibility::{AccessibilityContent, ActionAccessibilityContent};
 use crate::{Action, AppContext, CursorInfo, Element, Entity, keymap};

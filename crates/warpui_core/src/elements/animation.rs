@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/elements/animation.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Backend-agnostic animation timing: a monotonic-safe elapsed clock
 //! ([`AnimationClock`]) and a looping sequence of values each held for a
 //! fixed duration ([`KeyframeTimeline`]).

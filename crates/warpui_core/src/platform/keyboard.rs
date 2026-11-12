@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/platform/keyboard.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! This module defines types used in the context of keyboard events across platforms. The types
 //! are based on winit types, however, we include them in this module to avoid needing to include
 //! the entirety of winit as a dependency for MacOS.

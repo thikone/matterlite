@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/text/mod_tests.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use super::point::Point;
 use super::{
     BufferIndex, TextBuffer, byte_offset_for_char_offset, char_slice, count_chars_up_to_byte,

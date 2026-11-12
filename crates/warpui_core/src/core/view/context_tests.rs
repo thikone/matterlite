@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/core/view/context_tests.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use crate::elements::Empty;
 use crate::platform::WindowStyle;
 use crate::{App, AppContext, Element, Entity, TypedActionView};

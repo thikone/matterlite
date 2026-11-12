@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/ui_components/progress_bar.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use crate::elements::{ConstrainedBox, Container, Element, Empty, Flex, ParentElement};
 use crate::ui_components::components::{UiComponent, UiComponentStyles};
 

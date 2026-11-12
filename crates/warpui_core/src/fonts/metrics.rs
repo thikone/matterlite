@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/fonts/metrics.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 /// Various metrics that apply to the entire font.
 #[derive(Clone, Copy, Debug)]
 pub struct Metrics {

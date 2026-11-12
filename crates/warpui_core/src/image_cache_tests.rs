@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/image_cache_tests.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use std::borrow::Cow;
 use std::rc::Rc;
 
@@ -23,7 +27,7 @@ impl AssetProvider for Assets {
                 b"warp-img:rgba:4:2:\xff\x00\x00\xff\xff\x00\x00\xff\x00\x00\xff\xff\x00\x00\xff\xff\x00\xff\x00\xff\x00\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff",
             )),
             "numbers-1000ms.gif" => Ok(Cow::Borrowed(include_bytes!(
-                "../../warpui/examples/assets/numbers-1000ms.gif"
+                "../test_data/numbers-1000ms.gif"
             ))),
             _ => <Assets as RustEmbed>::get(path)
                 .map(|f| f.data)

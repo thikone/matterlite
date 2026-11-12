@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/ui_components/text_input.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use crate::elements::{Border, ChildView, Clipped, ConstrainedBox, Container, Element};
 use crate::ui_components::components::{UiComponent, UiComponentStyles};
 use crate::{View, ViewHandle};

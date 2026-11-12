@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/notification.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 /// At the UI framework level, we have structs for interacting with
 /// platform-level notification data (mostly in the form of strings).
 /// Similar structs are available at the app level, which are more

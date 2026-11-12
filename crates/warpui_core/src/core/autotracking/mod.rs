@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/core/autotracking/mod.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Automatic change tracking (autotracking) system to reduce the need to call `ctx.notify()`
 //!
 //! This module provides a wrapper type `Tracked`, which automatically tracks changes to the

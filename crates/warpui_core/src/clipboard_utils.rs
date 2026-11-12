@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui_core/src/clipboard_utils.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use itertools::Itertools;
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
 use {arboard, image::ImageEncoder};
