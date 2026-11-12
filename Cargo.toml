@@ -5,12 +5,14 @@ members = [
   "crates/command",
   "crates/markdown_parser",
   "crates/matterlite",
+  "crates/settings",
   "crates/settings_value",
   "crates/settings_value_derive",
   "crates/string-offset",
   "crates/sum_tree",
   "crates/virtual_fs",
   "crates/warp_errors",
+  "crates/warp_features",
   "crates/warp_util",
   "crates/warpui",
   "crates/warpui_core",
@@ -30,12 +32,14 @@ asset_cache = { path = "crates/asset_cache" }
 asset_macro = { path = "crates/asset_macro" }
 command = { path = "crates/command" }
 markdown_parser = { path = "crates/markdown_parser" }
+settings = { path = "crates/settings" }
 settings_value = { path = "crates/settings_value", default-features = false }
 settings_value_derive = { path = "crates/settings_value_derive" }
 string-offset = { path = "crates/string-offset" }
 sum_tree = { path = "crates/sum_tree" }
 virtual-fs = { path = "crates/virtual_fs" }
 warp_errors = { path = "crates/warp_errors" }
+warp_features = { path = "crates/warp_features" }
 warp_util = { path = "crates/warp_util" }
 warpui = { path = "crates/warpui" }
 warpui_core = { path = "crates/warpui_core" }

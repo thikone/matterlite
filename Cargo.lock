@@ -5608,6 +5608,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "settings"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "concat-idents",
+ "inventory",
+ "log",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings_value",
+ "tempfile",
+ "warp_errors",
+ "warp_features",
+ "warpui_core",
+ "warpui_extras",
+]
+
+[[package]]
 name = "settings_value"
 version = "0.1.0"
 dependencies = [
@@ -6736,6 +6755,13 @@ dependencies = [
  "log",
  "reqwest",
  "tokio",
+]
+
+[[package]]
+name = "warp_features"
+version = "0.0.0"
+dependencies = [
+ "enum-iterator",
 ]
 
 [[package]]
