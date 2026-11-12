@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/command/src/lib.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Interface for working with processes that ensures that commands are spawned with the correct set
 //! of arguments.
 //!

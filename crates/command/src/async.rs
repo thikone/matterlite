@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/command/src/async.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 // Allow disallowed types here. We actively want to use `std::process::Command` since this is the
 // wrapper implementation that allows us to not import the above type elsewhere in this workspace.
 #![allow(clippy::disallowed_types)]

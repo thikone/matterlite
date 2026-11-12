@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/string-offset/src/lib.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Base types for representing offset-based text locations.
 
 use std::ops::{Add, AddAssign, Range, Sub, SubAssign};

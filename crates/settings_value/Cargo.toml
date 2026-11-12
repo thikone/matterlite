@@ -16,3 +16,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings_value_derive = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The derive tests need the `derive` feature of this package.
+settings_value = { path = ".", features = ["derive"] }

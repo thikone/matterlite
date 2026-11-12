@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/command/src/wsl.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! WSL detection and Linux-side binary resolution for subprocess
 //! invocations made through this crate's [`Command`](crate::r#async::Command)
 //! and [`Command`](crate::blocking::Command) wrappers.

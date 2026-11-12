@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/settings_value/src/lib.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Defines the [`SettingsValue`] trait for controlling how setting value
 //! types are serialized to and deserialized from the user-visible TOML settings
 //! file.
