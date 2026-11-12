@@ -8,6 +8,7 @@ members = [
   "crates/string-offset",
   "crates/sum_tree",
   "crates/warp_errors",
+  "crates/warp_util",
 ]
 resolver = "2"
 

@@ -15,5 +15,6 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | crates/settings_value/ | crates/settings_value/ | 5bb7bcc6a | adapted | AGPL-3.0 | derive tests enable the `derive` feature through a dev-dependency |
 | crates/settings_value_derive/ | crates/settings_value_derive/ | 5bb7bcc6a | verbatim | AGPL-3.0 | |
 | crates/command/ | crates/command/ | 5bb7bcc6a | verbatim | AGPL-3.0 | |
+| crates/warp_util/ | crates/warp_util/ | 5bb7bcc6a | adapted | AGPL-3.0 | Tier C: kept content_version, file, file_type, path, standardized_path, user_input, windows; removed git, worktree, remote-host, sync and on_cancel helpers |
 
 Rows with status `verbatim` differ from the reference only by the provenance header.

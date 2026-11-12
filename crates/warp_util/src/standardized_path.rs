@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/warp_util/src/standardized_path.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! A normalized, platform-aware path type that does not require filesystem I/O.
 //!
 //! [`StandardizedPath`] wraps [`TypedPathBuf`] and guarantees that the inner path is always

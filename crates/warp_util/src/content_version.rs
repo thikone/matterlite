@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/warp_util/src/content_version.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 /// A app-unique version number for content.
 /// This is used for tracking and comparing versions of content across the application.
 /// The Rich Text Buffer and the LocalFileModel use this for comparing versions of content.
