@@ -1,0 +1,15 @@
+[package]
+name = "ml_logging"
+version = "0.1.0"
+description = "MatterLite's logger: rotating log files in the state directory"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+env_logger.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -10,7 +10,12 @@ use ml_themes::AppearanceManager;
 use warpui::{AddWindowOptions, SingletonEntity as _, platform};
 
 fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let log_dir = warp_core::paths::logs_dir();
+    if let Err(err) = ml_logging::init(&log_dir) {
+        // Without a log file, still log to stderr.
+        eprintln!("Logging to {} failed: {err:#}", log_dir.display());
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    }
     log::info!("MatterLite {} starting", env!("CARGO_PKG_VERSION"));
     warp_core::features::init();
     match warp_core::paths::portable_root() {

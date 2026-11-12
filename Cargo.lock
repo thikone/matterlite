@@ -4122,6 +4122,7 @@ dependencies = [
  "anyhow",
  "env_logger",
  "log",
+ "ml_logging",
  "ml_themes",
  "ml_workspace",
  "rust-embed",
@@ -4241,6 +4242,15 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ml_logging"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "tempfile",
 ]
 
 [[package]]
