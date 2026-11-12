@@ -18,15 +18,3 @@ impl AssetProvider for Assets {
             .ok_or_else(|| anyhow!("no asset exists at path {path}"))
     }
 }
-
-/// Returns the bytes of each embedded file whose path starts with `prefix`, sorted by path.
-pub fn files_with_prefix(prefix: &str) -> Vec<Vec<u8>> {
-    let mut paths: Vec<_> = <Assets as RustEmbed>::iter()
-        .filter(|path| path.starts_with(prefix) && path.ends_with(".ttf"))
-        .collect();
-    paths.sort();
-    paths
-        .into_iter()
-        .filter_map(|path| <Assets as RustEmbed>::get(&path).map(|file| file.data.into_owned()))
-        .collect()
-}

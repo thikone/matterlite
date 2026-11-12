@@ -8,6 +8,7 @@ members = [
   "crates/languages",
   "crates/markdown_parser",
   "crates/matterlite",
+  "crates/ml_themes",
   "crates/settings",
   "crates/settings_value",
   "crates/settings_value_derive",
@@ -45,6 +46,7 @@ fuzzy_match = { path = "crates/fuzzy_match" }
 ipynb_parser = { path = "crates/ipynb_parser" }
 languages = { path = "crates/languages" }
 markdown_parser = { path = "crates/markdown_parser" }
+ml_themes = { path = "crates/ml_themes" }
 settings = { path = "crates/settings" }
 settings_value = { path = "crates/settings_value", default-features = false }
 settings_value_derive = { path = "crates/settings_value_derive" }

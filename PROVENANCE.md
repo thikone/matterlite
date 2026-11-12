@@ -23,7 +23,7 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | crates/asset_macro/ | crates/asset_macro/ | 5bb7bcc6a | adapted | AGPL-3.0 | assets resolved from the repository assets/ dir; remote_asset! removed; bundled_or_fetched_asset! always bundles; warp_util::assets constants inlined |
 | crates/warpui_extras/ | crates/warpui_extras/ | 5bb7bcc6a | adapted | AGPL-3.0 | removed registry, UserDefaults and localStorage preference stores; TOML and JSON-file stores always built; wasm branch removed |
 | crates/warp_features/ | crates/warp_features/ | 5bb7bcc6a | verbatim | AGPL-3.0 | Warp flag list still complete; pruned to MatterLite flags at the end of M0 |
-| crates/settings/ | crates/settings/ | 5bb7bcc6a | verbatim | AGPL-3.0 | |
+| crates/settings/ | crates/settings/ | 5bb7bcc6a | adapted | AGPL-3.0 | no integration_tests feature (new_with_defaults is test-only) |
 | crates/warp_core/ | crates/warp_core/ | 5bb7bcc6a | adapted | AGPL-3.0 | Tier B: kept app_id, assertions, async, features, platform, safe_log, ui (appearance, theme, icons, color, builder), user_preferences; removed channels, context flags, telemetry, execution mode, sync queue, semantic selection and the other Warp product modules; safe_log full output in debug builds |
 | crates/warp_core/src/paths.rs | crates/warp_core/src/paths.rs | 5bb7bcc6a | rewritten | AGPL-3.0 | MatterLite storage layout (§9); portable data/ detection kept |
 | crates/ui_components/ | crates/ui_components/ | 5bb7bcc6a | adapted | AGPL-3.0 | library example embeds the repository assets/ |
@@ -35,6 +35,14 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | crates/watcher/ | crates/watcher/ | 5bb7bcc6a | verbatim | AGPL-3.0 | |
 | crates/warp_files/ | crates/warp_files/ | 5bb7bcc6a | adapted | AGPL-3.0 | local files only: removed the remote-host backend (remote_server) and git repository subscriptions (repo_metadata); paths canonicalized with dunce |
 | crates/fuzzy_match/ | crates/fuzzy_match/ | 5bb7bcc6a | verbatim | AGPL-3.0 | |
+| crates/ml_themes/src/theme.rs | app/src/themes/theme.rs | 5bb7bcc6a | adapted | AGPL-3.0 | no referral or image-generated (in-memory) themes, no cloud-sync portability checks, no terminal preview/prompt colors; custom theme paths relative to warp_core::paths::themes_dir |
+| crates/ml_themes/src/default_themes.rs | app/src/themes/default_themes.rs | 5bb7bcc6a | adapted | AGPL-3.0 | referral themes removed |
+| crates/ml_themes/src/settings.rs | app/src/settings/theme.rs | 5bb7bcc6a | adapted | AGPL-3.0 | settings never sync to a cloud |
+| crates/ml_themes/src/appearance.rs | app/src/appearance.rs | 5bb7bcc6a | rewritten | AGPL-3.0 | font loading and theme refresh only; no font settings, app icons or wasm events |
+| crates/ml_themes/src/warp_import/themes/theme_chooser.rs | app/src/themes/theme_chooser.rs | 5bb7bcc6a | verbatim | AGPL-3.0 | not compiled; adapted together with ml_workspace |
+| assets/async/jpg/ | app/assets/async/jpg/ | 5bb7bcc6a | verbatim | AGPL-3.0 | background images of the built-in themes (10 files) |
+| assets/bundled/fonts/password.ttf | app/assets/bundled/fonts/password.ttf | 5bb7bcc6a | verbatim | AGPL-3.0 | password dots font |
+| assets/bundled/fonts/hack/ | app/assets/bundled/fonts/hack/ | 5bb7bcc6a | verbatim | MIT | Hack font with its LICENSE.md; monospace font |
 | assets/bundled/svg/ | app/assets/bundled/svg/ | 5bb7bcc6a | verbatim | AGPL-3.0 | only the icons referenced by imported code (341 of 383) |
 | assets/bundled/fonts/roboto/ | app/assets/bundled/fonts/roboto/ | 5bb7bcc6a | verbatim | Apache-2.0 | font files; LICENSE.txt included |
 
