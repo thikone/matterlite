@@ -3183,7 +3183,10 @@ name = "matterlite"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "env_logger",
  "log",
+ "rust-embed",
+ "warpui",
 ]
 
 [[package]]
