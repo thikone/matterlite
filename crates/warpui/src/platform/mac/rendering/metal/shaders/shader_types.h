@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/platform/mac/rendering/metal/shaders/shader_types.h` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 #ifndef shader_types_h
 #define shader_types_h
 

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/virtual_fs/src/lib.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use std::path::PathBuf;
 
 use getset::Getters;
@@ -172,7 +176,7 @@ impl Warp {
             std::env::var("CARGO_TARGET_DIR")
                 .ok()
                 .map(|directory| PathBuf::from(directory).join(build))
-                .unwrap_or_else(|| Self::root().join(format!("target/{}", &build)))
+                .unwrap_or_else(|| Self::root().join(format!("target/{build}")))
         };
 
         path.push("warp");

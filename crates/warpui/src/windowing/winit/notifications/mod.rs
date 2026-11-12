@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/windowing/winit/notifications/mod.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Module to display system desktop notifications through the winit windowing backend.
 
 use winit::event_loop::EventLoopProxy;

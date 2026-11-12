@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/windowing/winit/fonts/str_index_map.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Module containing the definition of [`StrIndexMap`], allowing for repeated, efficient conversion
 //! between a byte and/or char index from a backing `str`.
 

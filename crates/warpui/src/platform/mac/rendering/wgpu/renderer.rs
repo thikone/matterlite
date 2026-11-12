@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/platform/mac/rendering/wgpu/renderer.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use crate::platform::mac::rendering::Device;
 use crate::platform::mac::window::WindowState;
 use crate::rendering::wgpu::{Renderer, Resources};

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/platform/mac/menus_tests.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Memory-behavior repros for APP-4154 batch 1.C (warpui-platform-nsstring).
 //!
 //! Covers two kinds of fix in `menus.rs`:

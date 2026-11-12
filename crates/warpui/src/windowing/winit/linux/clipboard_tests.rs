@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/windowing/winit/linux/clipboard_tests.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 /// Linux-specific clipboard tests.
 ///
 /// Note: Most image processing functionality is tested in ui/src/clipboard_utils_tests.rs

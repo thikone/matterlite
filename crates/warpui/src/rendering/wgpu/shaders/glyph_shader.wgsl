@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/rendering/wgpu/shaders/glyph_shader.wgsl` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 // Brightness-scaled contrast enhancement for glyph alpha masks.
 //
 // Linear sRGB blending makes light-on-dark text appear too thin because AA fringe

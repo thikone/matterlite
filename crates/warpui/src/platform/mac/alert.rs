@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/platform/mac/alert.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use objc2_app_kit::{NSAlert, NSApplication, NSModalResponse};
 
 /// Configures and runs an `NSAlert` modally, returning its response.

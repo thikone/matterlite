@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/platform/mac/objc/keycode.m` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 #include <AppKit/AppKit.h>
 #include <Carbon/Carbon.h>
 #include <CoreFoundation/CoreFoundation.h>

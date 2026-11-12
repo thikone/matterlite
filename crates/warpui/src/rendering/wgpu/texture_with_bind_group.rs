@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/rendering/wgpu/texture_with_bind_group.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupLayout, Extent3d, Queue, Sampler,
     TexelCopyBufferLayout, Texture, TextureDescriptor, TextureFormat, TextureUsages,

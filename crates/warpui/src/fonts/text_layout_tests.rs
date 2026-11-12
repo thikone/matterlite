@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/fonts/text_layout_tests.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Platform-independent text layout tests.
 use anyhow::Result;
 use itertools::Itertools;
@@ -76,7 +80,7 @@ fn load_roboto_bytes() -> Vec<Vec<u8>> {
         .iter()
         .map(|font_file| {
             let path = [
-                root, "..", "..", "app", "assets", "bundled", "fonts", "roboto", font_file,
+                root, "..", "..", "assets", "bundled", "fonts", "roboto", font_file,
             ]
             .iter()
             .collect::<PathBuf>();

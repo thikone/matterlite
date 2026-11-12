@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/fonts/font_kit.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! A text rasterizer backed by [`font_kit`] that supports rasterizing at subpixel offsets
 
 use std::sync::Arc;

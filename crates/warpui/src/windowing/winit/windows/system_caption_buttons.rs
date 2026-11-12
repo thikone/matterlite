@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/windowing/winit/windows/system_caption_buttons.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Dwm;
 use winit::window::Window as WinitWindow;

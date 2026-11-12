@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/rendering/wgpu/renderer.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 mod frame;
 mod glyph;
 mod image;
@@ -268,7 +272,7 @@ fn capture_surface_texture(
     staging_buffer.unmap();
 
     if format == wgpu::TextureFormat::Bgra8Unorm || format == wgpu::TextureFormat::Bgra8UnormSrgb {
-        for chunk in rgba_data.chunks_exact_mut(4) {
+        for chunk in rgba_data.as_chunks_mut::<4>().0 {
             chunk.swap(0, 2);
         }
     }

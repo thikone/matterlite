@@ -1,10 +1,12 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/platform/mod.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 pub mod app;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod mac;
-#[cfg(target_family = "wasm")]
-pub mod wasm;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
@@ -12,9 +14,7 @@ pub mod headless;
 
 pub mod current {
     cfg_if::cfg_if! {
-        if #[cfg(target_family = "wasm")] {
-            pub use super::wasm::*;
-        } else if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
+        if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
             pub use super::linux::*;
         } else if #[cfg(target_os = "macos")] {
             pub use super::mac::*;
@@ -50,14 +50,7 @@ pub fn create_system_clipboard() -> anyhow::Result<Box<dyn crate::Clipboard + Se
 ///
 /// This is a cross-platform wrapper around the platform-specific implementation.
 pub fn is_mobile_device() -> bool {
-    #[cfg(target_family = "wasm")]
-    {
-        wasm::is_mobile_device()
-    }
-    #[cfg(not(target_family = "wasm"))]
-    {
-        false
-    }
+    false
 }
 
 /// A trait for accessing internal per-platform concrete implementations

@@ -8,7 +8,9 @@ members = [
   "crates/string-offset",
   "crates/sum_tree",
   "crates/warp_errors",
+  "crates/virtual_fs",
   "crates/warp_util",
+  "crates/warpui",
   "crates/warpui_core",
 ]
 resolver = "2"
@@ -27,6 +29,7 @@ settings_value = { path = "crates/settings_value", default-features = false }
 settings_value_derive = { path = "crates/settings_value_derive" }
 string-offset = { path = "crates/string-offset" }
 sum_tree = { path = "crates/sum_tree" }
+virtual-fs = { path = "crates/virtual_fs" }
 warp_errors = { path = "crates/warp_errors" }
 warp_util = { path = "crates/warp_util" }
 warpui = { path = "crates/warpui" }
@@ -70,6 +73,7 @@ font-kit = { git = "https://github.com/warpdotdev/font-kit", rev = "a04b225ecb63
 ] }
 futures = { version = "0.3", features = ["executor", "thread-pool"] }
 futures-lite = "1.13.0"
+getset = "0.1.1"
 futures-util = { version = "0.3", default-features = false }
 get-size = { version = "0.1.4", features = ["derive"] }
 hex = "0.4.3"

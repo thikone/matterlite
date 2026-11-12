@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/platform/mac/clipboard_tests.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Memory-behavior repro for APP-4154 batch 1.C (warpui-platform-nsstring).
 //!
 //! Exercises the `NSString::alloc(nil).init_str(...)` → `make_nsstring(...)` conversions

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/platform/mac/objc/menus.h` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 #import <AppKit/AppKit.h>
 
 // WarpCustomMenuItemHandler is set as both the target and represented object of NSMenuItem.

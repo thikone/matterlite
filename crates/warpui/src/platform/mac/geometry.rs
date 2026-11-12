@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/platform/mac/geometry.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;

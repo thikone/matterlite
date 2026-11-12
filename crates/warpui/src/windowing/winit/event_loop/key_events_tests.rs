@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/windowing/winit/event_loop/key_events_tests.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use winit::keyboard::Key::Character;
 use winit::keyboard::{KeyCode, NativeKeyCode, PhysicalKey, SmolStr};
 

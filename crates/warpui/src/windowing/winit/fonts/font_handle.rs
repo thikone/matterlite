@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Derived from warp-terminal `crates/warpui/src/windowing/winit/fonts/font_handle.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 // Neither macOS nor wasm make use of the "load font from path" functionality,
 // and so there's a lot of unused code in here.  Instead of marking each of the
 // relevant functions with allow(dead_code), we'll do it at the module level
