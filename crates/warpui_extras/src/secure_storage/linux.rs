@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/warpui_extras/src/secure_storage/linux.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Implementation of the [`SecureStorage`] service for the Linux platform.
 
 use std::cell::OnceCell;

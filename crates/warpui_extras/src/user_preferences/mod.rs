@@ -1,15 +1,12 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/warpui_extras/src/user_preferences/mod.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Storage for user preferences.
 
 pub mod file_backed;
 pub mod in_memory;
-#[cfg(target_family = "wasm")]
-pub mod local_storage;
-#[cfg(target_os = "windows")]
-pub mod registry_backed;
-#[cfg(feature = "user_preferences-toml")]
 pub mod toml_backed;
-#[cfg(target_os = "macos")]
-pub mod user_defaults;
 
 /// A type alias for a boxed user preferences backend.
 pub type Model = Box<dyn UserPreferences>;
