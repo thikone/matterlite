@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/ui_components/examples/library.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,10 +23,9 @@ use warpui_core::prelude::*;
 use warpui_core::{AssetProvider, SingletonEntity, Tracked, platform};
 
 #[derive(Clone, Copy, RustEmbed)]
-#[folder = "../../app/assets"]
+#[folder = "../../assets"]
 #[include = "bundled/**"] // Should be kept in sync with BUNDLED_ASSETS_DIR.
 #[include = "async/**"] // Should be kept in sync with ASYNC_ASSETS_DIR.
-#[cfg_attr(target_family = "wasm", exclude = "async/**")] // Excludes take precedence.
 pub struct Assets;
 
 pub static ASSETS: Assets = Assets;

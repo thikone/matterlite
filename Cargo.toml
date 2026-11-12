@@ -10,6 +10,7 @@ members = [
   "crates/settings_value_derive",
   "crates/string-offset",
   "crates/sum_tree",
+  "crates/ui_components",
   "crates/virtual_fs",
   "crates/warp_core",
   "crates/warp_errors",
@@ -38,6 +39,7 @@ settings_value = { path = "crates/settings_value", default-features = false }
 settings_value_derive = { path = "crates/settings_value_derive" }
 string-offset = { path = "crates/string-offset" }
 sum_tree = { path = "crates/sum_tree" }
+ui_components = { path = "crates/ui_components" }
 virtual-fs = { path = "crates/virtual_fs" }
 warp_core = { path = "crates/warp_core" }
 warp_errors = { path = "crates/warp_errors" }
@@ -144,6 +146,7 @@ reqwest = { version = "0.13", features = [
 resvg = "0.47.0"
 rust-embed = { version = "8.7.0", features = ["include-exclude"] }
 rustc-hash = "2.1.1"
+rustls = "0.23.39"
 schemars = { version = "1", features = ["chrono04"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
