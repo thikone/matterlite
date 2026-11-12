@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/warp_errors/src/anyhow.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use super::registration::AnyErrorRegistration;
 
 /// A version of [`ErrorExt`] that works for [`anyhow::Error`] (which does not implement
@@ -23,8 +27,5 @@ impl AnyhowErrorExt for anyhow::Error {
         true
     }
 
-    fn report_error(&self) {
-        #[cfg(feature = "crash_reporting")]
-        sentry::integrations::anyhow::capture_anyhow(self);
-    }
+    fn report_error(&self) {}
 }

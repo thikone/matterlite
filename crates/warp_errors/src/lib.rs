@@ -1,25 +1,26 @@
-//! Explicit error reporting for Warp.
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/warp_errors/src/lib.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
+//! Explicit error reporting.
 //!
 //! Provides the [`report_error!`] / [`report_if_error!`] macros and the machinery they depend on
 //! (`ErrorExt`, `AnyhowErrorExt`, `register_error!`, `ReportErrorLogMode`). This is a leaf crate
-//! that depends only on third-party crates, so any crate in the workspace can report errors to
-//! Sentry without creating a dependency cycle with `warp_core`.
+//! that depends only on third-party crates, so any crate in the workspace can use it without
+//! creating a dependency cycle with `warp_core`.
 //!
-//! Errors reported via these macros are captured to Sentry directly (structured, via
-//! `capture_anyhow`/`capture_error`); plain `log::error!` is log-only.
+//! Actionable errors are logged at Error level, others (network failures, 5xx, ...) at Warn level.
 
 mod anyhow;
 mod registration;
 
 // Built-in `ErrorExt` classifications for common third-party error types. These pull heavier
-// dependencies (reqwest/tokio/websocket), so they are feature-gated and enabled by `warp_core`;
+// dependencies (reqwest/tokio), so they are feature-gated and enabled by the crates that use them;
 // leaf crates that only need `report_error!` don't pull them in.
 #[cfg(feature = "reqwest-errors")]
 mod reqwest;
 #[cfg(feature = "tokio-errors")]
 mod tokio;
-#[cfg(feature = "websocket-errors")]
-mod websocket;
 
 // Re-export for macro use. The `register_error!` macro itself is available at the crate root via
 // `#[macro_export]`; here we only re-export the supporting types it references. Re-export anyhow
@@ -48,10 +49,8 @@ pub enum ReportErrorLogMode {
 
 /// Reports an error encountered during execution.
 ///
-/// If the error is actionable, it is captured to Sentry (via `capture_anyhow`/`capture_error`) and
-/// logged at the Error level; otherwise it is logged at the Warn level and not reported. Plain
-/// `log::error!` no longer creates Sentry events (see `sentry_log_filter` in `warp_logging`), so
-/// `report_error!` is the explicit way to send an error to Sentry.
+/// If the error is actionable, it is logged at the Error level; otherwise it is logged at the Warn
+/// level.
 #[macro_export]
 macro_rules! report_error {
     (@log $err:expr) => {{
@@ -80,10 +79,8 @@ macro_rules! report_error {
             $crate::report_error!(@log_extra $err, { $($fields)* });
         }
     }};
-    // Reports `err` (capturing to Sentry when actionable) and attaches the given fields as a
-    // structured Sentry context block ("details"), keeping per-instance specifics out of the
-    // message so grouping stays stable. The fields are also appended to the local log line so
-    // local/breadcrumb detail is retained.
+    // Reports `err` with the given fields appended to the log line, keeping per-instance
+    // specifics out of the error message itself.
     (@log_extra $err:expr, { $($fields:tt)* }) => {{
         #[allow(unused_imports)]
         use $crate::{AnyhowErrorExt as _, ErrorExt as _, LOG_TARGET};
@@ -203,37 +200,14 @@ macro_rules! report_if_error {
     }};
 }
 
-/// Runs `report` while the current Sentry scope carries `fields` as a structured "details" context
-/// block. Used by `report_error!(.., extra: { .. })` so per-instance specifics stay out of the
-/// error message (and out of grouping).
+/// Runs `report` with the `extra:` fields of `report_error!` in scope. Errors are only logged
+/// locally, so there is no reporting scope to attach the fields to.
 #[doc(hidden)]
-#[cfg(feature = "crash_reporting")]
-pub fn with_error_context(fields: &[(&'static str, String)], report: impl FnOnce()) {
-    if fields.is_empty() {
-        report();
-        return;
-    }
-    sentry::with_scope(
-        |scope| {
-            let mut context = std::collections::BTreeMap::new();
-            for (key, value) in fields {
-                context.insert((*key).to_string(), value.clone().into());
-            }
-            scope.set_context("details", sentry::protocol::Context::Other(context));
-        },
-        report,
-    );
-}
-
-/// Non-`crash_reporting` builds have no Sentry scope, so just run `report`.
-#[doc(hidden)]
-#[cfg(not(feature = "crash_reporting"))]
 pub fn with_error_context(_fields: &[(&'static str, String)], report: impl FnOnce()) {
     report();
 }
 
-/// Formats `report_error!` context fields for the local log line. This log line is not what Sentry
-/// groups on, so it can carry the full per-instance detail.
+/// Formats `report_error!` context fields for the log line.
 #[doc(hidden)]
 pub fn format_context_suffix(fields: &[(&'static str, String)]) -> String {
     if fields.is_empty() {
@@ -252,24 +226,12 @@ pub fn format_context_suffix(fields: &[(&'static str, String)]) -> String {
     suffix
 }
 
-/// Returns whether or not a log entry with the given metadata should be ignored by Sentry.
-#[cfg(feature = "crash_reporting")]
-pub fn should_ignore_log_for_sentry(md: &log::Metadata) -> bool {
-    // Filter out any Error-level log entries generated by report_error!().
-    // report_error!() utilizes capture_anyhow() to report structured errors
-    // instead of simple string error messages, and we don't want to _also_
-    // report the Error-level log line to Sentry.
-    md.target() == LOG_TARGET && md.level() == log::Level::Error
-}
-
 pub trait ErrorExt: RegisteredError + std::error::Error {
     /// Returns whether or not an error is something that is actionable by our engineering team.
     fn is_actionable(&self) -> bool;
 
-    fn report_error(&self) {
-        #[cfg(feature = "crash_reporting")]
-        sentry::capture_error(self);
-    }
+    /// Hook for sending the error to a crash reporter. MatterLite has none, so this does nothing.
+    fn report_error(&self) {}
 }
 
 #[cfg(test)]

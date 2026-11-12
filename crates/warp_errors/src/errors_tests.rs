@@ -1,4 +1,8 @@
-use std::sync::{Mutex, OnceLock};
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/warp_errors/src/errors_tests.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use log::{Level, Log, Metadata, Record};
 
@@ -15,6 +19,9 @@ struct TestLogger;
 
 static LOGGER: TestLogger = TestLogger;
 static LOGS: OnceLock<Mutex<Vec<LogEntry>>> = OnceLock::new();
+// The logger and its buffer are process-global, so tests that inspect logs must not run in parallel
+// (`cargo test` runs tests of a binary on several threads).
+static SERIAL: Mutex<()> = Mutex::new(());
 
 impl Log for TestLogger {
     fn enabled(&self, _metadata: &Metadata) -> bool {
@@ -36,10 +43,14 @@ fn logs() -> &'static Mutex<Vec<LogEntry>> {
     LOGS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-fn init_logger() {
+fn init_logger() -> MutexGuard<'static, ()> {
+    let guard = SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let _ = log::set_logger(&LOGGER);
     log::set_max_level(log::LevelFilter::Trace);
     logs().lock().unwrap().clear();
+    guard
 }
 
 fn logged_report_count(message: &str) -> usize {
@@ -80,7 +91,7 @@ fn report_if_error_once_per_run(result: Result<(), anyhow::Error>) {
 
 #[test]
 fn report_error_log_mode_controls_log_frequency() {
-    init_logger();
+    let _serial = init_logger();
 
     for _ in 0..2 {
         report_error!(anyhow::anyhow!("default"));
@@ -117,7 +128,7 @@ fn report_error_log_mode_controls_log_frequency() {
 
 #[test]
 fn new_macro_forms_log_as_expected() {
-    init_logger();
+    let _serial = init_logger();
 
     // Bare string-literal form wraps the message in an anyhow error and reports it.
     report_error!("a static message");

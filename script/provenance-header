@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Adds the SPDX + "Derived from" header to every source file under a directory that was copied
+# from the Warp reference checkout and doesn't have one yet.
+#
+#   script/provenance-header <matterlite-dir> <warp-dir> <spdx-license>
+#   script/provenance-header crates/warpui crates/warpui MIT
+#
+# Files whose Warp counterpart can't be found (new files) are skipped.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+[[ $# -eq 3 ]] || { sed -n '2,8p' "$0" >&2; exit 2; }
+dir="${1%/}" warp_dir="${2%/}" license="$3"
+commit=5bb7bcc6a
+reference="${WARP_REFERENCE:-$root/../warp-terminal}"
+
+count=0
+while IFS= read -r file; do
+  grep -q 'Derived from warp-terminal' "$file" && continue
+  rel="${file#"$dir"/}"
+  src="$warp_dir/$rel"
+  [[ -e "$reference/$src" ]] || continue
+  tmp="$(mktemp)"
+  {
+    echo "// SPDX-License-Identifier: $license"
+    echo "// Derived from warp-terminal \`$src\` @ $commit — adapted for MatterLite."
+    echo "// Original: Copyright (C) 2020-2026 Denver Technologies, Inc."
+    echo
+    cat "$file"
+  } > "$tmp"
+  mv "$tmp" "$file"
+  count=$((count + 1))
+done < <(git ls-files --cached --others --exclude-standard -- "$dir" \
+  | grep -E '\.(rs|wgsl|metal|h|m|c)$')
+echo "added headers to $count files under $dir"
