@@ -1,0 +1,8 @@
+disallowed-macros = [
+    { path = "std::dbg", reason = "dbg!() is only for use in local testing, not submitted code" },
+]
+
+disallowed-types = [
+    { path = "std::process::Command", reason = "std::process::Command flashes a console window when invoked on Windows. Use command::blocking::Command instead." },
+    { path = "async_process::Command", reason = "async_process::Command flashes a console window when invoked on Windows. Use command::r#async::Command instead." },
+]

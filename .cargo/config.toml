@@ -1,0 +1,10 @@
+[env]
+# Minimum macOS version for C/Metal code compiled by build scripts. Keep in sync with
+# script/package-release.
+MACOSX_DEPLOYMENT_TARGET = "11.0"
+
+[net]
+git-fetch-with-cli = true
+
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-args=-Wl,-headerpad_max_install_names"]

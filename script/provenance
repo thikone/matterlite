@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Checks the rules in AGENTS.md "Warp reference code":
+#   1. No Cargo.toml depends on the warp-terminal checkout, and no path dependency leaves the
+#      repository.
+#   2. Every file with a "Derived from warp-terminal" header is covered by a PROVENANCE.md row
+#      (its own row, or a row for a directory that contains it).
+#   3. Every PROVENANCE.md row points at a path that exists.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+status=0
+
+fail() {
+  echo "error: $*" >&2
+  status=1
+}
+
+# 1. Reference dependencies.
+while IFS= read -r manifest; do
+  if grep -qi 'warp-terminal' "$manifest"; then
+    fail "$manifest mentions warp-terminal"
+  fi
+  dir="$(dirname "$manifest")"
+  while IFS= read -r dep_path; do
+    resolved="$(cd "$dir" && realpath -m "$dep_path")"
+    case "$resolved/" in
+      "$root"/*) ;;
+      *) fail "$manifest: path dependency '$dep_path' leaves the repository" ;;
+    esac
+  done < <(grep -oE 'path *= *"[^"]+"' "$manifest" | sed -E 's/path *= *"([^"]+)"/\1/')
+done < <(git ls-files --cached --others --exclude-standard -- '*Cargo.toml')
+
+# Rows of the PROVENANCE.md table: first column, with backticks stripped.
+mapfile -t rows < <(
+  grep -E '^\| *`?(crates|assets|script)/' PROVENANCE.md \
+    | awk -F'|' '{ gsub(/[ `]/, "", $2); print $2 }'
+)
+
+# 3. Rows point at existing paths.
+for row in "${rows[@]}"; do
+  [[ -e "$row" ]] || fail "PROVENANCE.md row '$row' does not exist"
+done
+
+# 2. Derived files are covered by a row.
+covered() {
+  local file="$1" row
+  for row in "${rows[@]}"; do
+    if [[ "$row" == */ ]]; then
+      [[ "$file" == "$row"* ]] && return 0
+    else
+      [[ "$file" == "$row" ]] && return 0
+    fi
+  done
+  return 1
+}
+while IFS= read -r file; do
+  covered "$file" || fail "$file has a 'Derived from warp-terminal' header but no PROVENANCE.md row"
+done < <(git grep -l 'Derived from warp-terminal' -- 'crates/*' 'assets/*' || true)
+
+if [[ $status -eq 0 ]]; then
+  echo "provenance: ok (${#rows[@]} rows)"
+fi
+exit $status

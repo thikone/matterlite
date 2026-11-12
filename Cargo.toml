@@ -1,0 +1,45 @@
+[workspace]
+members = [
+  "crates/matterlite",
+]
+resolver = "2"
+
+[workspace.package]
+authors = ["MatterLite contributors"]
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[workspace.dependencies]
+# Local workspace crates.
+
+# Third-party dependencies. Versions follow Warp's workspace at the reference commit unless
+# MatterLite needs something else.
+anyhow = "1.0"
+log = { version = "0.4", features = ["serde", "std"] }
+
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.dev.package]
+# Font, text layout and image decoding are unbearably slow unoptimized.
+ttf-parser.opt-level = 3
+fdeflate.opt-level = 3
+image.opt-level = 3
+png.opt-level = 3
+miniz_oxide.opt-level = 3
+memchr.opt-level = 3
+
+[profile.release]
+debug = 1
+split-debuginfo = "packed"
+
+[profile.release-lto]
+inherits = "release"
+lto = "thin"
+
+# Short alias of release-lto: keeps Windows build paths below MAX_PATH. Used for releases.
+[profile.rlto]
+inherits = "release-lto"
+strip = "symbols"
