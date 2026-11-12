@@ -1,5 +1,7 @@
 [workspace]
 members = [
+  "crates/asset_cache",
+  "crates/asset_macro",
   "crates/command",
   "crates/markdown_parser",
   "crates/matterlite",
@@ -7,8 +9,8 @@ members = [
   "crates/settings_value_derive",
   "crates/string-offset",
   "crates/sum_tree",
-  "crates/warp_errors",
   "crates/virtual_fs",
+  "crates/warp_errors",
   "crates/warp_util",
   "crates/warpui",
   "crates/warpui_core",
@@ -23,6 +25,8 @@ publish = false
 
 [workspace.dependencies]
 # Local workspace crates.
+asset_cache = { path = "crates/asset_cache" }
+asset_macro = { path = "crates/asset_macro" }
 command = { path = "crates/command" }
 markdown_parser = { path = "crates/markdown_parser" }
 settings_value = { path = "crates/settings_value", default-features = false }
@@ -42,10 +46,12 @@ arboard = { version = "3.6.1", default-features = false }
 arrayvec = "0.7.4"
 async-broadcast = "0.7.2"
 async-channel = "2.3.1"
+async-compat = "0.2.5"
 async-fs = "2.1.2"
 async-io = "2.4.0"
 async-process = "2.3.0"
 async-task = "4.2.0"
+base64 = "0.22"
 block = "0.1.6"
 blocking = "1.6.2"
 bounded-vec-deque = "0.1"
@@ -73,9 +79,9 @@ font-kit = { git = "https://github.com/warpdotdev/font-kit", rev = "a04b225ecb63
 ] }
 futures = { version = "0.3", features = ["executor", "thread-pool"] }
 futures-lite = "1.13.0"
-getset = "0.1.1"
 futures-util = { version = "0.3", default-features = false }
 get-size = { version = "0.1.4", features = ["derive"] }
+getset = "0.1.1"
 hex = "0.4.3"
 html5ever = "0.35.0"
 http = "1.1.0"
@@ -87,15 +93,16 @@ image = { version = "0.25.9", default-features = false, features = [
   "webp",
 ] }
 instant = { version = "0.1.12", features = ["wasm-bindgen"] }
+inventory = "0.3.20"
 itertools = "0.14.0"
 lazy_static = "1.4.0"
 libc = "0.2.81"
 libtest-mimic = "0.8.2"
+log = { version = "0.4", features = ["serde", "std"] }
 mime_guess = "2.0"
 minimp4 = "0.1.2"
 nix = { version = "0.26.4", default-features = false, features = ["signal"] }
 nom = "7.1.1"
-openh264 = "0.8"
 num-traits = "0.2"
 objc = "0.2"
 objc2 = "0.6.3"
@@ -105,6 +112,7 @@ objc2-core-foundation = "0.3.2"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std"] }
 objc2-metal = { version = "0.3.2", default-features = false }
 objc2-quartz-core = { version = "0.3.2", default-features = false }
+openh264 = "0.8"
 ordered-float = { version = "3.0.0", features = ["serde"] }
 parking_lot = "0.12.1"
 pathfinder_color = "0.5"
@@ -170,8 +178,6 @@ winit = { git = "https://github.com/warpdotdev/winit.git", rev = "a4e0ecb5f9626c
 winreg = "0.55.0"
 x11rb = "0.13.0"
 zbus = "5.9.0"
-inventory = "0.3.20"
-log = { version = "0.4", features = ["serde", "std"] }
 
 [profile.dev]
 debug = "line-tables-only"

@@ -262,6 +262,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "asset_cache"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-compat",
+ "async-fs",
+ "base64",
+ "bytes",
+ "futures",
+ "log",
+ "reqwest",
+ "url",
+ "warp_errors",
+ "warpui_core",
+]
+
+[[package]]
+name = "asset_macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "async-broadcast"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -283,6 +309,19 @@ dependencies = [
  "event-listener-strategy",
  "futures-core",
  "pin-project-lite",
+]
+
+[[package]]
+name = "async-compat"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c97d7ff3c25d6c10d64170c12acaf5d4245e76dece3779c1d92b153a64f11df"
+dependencies = [
+ "futures-core",
+ "futures-io",
+ "once_cell",
+ "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]
