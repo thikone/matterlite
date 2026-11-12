@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/warp_core/src/features.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 pub use warp_features::*;
 use warpui_core::platform::menu::{CustomMenuItem, MenuItem, MenuItemPropertyChanges};
 fn feature_flag_menu_item(flag: FeatureFlag) -> MenuItem {

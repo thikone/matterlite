@@ -11,6 +11,7 @@ members = [
   "crates/string-offset",
   "crates/sum_tree",
   "crates/virtual_fs",
+  "crates/warp_core",
   "crates/warp_errors",
   "crates/warp_features",
   "crates/warp_util",
@@ -38,6 +39,7 @@ settings_value_derive = { path = "crates/settings_value_derive" }
 string-offset = { path = "crates/string-offset" }
 sum_tree = { path = "crates/sum_tree" }
 virtual-fs = { path = "crates/virtual_fs" }
+warp_core = { path = "crates/warp_core" }
 warp_errors = { path = "crates/warp_errors" }
 warp_features = { path = "crates/warp_features" }
 warp_util = { path = "crates/warp_util" }
@@ -73,6 +75,7 @@ ctrlc = "3.4.7"
 dashmap = "6.1.0"
 derivative = "2.2.0"
 derive_more = "0.99.17"
+directories = "6.0"
 dirs = "6.0.0"
 dispatch2 = { version = "0.3.0", default-features = false, features = ["std", "block2"] }
 dunce = "1.0.1"
@@ -104,6 +107,7 @@ itertools = "0.14.0"
 lazy_static = "1.4.0"
 libc = "0.2.81"
 libtest-mimic = "0.8.2"
+line-ending = "1.4.0"
 log = { version = "0.4", features = ["serde", "std"] }
 mime_guess = "2.0"
 minimp4 = "0.1.2"

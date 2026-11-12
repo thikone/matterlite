@@ -1545,6 +1545,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "directories"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
 name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3225,6 +3234,12 @@ dependencies = [
  "clap",
  "escape8259",
 ]
+
+[[package]]
+name = "line-ending"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50e572a8fe95c6867d8d321edf82ca9cf3547ecc1361e344838eb4153c32b327"
 
 [[package]]
 name = "linked-hash-map"
@@ -6743,6 +6758,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e"
 dependencies = [
  "try-lock",
+]
+
+[[package]]
+name = "warp_core"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "directories",
+ "dirs",
+ "futures-lite 1.13.0",
+ "getset",
+ "itertools 0.14.0",
+ "line-ending",
+ "log",
+ "pin-project",
+ "rand 0.8.6",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "settings",
+ "settings_value",
+ "strum",
+ "strum_macros",
+ "warp_errors",
+ "warp_features",
+ "warpui_core",
+ "warpui_extras",
 ]
 
 [[package]]
