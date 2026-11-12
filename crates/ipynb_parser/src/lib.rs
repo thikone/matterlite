@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/ipynb_parser/src/lib.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Parses `.ipynb` (Jupyter) notebooks directly into the [`FormattedText`]
 //! representation that Warp's rich-text/notebook renderer consumes.
 //!

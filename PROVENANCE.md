@@ -27,6 +27,9 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | crates/warp_core/ | crates/warp_core/ | 5bb7bcc6a | adapted | AGPL-3.0 | Tier B: kept app_id, assertions, async, features, platform, safe_log, ui (appearance, theme, icons, color, builder), user_preferences; removed channels, context flags, telemetry, execution mode, sync queue, semantic selection and the other Warp product modules; safe_log full output in debug builds |
 | crates/warp_core/src/paths.rs | crates/warp_core/src/paths.rs | 5bb7bcc6a | rewritten | AGPL-3.0 | MatterLite storage layout (§9); portable data/ detection kept |
 | crates/ui_components/ | crates/ui_components/ | 5bb7bcc6a | adapted | AGPL-3.0 | library example embeds the repository assets/ |
+| crates/vim/ | crates/vim/ | 5bb7bcc6a | verbatim | AGPL-3.0 | |
+| crates/ipynb_parser/ | crates/ipynb_parser/ | 5bb7bcc6a | verbatim | AGPL-3.0 | needed by warp_editor (notebook rendering) |
+| crates/warp_editor/ | crates/editor/ | 5bb7bcc6a | adapted | AGPL-3.0 | debug check uses cfg!(debug_assertions) instead of Warp channels; clippy 1.98 fixes |
 | assets/bundled/svg/ | app/assets/bundled/svg/ | 5bb7bcc6a | verbatim | AGPL-3.0 | only the icons referenced by imported code (341 of 383) |
 | assets/bundled/fonts/roboto/ | app/assets/bundled/fonts/roboto/ | 5bb7bcc6a | verbatim | Apache-2.0 | font files; LICENSE.txt included |
 

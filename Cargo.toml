@@ -3,6 +3,7 @@ members = [
   "crates/asset_cache",
   "crates/asset_macro",
   "crates/command",
+  "crates/ipynb_parser",
   "crates/markdown_parser",
   "crates/matterlite",
   "crates/settings",
@@ -11,8 +12,10 @@ members = [
   "crates/string-offset",
   "crates/sum_tree",
   "crates/ui_components",
+  "crates/vim",
   "crates/virtual_fs",
   "crates/warp_core",
+  "crates/warp_editor",
   "crates/warp_errors",
   "crates/warp_features",
   "crates/warp_util",
@@ -33,6 +36,7 @@ publish = false
 asset_cache = { path = "crates/asset_cache" }
 asset_macro = { path = "crates/asset_macro" }
 command = { path = "crates/command" }
+ipynb_parser = { path = "crates/ipynb_parser" }
 markdown_parser = { path = "crates/markdown_parser" }
 settings = { path = "crates/settings" }
 settings_value = { path = "crates/settings_value", default-features = false }
@@ -40,8 +44,10 @@ settings_value_derive = { path = "crates/settings_value_derive" }
 string-offset = { path = "crates/string-offset" }
 sum_tree = { path = "crates/sum_tree" }
 ui_components = { path = "crates/ui_components" }
+vim = { path = "crates/vim" }
 virtual-fs = { path = "crates/virtual_fs" }
 warp_core = { path = "crates/warp_core" }
+warp_editor = { path = "crates/warp_editor" }
 warp_errors = { path = "crates/warp_errors" }
 warp_features = { path = "crates/warp_features" }
 warp_util = { path = "crates/warp_util" }
@@ -111,6 +117,7 @@ libc = "0.2.81"
 libtest-mimic = "0.8.2"
 line-ending = "1.4.0"
 log = { version = "0.4", features = ["serde", "std"] }
+mermaid_to_svg = { git = "https://github.com/warpdotdev/mermaid-to-svg.git", rev = "8d3f789c2eb49335d7bf247a06bb649f59b6d4ed" }
 mime_guess = "2.0"
 minimp4 = "0.1.2"
 nix = { version = "0.26.4", default-features = false, features = ["signal"] }
@@ -132,6 +139,7 @@ pathfinder_geometry = "0.5.1"
 pin-project = "1.0.10"
 rand = "0.8.6"
 rangemap = "1.3.0"
+rayon = "1.10.0"
 regex = "1.11.1"
 reqwest = { version = "0.13", features = [
   "blocking",
@@ -163,8 +171,11 @@ tokio = "1.47.1"
 toml_edit = "0.25.5"
 tracing = "0.1.40"
 typed-path = "0.10.0"
+unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.11.0"
+unicode-width = "0.1.12"
 url = "2.5.4"
+urlocator = "0.1.4"
 vec1 = { version = "1.8.0", features = ["serde"] }
 version-compare = "0.1"
 wgpu = { version = "30.0.0", default-features = false, features = [

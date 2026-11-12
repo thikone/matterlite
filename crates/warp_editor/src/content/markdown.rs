@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/editor/src/content/markdown.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use std::collections::VecDeque;
 use std::fmt::Write;
 use std::ops::Range;
@@ -106,7 +110,7 @@ impl<'a> BufferMarkdownParser<'a> {
                         }
                         BufferBlockStyle::CodeBlock { code_block_type } => res.push_str(&format!(
                             "```{}\n",
-                            &code_block_type.to_markdown_representation(self.style)
+                            code_block_type.to_markdown_representation(self.style)
                         )),
                         BufferBlockStyle::TaskList {
                             indent_level,

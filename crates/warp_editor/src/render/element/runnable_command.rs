@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/editor/src/render/element/runnable_command.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use warpui_core::elements::{Border, CornerRadius, Empty, Radius};
 use warpui_core::geometry::vector::vec2f;
 use warpui_core::{AppContext, Element, SizeConstraint};

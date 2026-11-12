@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/vim/src/text_objects/block.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! This module is for "block objects" i.e. text objects delimited by brackets/parentheses.
 
 use std::ops::Range;

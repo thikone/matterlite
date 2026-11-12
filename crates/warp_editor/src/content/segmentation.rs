@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/editor/src/content/segmentation.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Text segmentation (splitting on words and grapheme clusters) for rich-text buffers.
 //! Mostly, this relies on the [`crate::text::word_boundaries`] module by implementing the
 //! [`TextBuffer`] API.

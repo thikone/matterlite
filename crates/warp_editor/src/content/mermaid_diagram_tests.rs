@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/editor/src/content/mermaid_diagram_tests.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use warpui_core::assets::asset_cache::{AssetCache, AssetSource, AssetState};
 use warpui_core::image_cache::ImageType;
 use warpui_core::text_layout::LayoutCache;

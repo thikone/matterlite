@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/editor/src/render/model/mod.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 use core::slice;
 use std::any::Any;
 use std::cell::{Cell, Ref, RefCell};
@@ -22,7 +26,6 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 use vec1::Vec1;
 use vim::vim::{MotionType, VimMode};
-use warp_core::channel::ChannelState;
 use warp_core::ui::Icon;
 use warp_core::ui::theme::Fill as ThemeFill;
 use warp_errors::report_error;
@@ -2293,7 +2296,7 @@ impl Add for BlockLocation {
             (Self::Middle, Self::Middle) => Self::Middle,
             _ => {
                 // Out-of-order block locations should not be added together.
-                if ChannelState::enable_debug_features() {
+                if cfg!(debug_assertions) {
                     report_error!(
                         "Tried to combine block location with later location",
                         extra: { "location" => ?self, "later_location" => ?rhs }
@@ -2833,10 +2836,7 @@ impl RenderState {
         } else {
             0
         };
-        loop {
-            let Some(item) = cursor.positioned_item() else {
-                break;
-            };
+        while let Some(item) = cursor.positioned_item() {
             if item.start_line != previous_line {
                 index_within_line = 0;
             } else {
@@ -3487,7 +3487,7 @@ impl RenderState {
 
         log::trace!(
             "Incoming block replacements {:?}",
-            &pending_edit.laid_out_line
+            pending_edit.laid_out_line
         );
 
         let hidden_range_clone = hidden_ranges.clone();
@@ -3637,7 +3637,7 @@ impl RenderState {
 
         for range in ranges {
             let hidden_range_size = range.end - range.start - 1;
-            log::trace!("==== Processing range: {:?} ====", &range);
+            log::trace!("==== Processing range: {:?} ====", range);
             new_tree.push_tree(cursor.slice(&range.start, SeekBias::Left));
             log::trace!("After pushing prefix tree:\n {}", new_tree.describe());
             let sub_tree = cursor.slice(&range.end, SeekBias::Right);
@@ -3782,6 +3782,8 @@ impl RenderState {
                 self.reveal_offset_in_table(*character_offset)
             }
             AutoScrollMode::ScrollToActiveSelections { .. } => {
+                // Every selection must be revealed, so this can't short-circuit like `any`.
+                #[allow(clippy::unnecessary_fold)]
                 self.selections().iter().fold(false, |changed, selection| {
                     self.reveal_offset_in_table(selection.head) || changed
                 })

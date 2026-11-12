@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/editor/src/render/model/char_cell_display.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Char-cell display-row projection: the single implementation of "which
 //! terminal rows does a char-cell editor occupy, and where is everything on
 //! them" once structural overlays are applied.

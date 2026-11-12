@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/editor/src/multiline.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! Common types for dealing with multi-line strings safely.
 //!
 //! There are two pairs of string types, similar to `String` / `str` and `PathBuf` / `Path`:
