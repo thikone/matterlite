@@ -4,6 +4,7 @@ members = [
   "crates/asset_macro",
   "crates/command",
   "crates/ipynb_parser",
+  "crates/languages",
   "crates/markdown_parser",
   "crates/matterlite",
   "crates/settings",
@@ -11,6 +12,7 @@ members = [
   "crates/settings_value_derive",
   "crates/string-offset",
   "crates/sum_tree",
+  "crates/syntax_tree",
   "crates/ui_components",
   "crates/vim",
   "crates/virtual_fs",
@@ -37,12 +39,14 @@ asset_cache = { path = "crates/asset_cache" }
 asset_macro = { path = "crates/asset_macro" }
 command = { path = "crates/command" }
 ipynb_parser = { path = "crates/ipynb_parser" }
+languages = { path = "crates/languages" }
 markdown_parser = { path = "crates/markdown_parser" }
 settings = { path = "crates/settings" }
 settings_value = { path = "crates/settings_value", default-features = false }
 settings_value_derive = { path = "crates/settings_value_derive" }
 string-offset = { path = "crates/string-offset" }
 sum_tree = { path = "crates/sum_tree" }
+syntax_tree = { path = "crates/syntax_tree" }
 ui_components = { path = "crates/ui_components" }
 vim = { path = "crates/vim" }
 virtual-fs = { path = "crates/virtual_fs" }
@@ -59,6 +63,42 @@ warpui_extras = { path = "crates/warpui_extras", default-features = false }
 # MatterLite needs something else.
 anyhow = "1.0"
 arboard = { version = "3.6.1", default-features = false }
+arborium = { version = "2", default-features = false, features = [
+  "lang-rust",
+  "lang-go",
+  "lang-yaml",
+  "lang-python",
+  "lang-javascript",
+  "lang-typescript",
+  "lang-tsx",
+  "lang-java",
+  "lang-cpp",
+  "lang-bash",
+  "lang-c-sharp",
+  "lang-html",
+  "lang-css",
+  "lang-c",
+  "lang-json",
+  "lang-jq",
+  "lang-hcl",
+  "lang-lua",
+  "lang-nix",
+  "lang-ruby",
+  "lang-php",
+  "lang-toml",
+  "lang-swift",
+  "lang-kotlin",
+  "lang-scala",
+  "lang-powershell",
+  "lang-elixir",
+  "lang-sql",
+  "lang-starlark",
+  "lang-objc",
+  "lang-xml",
+  "lang-vue",
+  "lang-dockerfile",
+  "lang-markdown",
+] }
 arrayvec = "0.7.4"
 async-broadcast = "0.7.2"
 async-channel = "2.3.1"
@@ -163,6 +203,7 @@ sha2 = "0.10"
 similar = { version = "2.7", features = ["inline"] }
 simplelog = "0.12.2"
 smallvec = "1.6.1"
+streaming-iterator = "0.1.0"
 strum = "0.27"
 strum_macros = "0.27"
 tempfile = "3.8.0"
