@@ -32,6 +32,9 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | crates/warp_editor/ | crates/editor/ | 5bb7bcc6a | adapted | AGPL-3.0 | debug check uses cfg!(debug_assertions) instead of Warp channels; clippy 1.98 fixes |
 | crates/languages/ | crates/languages/ | 5bb7bcc6a | adapted | AGPL-3.0 | warp_editor dependency through the workspace |
 | crates/syntax_tree/ | crates/syntax_tree/ | 5bb7bcc6a | verbatim | AGPL-3.0 | |
+| crates/watcher/ | crates/watcher/ | 5bb7bcc6a | verbatim | AGPL-3.0 | |
+| crates/warp_files/ | crates/warp_files/ | 5bb7bcc6a | adapted | AGPL-3.0 | local files only: removed the remote-host backend (remote_server) and git repository subscriptions (repo_metadata); paths canonicalized with dunce |
+| crates/fuzzy_match/ | crates/fuzzy_match/ | 5bb7bcc6a | verbatim | AGPL-3.0 | |
 | assets/bundled/svg/ | app/assets/bundled/svg/ | 5bb7bcc6a | verbatim | AGPL-3.0 | only the icons referenced by imported code (341 of 383) |
 | assets/bundled/fonts/roboto/ | app/assets/bundled/fonts/roboto/ | 5bb7bcc6a | verbatim | Apache-2.0 | font files; LICENSE.txt included |
 

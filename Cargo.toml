@@ -3,6 +3,7 @@ members = [
   "crates/asset_cache",
   "crates/asset_macro",
   "crates/command",
+  "crates/fuzzy_match",
   "crates/ipynb_parser",
   "crates/languages",
   "crates/markdown_parser",
@@ -20,10 +21,12 @@ members = [
   "crates/warp_editor",
   "crates/warp_errors",
   "crates/warp_features",
+  "crates/warp_files",
   "crates/warp_util",
   "crates/warpui",
   "crates/warpui_core",
   "crates/warpui_extras",
+  "crates/watcher",
 ]
 resolver = "2"
 
@@ -38,6 +41,7 @@ publish = false
 asset_cache = { path = "crates/asset_cache" }
 asset_macro = { path = "crates/asset_macro" }
 command = { path = "crates/command" }
+fuzzy_match = { path = "crates/fuzzy_match" }
 ipynb_parser = { path = "crates/ipynb_parser" }
 languages = { path = "crates/languages" }
 markdown_parser = { path = "crates/markdown_parser" }
@@ -54,10 +58,12 @@ warp_core = { path = "crates/warp_core" }
 warp_editor = { path = "crates/warp_editor" }
 warp_errors = { path = "crates/warp_errors" }
 warp_features = { path = "crates/warp_features" }
+warp_files = { path = "crates/warp_files" }
 warp_util = { path = "crates/warp_util" }
 warpui = { path = "crates/warpui" }
 warpui_core = { path = "crates/warpui_core" }
 warpui_extras = { path = "crates/warpui_extras", default-features = false }
+watcher = { path = "crates/watcher" }
 
 # Third-party dependencies. Versions follow Warp's workspace at the reference commit unless
 # MatterLite needs something else.
@@ -162,6 +168,7 @@ mime_guess = "2.0"
 minimp4 = "0.1.2"
 nix = { version = "0.26.4", default-features = false, features = ["signal"] }
 nom = "7.1.1"
+notify-debouncer-full = { git = "https://github.com/warpdotdev/notify", rev = "91b719849bc04ef251bcb2cc61076b099204e970" }
 num-traits = "0.2"
 objc = "0.2"
 objc2 = "0.6.3"

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Derived from warp-terminal `crates/fuzzy_match/src/lib.rs` @ 5bb7bcc6a — adapted for MatterLite.
+// Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
+
 //! # Fuzzy Match
 //!
 //! This crate provides fuzzy matching capabilities with support for both traditional
