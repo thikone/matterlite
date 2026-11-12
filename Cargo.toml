@@ -9,6 +9,7 @@ members = [
   "crates/markdown_parser",
   "crates/matterlite",
   "crates/ml_themes",
+  "crates/ml_workspace",
   "crates/settings",
   "crates/settings_value",
   "crates/settings_value_derive",
@@ -47,6 +48,7 @@ ipynb_parser = { path = "crates/ipynb_parser" }
 languages = { path = "crates/languages" }
 markdown_parser = { path = "crates/markdown_parser" }
 ml_themes = { path = "crates/ml_themes" }
+ml_workspace = { path = "crates/ml_workspace" }
 settings = { path = "crates/settings" }
 settings_value = { path = "crates/settings_value", default-features = false }
 settings_value_derive = { path = "crates/settings_value_derive" }

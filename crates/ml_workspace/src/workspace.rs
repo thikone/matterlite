@@ -1,0 +1,290 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Modelled on warp-terminal `app/src/workspace/view.rs` @ 5bb7bcc6a (tab bar over a row of tool
+// panel, tab content and right panel); the code is new.
+
+//! The window's root view: tab bar, tool panel, chat tab content and right panel.
+
+use warp_core::ui::appearance::Appearance;
+use warp_core::ui::theme::color::internal_colors;
+use warpui::elements::{
+    Align, Border, ChildView, Container, CrossAxisAlignment, Flex, MainAxisSize, MouseStateHandle,
+    ParentElement, Rect, Shrinkable, Stack, Text,
+};
+use warpui::keymap::{Context, FixedBinding};
+use warpui::{
+    AppContext, Element, Entity, SingletonEntity as _, TypedActionView, View, ViewContext,
+    ViewHandle,
+};
+
+use crate::right_panel::RightPanel;
+use crate::tab_bar::{ChatTab, render_tab_bar};
+use crate::tool_panel::{ToolPanel, ToolPanelTab};
+
+/// Keymap context set while the right panel is open (Esc closes it).
+const RIGHT_PANEL_OPEN: &str = "Workspace_RightPanelOpen";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkspaceAction {
+    /// Shows the tab in the tool panel, or hides the panel if that tab is already showing.
+    ShowToolPanelTab(ToolPanelTab),
+    ToggleToolPanel,
+    ToggleRightPanel,
+    CloseRightPanel,
+    NewTab,
+    ActivateTab(usize),
+    /// 1-based, like the `Ctrl/Cmd+N` shortcut; 9 is always the last tab.
+    ActivateTabByNumber(usize),
+    ActivateNextTab,
+    ActivatePrevTab,
+    CloseTab(usize),
+    CloseActiveTab,
+}
+
+/// Registers the workspace keybindings (MatterLite.md §10.5).
+pub fn init(app: &mut AppContext) {
+    use warpui::keymap::macros::*;
+
+    let workspace = || id!("Workspace");
+    let mut bindings = Vec::new();
+    for tab in enum_iterator::all::<ToolPanelTab>() {
+        bindings.push(FixedBinding::new(
+            format!("alt-{}", tab.number()),
+            WorkspaceAction::ShowToolPanelTab(tab),
+            workspace(),
+        ));
+    }
+    for number in 1..=9 {
+        bindings.push(FixedBinding::new(
+            format!("cmdorctrl-{number}"),
+            WorkspaceAction::ActivateTabByNumber(number),
+            workspace(),
+        ));
+    }
+    bindings.extend([
+        FixedBinding::new("ctrl-tab", WorkspaceAction::ActivateNextTab, workspace()),
+        FixedBinding::new(
+            "ctrl-shift-tab",
+            WorkspaceAction::ActivatePrevTab,
+            workspace(),
+        ),
+        FixedBinding::new("cmdorctrl-t", WorkspaceAction::NewTab, workspace()),
+        FixedBinding::new("cmdorctrl-w", WorkspaceAction::CloseActiveTab, workspace()),
+        FixedBinding::new(
+            "escape",
+            WorkspaceAction::CloseRightPanel,
+            workspace() & id!(RIGHT_PANEL_OPEN),
+        ),
+    ]);
+    app.register_fixed_bindings(bindings);
+}
+
+pub struct Workspace {
+    tabs: Vec<ChatTab>,
+    active_tab: usize,
+    /// Counter for placeholder tab titles until tabs hold real chats.
+    tabs_created: usize,
+    new_tab_mouse_state: MouseStateHandle,
+    tool_panel: ViewHandle<ToolPanel>,
+    tool_panel_open: bool,
+    right_panel: ViewHandle<RightPanel>,
+    right_panel_open: bool,
+}
+
+impl Workspace {
+    pub fn new(ctx: &mut ViewContext<Self>) -> Self {
+        ctx.subscribe_to_model(&Appearance::handle(ctx), |_, _, _, ctx| ctx.notify());
+        let tool_panel = ctx.add_typed_action_view(ToolPanel::new);
+        let right_panel = ctx.add_typed_action_view(RightPanel::new);
+        ctx.focus_self();
+        Self {
+            tabs: vec![ChatTab::new("Welcome")],
+            active_tab: 0,
+            tabs_created: 1,
+            new_tab_mouse_state: MouseStateHandle::default(),
+            tool_panel,
+            tool_panel_open: true,
+            right_panel,
+            right_panel_open: false,
+        }
+    }
+
+    fn show_tool_panel_tab(&mut self, tab: ToolPanelTab, ctx: &mut ViewContext<Self>) {
+        let showing = self.tool_panel.as_ref(ctx).active_tab();
+        if self.tool_panel_open && showing == tab {
+            self.tool_panel_open = false;
+        } else {
+            self.tool_panel_open = true;
+            self.tool_panel
+                .update(ctx, |panel, ctx| panel.set_active_tab(tab, ctx));
+        }
+        ctx.notify();
+    }
+
+    fn activate_tab(&mut self, index: usize, ctx: &mut ViewContext<Self>) {
+        if index < self.tabs.len() && index != self.active_tab {
+            self.active_tab = index;
+            ctx.notify();
+        }
+    }
+
+    fn close_tab(&mut self, index: usize, ctx: &mut ViewContext<Self>) {
+        if index >= self.tabs.len() {
+            return;
+        }
+        self.tabs.remove(index);
+        if self.tabs.is_empty() {
+            self.new_tab(ctx);
+            return;
+        }
+        if self.active_tab > index || self.active_tab >= self.tabs.len() {
+            self.active_tab = self.active_tab.saturating_sub(1);
+        }
+        ctx.notify();
+    }
+
+    fn new_tab(&mut self, ctx: &mut ViewContext<Self>) {
+        self.tabs_created += 1;
+        self.tabs
+            .push(ChatTab::new(format!("Chat {}", self.tabs_created)));
+        self.active_tab = self.tabs.len() - 1;
+        ctx.notify();
+    }
+
+    fn render_tab_content(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let font = appearance.ui_font_family();
+        let size = appearance.ui_font_size();
+        let title = &self.tabs[self.active_tab].title;
+        let line = |text: String, size: f32, color| {
+            Container::new(
+                Text::new_inline(text, font, size)
+                    .with_color(color)
+                    .finish(),
+            )
+            .with_margin_bottom(6.)
+            .finish()
+        };
+        Align::new(
+            Flex::column()
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_child(line(
+                    title.clone(),
+                    size + 8.,
+                    theme.main_text_color(theme.background()).into_solid(),
+                ))
+                .with_child(line(
+                    "The timeline and composer of this chat will be here.".to_string(),
+                    size,
+                    theme.sub_text_color(theme.background()).into_solid(),
+                ))
+                .with_child(line(
+                    "Alt+1…6 tool panel · Ctrl+T new tab · Ctrl+W close · Ctrl+Tab next"
+                        .to_string(),
+                    size - 1.,
+                    theme.hint_text_color(theme.background()).into_solid(),
+                ))
+                .finish(),
+        )
+        .finish()
+    }
+}
+
+impl Entity for Workspace {
+    type Event = ();
+}
+
+impl View for Workspace {
+    fn ui_name() -> &'static str {
+        "Workspace"
+    }
+
+    fn keymap_context(&self, _: &AppContext) -> Context {
+        let mut context = Self::default_keymap_context();
+        if self.right_panel_open {
+            context.set.insert(RIGHT_PANEL_OPEN);
+        }
+        context
+    }
+
+    fn render(&self, app: &AppContext) -> Box<dyn Element> {
+        let appearance = Appearance::as_ref(app);
+        let theme = appearance.theme();
+        let divider = internal_colors::fg_overlay_3(theme);
+
+        let mut body = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
+        if self.tool_panel_open {
+            body.add_child(
+                Container::new(ChildView::new(&self.tool_panel).finish())
+                    .with_border(Border::right(1.).with_border_fill(divider))
+                    .finish(),
+            );
+        }
+        body.add_child(Shrinkable::new(1., self.render_tab_content(appearance)).finish());
+        if self.right_panel_open {
+            body.add_child(
+                Container::new(ChildView::new(&self.right_panel).finish())
+                    .with_border(Border::left(1.).with_border_fill(divider))
+                    .finish(),
+            );
+        }
+
+        let column = Flex::column()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_child(render_tab_bar(
+                &self.tabs,
+                self.active_tab,
+                &self.new_tab_mouse_state,
+                appearance,
+            ))
+            .with_child(Shrinkable::new(1., body.finish()).finish())
+            .finish();
+
+        Stack::new()
+            .with_child(Rect::new().with_background(theme.background()).finish())
+            .with_child(column)
+            .finish()
+    }
+}
+
+impl TypedActionView for Workspace {
+    type Action = WorkspaceAction;
+
+    fn handle_action(&mut self, action: &WorkspaceAction, ctx: &mut ViewContext<Self>) {
+        match *action {
+            WorkspaceAction::ShowToolPanelTab(tab) => self.show_tool_panel_tab(tab, ctx),
+            WorkspaceAction::ToggleToolPanel => {
+                self.tool_panel_open = !self.tool_panel_open;
+                ctx.notify();
+            }
+            WorkspaceAction::ToggleRightPanel => {
+                self.right_panel_open = !self.right_panel_open;
+                ctx.notify();
+            }
+            WorkspaceAction::CloseRightPanel => {
+                self.right_panel_open = false;
+                ctx.notify();
+            }
+            WorkspaceAction::NewTab => self.new_tab(ctx),
+            WorkspaceAction::ActivateTab(index) => self.activate_tab(index, ctx),
+            WorkspaceAction::ActivateTabByNumber(number) => {
+                let index = if number >= 9 {
+                    self.tabs.len() - 1
+                } else {
+                    number - 1
+                };
+                self.activate_tab(index, ctx);
+            }
+            WorkspaceAction::ActivateNextTab => {
+                self.activate_tab((self.active_tab + 1) % self.tabs.len(), ctx);
+            }
+            WorkspaceAction::ActivatePrevTab => {
+                let len = self.tabs.len();
+                self.activate_tab((self.active_tab + len - 1) % len, ctx);
+            }
+            WorkspaceAction::CloseTab(index) => self.close_tab(index, ctx),
+            WorkspaceAction::CloseActiveTab => self.close_tab(self.active_tab, ctx),
+        }
+    }
+}

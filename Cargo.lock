@@ -4123,6 +4123,7 @@ dependencies = [
  "env_logger",
  "log",
  "ml_themes",
+ "ml_workspace",
  "rust-embed",
  "settings",
  "warp_core",
@@ -4260,6 +4261,15 @@ dependencies = [
  "warp_core",
  "warpui",
  "warpui_core",
+]
+
+[[package]]
+name = "ml_workspace"
+version = "0.1.0"
+dependencies = [
+ "enum-iterator",
+ "warp_core",
+ "warpui",
 ]
 
 [[package]]

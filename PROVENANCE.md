@@ -40,6 +40,8 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | crates/ml_themes/src/settings.rs | app/src/settings/theme.rs | 5bb7bcc6a | adapted | AGPL-3.0 | settings never sync to a cloud |
 | crates/ml_themes/src/appearance.rs | app/src/appearance.rs | 5bb7bcc6a | rewritten | AGPL-3.0 | font loading and theme refresh only; no font settings, app icons or wasm events |
 | crates/ml_themes/src/warp_import/themes/theme_chooser.rs | app/src/themes/theme_chooser.rs | 5bb7bcc6a | verbatim | AGPL-3.0 | not compiled; adapted together with ml_workspace |
+| crates/ml_workspace/src/buttons.rs | app/src/ui_components/buttons.rs | 5bb7bcc6a | adapted | AGPL-3.0 | icon_button_with_color and its styles only |
+| crates/ml_workspace/src/warp_import/session_history.rs | app/src/workspace/view/session_history.rs | 5bb7bcc6a | verbatim | AGPL-3.0 | not compiled; source for SearchBarView |
 | assets/async/jpg/ | app/assets/async/jpg/ | 5bb7bcc6a | verbatim | AGPL-3.0 | background images of the built-in themes (10 files) |
 | assets/bundled/fonts/password.ttf | app/assets/bundled/fonts/password.ttf | 5bb7bcc6a | verbatim | AGPL-3.0 | password dots font |
 | assets/bundled/fonts/hack/ | app/assets/bundled/fonts/hack/ | 5bb7bcc6a | verbatim | MIT | Hack font with its LICENSE.md; monospace font |

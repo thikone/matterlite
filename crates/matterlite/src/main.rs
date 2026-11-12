@@ -4,7 +4,6 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod assets;
-mod root_view;
 mod settings_init;
 
 use ml_themes::AppearanceManager;
@@ -35,12 +34,13 @@ fn main() -> anyhow::Result<()> {
             ctx.terminate_app(warpui::platform::TerminationMode::ForceTerminate, None);
             return;
         }
+        ml_workspace::init(ctx);
         ctx.add_window(
             AddWindowOptions {
                 title: Some("MatterLite".to_string()),
                 ..Default::default()
             },
-            root_view::RootView::new,
+            ml_workspace::Workspace::new,
         );
     })?;
     Ok(())

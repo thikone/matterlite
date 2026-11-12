@@ -1,0 +1,13 @@
+[package]
+name = "ml_workspace"
+version = "0.1.0"
+description = "Warp-style window shell for MatterLite"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+enum-iterator.workspace = true
+warp_core.workspace = true
+warpui.workspace = true
