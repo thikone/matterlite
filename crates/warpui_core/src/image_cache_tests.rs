@@ -502,7 +502,9 @@ fn test_svg_text_rasterizes_with_loaded_system_fonts() {
     assert!(
         image
             .rgba_bytes()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel[3] != 0)
     );
 }
@@ -541,7 +543,9 @@ fn test_svg_text_rasterizes_with_bundled_sans_serif_fallback() {
     assert!(
         image
             .rgba_bytes()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel[3] != 0)
     );
 }

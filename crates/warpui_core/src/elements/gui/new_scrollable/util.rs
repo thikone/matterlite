@@ -122,16 +122,6 @@ pub(super) fn adjust_scroll_delta_with_sensitivity_config(
 // │                             │
 // │                             │
 // └─────────────────────────────┘
-/// Calculate the scroll delta (in pixels) needed to bring the element delimited by
-/// `position_bounds` into view within `viewport_bounds` on the given axis.
-///
-/// The behaviour depends on `mode`:
-/// - [`ScrollToPositionMode::FullyIntoView`]: scrolls the minimum amount to make the
-///   entire element visible. When the element is larger than the viewport, no scroll
-///   is performed.
-/// - [`ScrollToPositionMode::TopIntoView`]: behaves like `FullyIntoView` when the
-///   element fits in the viewport. When the element is larger, aligns the element's
-///   leading edge with the viewport's leading edge.
 /// Whether `position_bounds` belongs to the scrollable's content.
 ///
 /// The check exists to reject a position from an unrelated element tree, so it is
@@ -156,6 +146,16 @@ pub(crate) fn position_within_child(child_bounds: RectF, position_bounds: RectF)
     })
 }
 
+/// Calculate the scroll delta (in pixels) needed to bring the element delimited by
+/// `position_bounds` into view within `viewport_bounds` on the given axis.
+///
+/// The behaviour depends on `mode`:
+/// - [`ScrollToPositionMode::FullyIntoView`]: scrolls the minimum amount to make the
+///   entire element visible. When the element is larger than the viewport, no scroll
+///   is performed.
+/// - [`ScrollToPositionMode::TopIntoView`]: behaves like `FullyIntoView` when the
+///   element fits in the viewport. When the element is larger, aligns the element's
+///   leading edge with the viewport's leading edge.
 pub(crate) fn scroll_delta_for_axis(
     axis: Axis,
     viewport_bounds: RectF,
