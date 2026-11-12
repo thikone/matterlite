@@ -3,6 +3,22 @@
 // Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
 
 pub use warp_features::*;
+
+/// Flags MatterLite turns on. Every other flag inherited from Warp stays off.
+pub const MATTERLITE_FLAGS: &[FeatureFlag] = &[
+    FeatureFlag::SettingsFile,
+    FeatureFlag::MarkdownTables,
+    FeatureFlag::MarkdownMermaid,
+];
+
+/// Enables [`MATTERLITE_FLAGS`] and marks the flags initialized. Call once at startup, before
+/// anything checks a flag.
+pub fn init() {
+    for flag in MATTERLITE_FLAGS {
+        flag.set_enabled(true);
+    }
+    mark_initialized();
+}
 use warpui_core::platform::menu::{CustomMenuItem, MenuItem, MenuItemPropertyChanges};
 fn feature_flag_menu_item(flag: FeatureFlag) -> MenuItem {
     MenuItem::Custom(CustomMenuItem::new(

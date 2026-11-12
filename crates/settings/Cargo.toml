@@ -24,5 +24,3 @@ tempfile.workspace = true
 warp_features = { workspace = true, features = ["test-util"] }
 warpui_extras = { workspace = true, features = ["user_preferences-toml"] }
 
-[features]
-integration_tests = []
