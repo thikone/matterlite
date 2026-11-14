@@ -4572,7 +4572,6 @@ pub enum Event {
     BackspaceAtBeginningOfBuffer,
     BackspaceOnEmptyBuffer,
     BufferReplaced,
-    BufferReinitialized,
     CmdUpOnFirstRow,
     Copy,
     Escape,
@@ -5238,8 +5237,6 @@ impl<T: 'static> SliceExt<T> for [T] {
         }
     }
 }
-
-// ===== MODULES =====
 
 mod element {
     use std::ops::Range;
