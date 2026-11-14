@@ -255,12 +255,9 @@ impl AsAction for Arc<dyn Action> {
     }
 }
 
-// Regression coverage for the headless-TUI startup crash: a GUI keystroke
-// binding that leaks into a TUI keymap context must be caught by
-// `validate_bindings`, and scoping it out of TUI contexts must make validation
-// pass. This is the exact failure mode that panicked the debug TUI at startup
-// with `app:reopen_closed_session` (see `app/src/undo_close/mod.rs`). These run
-// in the standard `cargo nextest` suite on Linux/macOS/Windows. Gated on
+// Binding validators: a validator registered for a keymap context must catch a
+// keystroke binding that reaches that context without belonging to it, and
+// scoping the binding out of the context must make validation pass. Gated on
 // `debug_assertions` because `validate_bindings` is a no-op in release.
 
 #[cfg(debug_assertions)]
@@ -269,15 +266,15 @@ enum ValidationTestAction {
     ReopenClosedSession,
 }
 
-/// Mirrors `warp_tui::keybindings::is_tui_owned_binding`: a keystroke binding
-/// that matches a TUI view context must be TUI-owned (a `tui:`-prefixed name or
-/// the `tui` group). Non-keystroke triggers are exempt.
+/// A keystroke binding that matches the panel context must belong to the panel
+/// (a `panel:`-prefixed name or the `panel` group). Non-keystroke triggers are
+/// exempt.
 #[cfg(debug_assertions)]
-fn require_tui_owned(binding: BindingLens) -> IsBindingValid {
+fn require_panel_owned(binding: BindingLens) -> IsBindingValid {
     if !matches!(binding.trigger, Trigger::Keystrokes(_)) {
         return IsBindingValid::Yes;
     }
-    if binding.name.starts_with("tui:") || binding.group == Some("tui") {
+    if binding.name.starts_with("panel:") || binding.group == Some("panel") {
         IsBindingValid::Yes
     } else {
         IsBindingValid::No
@@ -300,29 +297,28 @@ fn matcher_with_reopen_binding(context_predicate: Option<ContextPredicate>) -> M
     keymap.register_editable_bindings([binding]);
 
     let mut matcher = Matcher::new(keymap);
-    // Validate against a TUI view context, as the headless TUI does.
-    let mut tui_context = Context::default();
-    tui_context.set.insert("RootTuiView");
-    matcher.register_binding_validator(tui_context, require_tui_owned);
+    let mut panel_context = Context::default();
+    panel_context.set.insert("Panel");
+    matcher.register_binding_validator(panel_context, require_panel_owned);
     matcher
 }
 
 /// Without a context predicate the binding defaults to `Just(true)`, so its
-/// keystroke matches the TUI view context and, not being TUI-owned, fails
-/// validation — reproducing the debug-TUI startup panic.
+/// keystroke matches the panel context and, not belonging to the panel, fails
+/// validation.
 #[cfg(debug_assertions)]
 #[test]
 #[should_panic(expected = "Bindings failed validation")]
-fn unscoped_gui_keystroke_binding_fails_tui_validation() {
+fn unscoped_keystroke_binding_fails_validation() {
     let mut matcher = matcher_with_reopen_binding(None);
     matcher.validate_bindings();
 }
 
-/// Scoping the binding to the GUI `Workspace` context (the fix) keeps it out of
-/// TUI keymap contexts, so validation passes.
+/// Scoping the binding to the `Workspace` context keeps it out of the panel
+/// context, so validation passes.
 #[cfg(debug_assertions)]
 #[test]
-fn workspace_scoped_binding_passes_tui_validation() {
+fn workspace_scoped_binding_passes_validation() {
     let mut matcher = matcher_with_reopen_binding(Some(id!("Workspace")));
     matcher.validate_bindings();
 }

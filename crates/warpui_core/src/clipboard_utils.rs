@@ -2,7 +2,6 @@
 // Derived from warp-terminal `crates/warpui_core/src/clipboard_utils.rs` @ 5bb7bcc6a — adapted for MatterLite.
 // Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
 
-use itertools::Itertools;
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
 use {arboard, image::ImageEncoder};
 
@@ -426,27 +425,6 @@ pub fn get_image_filepaths_from_paths(paths: &[String]) -> Vec<String> {
         .filter(|path| has_image_extension(path))
         .cloned()
         .collect()
-}
-
-/// Create escaped file paths text string for insertion into terminal.
-pub fn escaped_paths_str(
-    paths: &[String],
-    shell_family: Option<warp_util::path::ShellFamily>,
-) -> String {
-    // Handle regular file paths as text
-    #[allow(unused_mut)]
-    let mut input = paths
-        .iter()
-        .map(|path| match shell_family {
-            Some(shell_family) => shell_family.escape(path.as_ref()),
-            None => std::borrow::Cow::Borrowed(path.as_ref()),
-        })
-        .join(" ");
-
-    // Append a space in case of back-to-back drag-drops.
-    input.push(' ');
-
-    input
 }
 
 #[cfg(test)]

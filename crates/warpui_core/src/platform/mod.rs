@@ -30,7 +30,6 @@ use lazy_static::lazy_static;
 use pathfinder_geometry::rect::{RectF, RectI};
 use pathfinder_geometry::vector::{Vector2F, Vector2I};
 use serde::{Deserialize, Serialize};
-use warp_util::path::ShellFamily;
 
 use crate::accessibility::AccessibilityContent;
 use crate::fonts::canvas::RasterFormat;
@@ -704,15 +703,6 @@ impl OperatingSystem {
     /// Returns true if the current [`OperatingSystem`] is Windows.
     pub fn is_windows(&self) -> bool {
         *self == OperatingSystem::Windows
-    }
-
-    pub fn default_shell_family(&self) -> ShellFamily {
-        match self {
-            OperatingSystem::Linux | OperatingSystem::Mac | OperatingSystem::Other(_) => {
-                ShellFamily::Posix
-            }
-            OperatingSystem::Windows => ShellFamily::PowerShell,
-        }
     }
 }
 

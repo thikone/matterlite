@@ -30,8 +30,8 @@ use crate::{
 };
 
 impl<'a, T: View> ViewContext<'a, T> {
-    /// The layout-position cache is only populated by the GUI presenter; in
-    /// TUI mode this method returns `None` because there is no presenter.
+    /// The layout-position cache is populated by the presenter; this returns
+    /// `None` before the element has been laid out.
     pub fn element_position_by_id<S>(&self, id: S) -> Option<pathfinder_geometry::rect::RectF>
     where
         S: AsRef<str>,
