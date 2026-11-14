@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Modelled on warp-terminal `app/src/workspace/view.rs` @ 5bb7bcc6a (tab bar over a row of tool
-// panel, tab content and right panel; the theme chooser in place of the left panel); the code is
+// panel, tab content and right panel; the theme chooser as a panel left of them); the code is
 // new.
 
-//! The window's root view: tab bar, tool panel (or the theme chooser), chat tab content and
+//! The window's root view: tab bar, theme chooser (when open), tool panel, chat tab content and
 //! right panel.
 
 use ml_themes::theme_chooser::ThemeChooserAction;
@@ -51,7 +51,7 @@ pub enum WorkspaceAction {
     ActivatePrevTab,
     CloseTab(usize),
     CloseActiveTab,
-    /// Opens the theme chooser in place of the tool panel, or closes it.
+    /// Opens the theme chooser as a panel left of the tool panel, or closes it.
     ToggleThemeChooser,
 }
 
@@ -177,9 +177,7 @@ impl Workspace {
     /// already showing hides the panel.
     fn show_tool_panel_tab(&mut self, tab: ToolPanelTab, ctx: &mut ViewContext<Self>) {
         let showing = self.tool_panel.as_ref(ctx).active_tab();
-        let chooser_was_open = self.theme_chooser_open;
-        self.close_theme_chooser(ctx);
-        if self.tool_panel_open && showing == tab && !chooser_was_open {
+        if self.tool_panel_open && showing == tab {
             self.set_tool_panel_open(false, ctx);
             return;
         }
@@ -188,9 +186,8 @@ impl Workspace {
             panel.set_active_tab(tab, ctx);
             panel.focus_search(ctx)
         });
-        // Don't leave the focus in the search field of a tab that is no longer showing, or in
-        // the closed theme chooser.
-        if !focused_search && (chooser_was_open || self.tool_panel.as_ref(ctx).has_focus(ctx)) {
+        // Don't leave the focus in the search field of a tab that is no longer showing.
+        if !focused_search && self.tool_panel.as_ref(ctx).has_focus(ctx) {
             ctx.focus_self();
         }
         ctx.notify();
@@ -299,6 +296,8 @@ impl View for Workspace {
         let mut body = Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
+        // As in Warp, the chooser opens beside the other panels instead of replacing them, so
+        // the tool panel shows each previewed theme too.
         if self.theme_chooser_open {
             body.add_child(
                 Container::new(
@@ -309,7 +308,8 @@ impl View for Workspace {
                 .with_border(Border::right(1.).with_border_fill(divider))
                 .finish(),
             );
-        } else if self.tool_panel_open {
+        }
+        if self.tool_panel_open {
             body.add_child(
                 Container::new(ChildView::new(&self.tool_panel).finish())
                     .with_border(Border::right(1.).with_border_fill(divider))
