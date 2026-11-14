@@ -1594,6 +1594,12 @@ Dirty state, "unsaved changes" prompts and external-change detection come from
 
 ### 14.4 Extraction plan (`ml_file_views`)
 
+> **M0 spike result** ([FileViews.md](FileViews.md)): a read-only `FileView` built directly on
+> `warp_editor` (about 1,300 lines) already renders Markdown, notebooks, highlighted code and
+> text. The plan below is replaced by building thin views on `warp_editor` and porting only the
+> pieces listed in FileViews.md (horizontal scroll, line numbers, find, go to line, links,
+> lightbox, editing), instead of extracting and trimming Warp's `code/` and `notebooks/`.
+
 The viewers are **app-level code** in Warp (about 15k lines for the code editor and 16k for
 notebooks), tied to the rest of Warp's app. The extraction:
 
@@ -1756,6 +1762,8 @@ Mirror the Warp fork's portable scheme (`script/windows/build-portable.ps1`,
 - **File viewer extraction** (`ml_file_views`) is the largest reuse job: about 31k lines of
   Warp app code tied to LSP, AI, code review and the workspace. Mitigation: the read-only
   spike in M0; cut features rather than port them; the system-app fallback stays available.
+  The spike found that `warp_editor` carries most of the work, so the viewers are built on it
+  directly ([FileViews.md](FileViews.md)).
 - **Keeping themes and viewers in sync with Warp**: app-level code (`themes`, `code`,
   `notebooks`) changes more often than the framework crates. Record the Warp revision and
   re-diff deliberately; don't chase upstream.

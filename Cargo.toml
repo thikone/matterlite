@@ -9,6 +9,7 @@ members = [
   "crates/markdown_parser",
   "crates/matterlite",
   "crates/ml_editor",
+  "crates/ml_file_views",
   "crates/ml_logging",
   "crates/ml_themes",
   "crates/ml_workspace",
@@ -50,6 +51,7 @@ ipynb_parser = { path = "crates/ipynb_parser" }
 languages = { path = "crates/languages" }
 markdown_parser = { path = "crates/markdown_parser" }
 ml_editor = { path = "crates/ml_editor" }
+ml_file_views = { path = "crates/ml_file_views" }
 ml_logging = { path = "crates/ml_logging" }
 ml_themes = { path = "crates/ml_themes" }
 ml_workspace = { path = "crates/ml_workspace" }

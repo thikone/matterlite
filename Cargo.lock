@@ -4280,6 +4280,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "ml_file_views"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "languages",
+ "log",
+ "ml_themes",
+ "pathfinder_color",
+ "rangemap",
+ "rust-embed",
+ "settings",
+ "string-offset",
+ "syntax_tree",
+ "tempfile",
+ "warp_core",
+ "warp_editor",
+ "warp_util",
+ "warpui",
+ "warpui_extras",
+]
+
+[[package]]
 name = "ml_logging"
 version = "0.1.0"
 dependencies = [
