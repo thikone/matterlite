@@ -12,15 +12,20 @@ anyhow.workspace = true
 asset_macro.workspace = true
 concat-idents.workspace = true
 log.workspace = true
+ml_editor.workspace = true
 pathfinder_color.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
 settings.workspace = true
 settings_value = { workspace = true, features = ["derive"] }
 warp_core.workspace = true
 warpui.workspace = true
 warpui_core.workspace = true
+walkdir.workspace = true
 
 [dev-dependencies]
-serde_yaml.workspace = true
+tempfile.workspace = true
+warp_core = { workspace = true, features = ["test-util"] }
+warpui_extras.workspace = true

@@ -1300,8 +1300,11 @@ the Mattermost themes, and a chat palette for the colors a terminal theme doesn'
   Base16 themes work too (`ThemeKind::CustomBase16`).
 - **Follow the system theme**: `RespectSystemTheme::On { light, dark }` switches between
   two themes when the OS switches between light and dark mode.
-- **Theme chooser** (`theme_chooser.rs`) with live preview; optionally the **theme
-  creator**, which builds a theme from an image.
+- **Theme chooser** (`ml_themes::theme_chooser`) with live preview, shown in place of the
+  tool panel (brush button in its header, or Ctrl+Alt+Shift+T / Cmd+Ctrl+T). Each entry is a
+  small chat drawn in the theme's colours (`ml_themes::preview`) instead of Warp's terminal
+  listing. Up/Down apply and save at once. A reload button re-reads the custom themes.
+  Optionally, later, the **theme creator**, which builds a theme from an image.
 - **Syntax highlighting colors come from the theme's ANSI colors**:
   `syntax_highlighting_color_map` in `app/src/code/editor/model.rs` maps keyword → magenta,
   function → blue, string/number → green, type → red, comment → yellow, … into

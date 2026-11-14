@@ -17,7 +17,7 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | crates/command/ | crates/command/ | 5bb7bcc6a | verbatim | AGPL-3.0 | |
 | crates/warp_util/ | crates/warp_util/ | 5bb7bcc6a | adapted | AGPL-3.0 | Tier C: kept content_version, file, file_type, path, standardized_path, user_input, windows; removed git, worktree, remote-host, sync and on_cancel helpers |
 | crates/warpui_core/ | crates/warpui_core/ | 5bb7bcc6a | adapted | MIT | removed the TUI front-end (`tui` feature, elements/tui, runtime), wasm deps; Roboto path points at assets/; test GIF moved to test_data/ |
-| crates/warpui/ | crates/warpui/ | 5bb7bcc6a | adapted | MIT | removed the wasm platform and wasm deps; only the list and scrolling examples; font tests read assets/bundled/fonts |
+| crates/warpui/ | crates/warpui/ | 5bb7bcc6a | adapted | MIT | removed the wasm platform and wasm deps; only the list and scrolling examples; font tests read assets/bundled/fonts; Windows clipboard tests serialised |
 | crates/virtual_fs/ | crates/virtual_fs/ | 5bb7bcc6a | adapted | AGPL-3.0 | test helper for warpui; one clippy fix |
 | crates/asset_cache/ | crates/asset_cache/ | 5bb7bcc6a | adapted | AGPL-3.0 | wasm branches removed |
 | crates/asset_macro/ | crates/asset_macro/ | 5bb7bcc6a | adapted | AGPL-3.0 | assets resolved from the repository assets/ dir; remote_asset! removed; bundled_or_fetched_asset! always bundles; warp_util::assets constants inlined |
@@ -39,7 +39,8 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | crates/ml_themes/src/default_themes.rs | app/src/themes/default_themes.rs | 5bb7bcc6a | adapted | AGPL-3.0 | referral themes removed |
 | crates/ml_themes/src/settings.rs | app/src/settings/theme.rs | 5bb7bcc6a | adapted | AGPL-3.0 | settings never sync to a cloud |
 | crates/ml_themes/src/appearance.rs | app/src/appearance.rs | 5bb7bcc6a | rewritten | AGPL-3.0 | font loading and theme refresh only; no font settings, app icons or wasm events |
-| crates/ml_themes/src/warp_import/themes/theme_chooser.rs | app/src/themes/theme_chooser.rs | 5bb7bcc6a | verbatim | AGPL-3.0 | not compiled; adapted together with ml_workspace |
+| crates/ml_themes/src/theme_chooser.rs | app/src/themes/theme_chooser.rs | 5bb7bcc6a | adapted | AGPL-3.0 | no telemetry, tips, referral themes, traffic lights or focus dimming; theme creator and custom theme deletion not ported (reload button and themes-folder hint instead); search field on ml_editor; chat preview from preview.rs; `open` replaces the workspace's mode/selection setup |
+| crates/ml_themes/src/custom_themes.rs | app/src/user_config/util.rs, app/src/user_config/native.rs | 5bb7bcc6a | adapted | AGPL-3.0 | theme-file loading only (`load_theme_configs`, file-name → theme name); no workflows, launch configs, tab configs or model routers |
 | crates/ml_workspace/src/buttons.rs | app/src/ui_components/buttons.rs | 5bb7bcc6a | adapted | AGPL-3.0 | icon_button_with_color and its styles only |
 | crates/ml_workspace/src/search_bar.rs | app/src/workspace/view/session_history.rs | 5bb7bcc6a | adapted | AGPL-3.0 | search field, toggle rendering, group separator and `Matcher` extracted into a reusable `SearchBarView`; toggles configurable per pane; block list, terminal and row code dropped |
 | crates/ml_workspace/src/warp_import/session_history.rs | app/src/workspace/view/session_history.rs | 5bb7bcc6a | verbatim | AGPL-3.0 | not compiled; SearchBarView extracted into search_bar.rs; kept as the model for the History pane's rows |

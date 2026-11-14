@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 enum-iterator.workspace = true
 ml_editor.workspace = true
+ml_themes.workspace = true
 pathfinder_color.workspace = true
 pathfinder_geometry.workspace = true
 regex.workspace = true

@@ -174,6 +174,7 @@ pub struct ToolPanel {
     search_bars: Vec<(ToolPanelTab, ViewHandle<SearchBarView>)>,
     button_mouse_states: Vec<(ToolPanelTab, MouseStateHandle)>,
     close_mouse_state: MouseStateHandle,
+    themes_mouse_state: MouseStateHandle,
     resizable_state: ResizableStateHandle,
 }
 
@@ -199,6 +200,7 @@ impl ToolPanel {
                 .map(|tab| (tab, MouseStateHandle::default()))
                 .collect(),
             close_mouse_state: MouseStateHandle::default(),
+            themes_mouse_state: MouseStateHandle::default(),
             resizable_state: resizable_state_handle(DEFAULT_WIDTH),
         }
     }
@@ -278,6 +280,27 @@ impl ToolPanel {
             })
             .with_cursor(Cursor::PointingHand)
             .finish()
+    }
+
+    fn render_themes_button(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let tooltip = appearance
+            .ui_builder()
+            .tool_tip("Themes".to_string())
+            .build()
+            .finish();
+        icon_button_with_color(
+            appearance,
+            Icon::PaintBrush,
+            false,
+            self.themes_mouse_state.clone(),
+            theme.sub_text_color(theme.background()),
+        )
+        .with_tooltip(move || tooltip)
+        .build()
+        .on_click(|ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::ToggleThemeChooser))
+        .with_cursor(Cursor::PointingHand)
+        .finish()
     }
 
     fn render_close_button(&self, appearance: &Appearance) -> Box<dyn Element> {
@@ -401,7 +424,14 @@ impl View for ToolPanel {
                     .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
                     .with_cross_axis_alignment(CrossAxisAlignment::Center)
                     .with_child(Shrinkable::new(1., toolbelt).finish())
-                    .with_child(self.render_close_button(appearance))
+                    .with_child(
+                        Flex::row()
+                            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                            .with_spacing(2.)
+                            .with_child(self.render_themes_button(appearance))
+                            .with_child(self.render_close_button(appearance))
+                            .finish(),
+                    )
                     .finish(),
             )
             .with_height(PANEL_HEADER_HEIGHT)

@@ -11,6 +11,7 @@ use warpui::elements::DEFAULT_UI_LINE_HEIGHT_RATIO;
 use warpui::fonts::{FamilyId, Weight};
 use warpui::{AppContext, AssetProvider, Entity, ModelContext, SingletonEntity};
 
+use crate::custom_themes::load_theme_configs;
 use crate::settings::{ThemeSettings, active_theme_kind};
 use crate::theme::{ThemeKind, WarpThemeConfig};
 
@@ -20,20 +21,31 @@ pub const DEFAULT_MONOSPACE_FONT_SIZE: f32 = 13.0;
 /// Owns the theme registry and pushes theme changes into [`Appearance`]: when the theme
 /// settings change, when the OS switches between light and dark mode, and while a theme is
 /// previewed (transient theme) in the theme chooser.
+///
+/// The registry holds the built-in themes and the custom themes from the themes directory,
+/// read at startup and again by [`Self::reload_themes`].
 pub struct AppearanceManager {
     themes: WarpThemeConfig,
     transient_theme: Option<WarpTheme>,
 }
 
 impl AppearanceManager {
-    fn new(ctx: &mut ModelContext<Self>) -> Self {
+    pub(crate) fn new(themes: WarpThemeConfig, ctx: &mut ModelContext<Self>) -> Self {
         ctx.subscribe_to_model(&ThemeSettings::handle(ctx), move |me, _, _event, ctx| {
             me.refresh_theme_state(ctx);
         });
         Self {
-            themes: WarpThemeConfig::new(),
+            themes,
             transient_theme: None,
         }
+    }
+
+    /// Re-reads the custom themes from the themes directory, then re-applies the active theme
+    /// (an edited custom theme takes effect at once).
+    pub fn reload_themes(&mut self, ctx: &mut ModelContext<Self>) {
+        self.themes = load_theme_configs(&warp_core::paths::themes_dir());
+        ctx.emit(AppearanceManagerEvent::ThemesChanged);
+        self.refresh_theme_state(ctx);
     }
 
     /// The registry of available themes.
@@ -69,8 +81,14 @@ impl AppearanceManager {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum AppearanceManagerEvent {
+    /// The set of available themes changed.
+    ThemesChanged,
+}
+
 impl Entity for AppearanceManager {
-    type Event = ();
+    type Event = AppearanceManagerEvent;
 }
 
 impl SingletonEntity for AppearanceManager {}
@@ -97,7 +115,7 @@ pub fn register(assets: &dyn AssetProvider, ctx: &mut AppContext) -> Result<()> 
         ctx,
     )?;
 
-    let themes = WarpThemeConfig::new();
+    let themes = load_theme_configs(&warp_core::paths::themes_dir());
     let theme = themes.theme(&active_theme_kind(ThemeSettings::as_ref(ctx), ctx));
     let appearance = Appearance::new(
         theme,
@@ -110,7 +128,7 @@ pub fn register(assets: &dyn AssetProvider, ctx: &mut AppContext) -> Result<()> 
         password,
     );
     ctx.add_singleton_model(move |_| appearance);
-    ctx.add_singleton_model(AppearanceManager::new);
+    ctx.add_singleton_model(move |ctx| AppearanceManager::new(themes, ctx));
     Ok(())
 }
 

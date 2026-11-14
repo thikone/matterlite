@@ -234,6 +234,7 @@ url = "2.5.4"
 urlocator = "0.1.4"
 vec1 = { version = "1.8.0", features = ["serde"] }
 version-compare = "0.1"
+walkdir = "2"
 wgpu = { version = "30.0.0", default-features = false, features = [
   "dx12",
   "gles",

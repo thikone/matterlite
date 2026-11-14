@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Modelled on warp-terminal `app/src/workspace/view.rs` @ 5bb7bcc6a (tab bar over a row of tool
-// panel, tab content and right panel); the code is new.
+// panel, tab content and right panel; the theme chooser in place of the left panel); the code is
+// new.
 
-//! The window's root view: tab bar, tool panel, chat tab content and right panel.
+//! The window's root view: tab bar, tool panel (or the theme chooser), chat tab content and
+//! right panel.
 
+use ml_themes::theme_chooser::ThemeChooserAction;
+use ml_themes::{ThemeChooser, ThemeChooserEvent};
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warpui::elements::{
-    Align, Border, ChildView, Container, CrossAxisAlignment, Flex, MainAxisSize, MouseStateHandle,
-    ParentElement, Rect, Shrinkable, Stack, Text,
+    Align, Border, ChildView, ConstrainedBox, Container, CrossAxisAlignment, Flex, MainAxisSize,
+    MouseStateHandle, ParentElement, Rect, Shrinkable, Stack, Text,
 };
 use warpui::keymap::{Context, FixedBinding};
 use warpui::{
@@ -22,6 +26,15 @@ use crate::tool_panel::{ToolPanel, ToolPanelEvent, ToolPanelTab};
 
 /// Keymap context set while the right panel is open (Esc closes it).
 const RIGHT_PANEL_OPEN: &str = "Workspace_RightPanelOpen";
+/// Warp's width for the theme chooser panel; fits the 190-px previews.
+const THEME_CHOOSER_WIDTH: f32 = 240.;
+/// Opens or closes the theme chooser. Warp has no default key for it; this one is free on all
+/// platforms and leaves Ctrl/Cmd+T for new tabs.
+const THEME_CHOOSER_KEY: &str = if cfg!(target_os = "macos") {
+    "cmd-ctrl-t"
+} else {
+    "ctrl-alt-shift-T"
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkspaceAction {
@@ -38,6 +51,8 @@ pub enum WorkspaceAction {
     ActivatePrevTab,
     CloseTab(usize),
     CloseActiveTab,
+    /// Opens the theme chooser in place of the tool panel, or closes it.
+    ToggleThemeChooser,
 }
 
 /// Registers the workspace keybindings (MatterLite.md §10.5).
@@ -70,6 +85,11 @@ pub fn init(app: &mut AppContext) {
         FixedBinding::new("cmdorctrl-t", WorkspaceAction::NewTab, workspace()),
         FixedBinding::new("cmdorctrl-w", WorkspaceAction::CloseActiveTab, workspace()),
         FixedBinding::new(
+            THEME_CHOOSER_KEY,
+            WorkspaceAction::ToggleThemeChooser,
+            workspace(),
+        ),
+        FixedBinding::new(
             "escape",
             WorkspaceAction::CloseRightPanel,
             workspace() & id!(RIGHT_PANEL_OPEN),
@@ -88,6 +108,8 @@ pub struct Workspace {
     tool_panel_open: bool,
     right_panel: ViewHandle<RightPanel>,
     right_panel_open: bool,
+    theme_chooser: ViewHandle<ThemeChooser>,
+    theme_chooser_open: bool,
 }
 
 impl Workspace {
@@ -99,6 +121,18 @@ impl Workspace {
             ToolPanelEvent::ReturnFocus => ctx.focus_self(),
         });
         let right_panel = ctx.add_typed_action_view(RightPanel::new);
+        let theme_chooser = ctx.add_typed_action_view(ThemeChooser::new);
+        ctx.subscribe_to_view(&theme_chooser, |me, _, event, ctx| match event {
+            // Closed from inside (Esc, Enter, the close button). When the workspace closes it,
+            // the flag is already cleared and the focus already moved on.
+            ThemeChooserEvent::Close => {
+                if me.theme_chooser_open {
+                    me.theme_chooser_open = false;
+                    ctx.focus_self();
+                    ctx.notify();
+                }
+            }
+        });
         ctx.focus_self();
         Self {
             tabs: vec![ChatTab::new("Welcome")],
@@ -109,14 +143,43 @@ impl Workspace {
             tool_panel_open: true,
             right_panel,
             right_panel_open: false,
+            theme_chooser,
+            theme_chooser_open: false,
         }
+    }
+
+    fn toggle_theme_chooser(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.theme_chooser_open {
+            self.close_theme_chooser(ctx);
+            ctx.focus_self();
+        } else {
+            self.theme_chooser_open = true;
+            self.theme_chooser
+                .update(ctx, |chooser, ctx| chooser.open(ctx));
+            ctx.focus(&self.theme_chooser);
+        }
+        ctx.notify();
+    }
+
+    /// Closes the chooser as its own Close does (ends the preview, clears the search).
+    fn close_theme_chooser(&mut self, ctx: &mut ViewContext<Self>) {
+        if !self.theme_chooser_open {
+            return;
+        }
+        self.theme_chooser_open = false;
+        self.theme_chooser.update(ctx, |chooser, ctx| {
+            chooser.handle_action(&ThemeChooserAction::Close, ctx)
+        });
+        ctx.notify();
     }
 
     /// Shows the tab and focuses its search field, if it has one; showing the tab that is
     /// already showing hides the panel.
     fn show_tool_panel_tab(&mut self, tab: ToolPanelTab, ctx: &mut ViewContext<Self>) {
         let showing = self.tool_panel.as_ref(ctx).active_tab();
-        if self.tool_panel_open && showing == tab {
+        let chooser_was_open = self.theme_chooser_open;
+        self.close_theme_chooser(ctx);
+        if self.tool_panel_open && showing == tab && !chooser_was_open {
             self.set_tool_panel_open(false, ctx);
             return;
         }
@@ -125,8 +188,9 @@ impl Workspace {
             panel.set_active_tab(tab, ctx);
             panel.focus_search(ctx)
         });
-        // Don't leave the focus in the search field of a tab that is no longer showing.
-        if !focused_search && self.tool_panel.as_ref(ctx).has_focus(ctx) {
+        // Don't leave the focus in the search field of a tab that is no longer showing, or in
+        // the closed theme chooser.
+        if !focused_search && (chooser_was_open || self.tool_panel.as_ref(ctx).has_focus(ctx)) {
             ctx.focus_self();
         }
         ctx.notify();
@@ -198,7 +262,8 @@ impl Workspace {
                     theme.sub_text_color(theme.background()).into_solid(),
                 ))
                 .with_child(line(
-                    "Alt+1…6 tool panel · Ctrl+T new tab · Ctrl+W close · Ctrl+Tab next"
+                    "Alt+1…6 tool panel · Ctrl+T new tab · Ctrl+W close · Ctrl+Tab next · \
+                     Ctrl+Alt+Shift+T themes"
                         .to_string(),
                     size - 1.,
                     theme.hint_text_color(theme.background()).into_solid(),
@@ -234,7 +299,17 @@ impl View for Workspace {
         let mut body = Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-        if self.tool_panel_open {
+        if self.theme_chooser_open {
+            body.add_child(
+                Container::new(
+                    ConstrainedBox::new(ChildView::new(&self.theme_chooser).finish())
+                        .with_width(THEME_CHOOSER_WIDTH)
+                        .finish(),
+                )
+                .with_border(Border::right(1.).with_border_fill(divider))
+                .finish(),
+            );
+        } else if self.tool_panel_open {
             body.add_child(
                 Container::new(ChildView::new(&self.tool_panel).finish())
                     .with_border(Border::right(1.).with_border_fill(divider))
@@ -277,6 +352,7 @@ impl TypedActionView for Workspace {
             WorkspaceAction::ToggleToolPanel => {
                 self.set_tool_panel_open(!self.tool_panel_open, ctx);
             }
+            WorkspaceAction::ToggleThemeChooser => self.toggle_theme_chooser(ctx),
             WorkspaceAction::ToggleRightPanel => {
                 self.right_panel_open = !self.right_panel_open;
                 ctx.notify();

@@ -40,6 +40,7 @@ fn main() -> anyhow::Result<()> {
             return;
         }
         ml_editor::init(ctx);
+        ml_themes::theme_chooser::init(ctx);
         ml_workspace::init(ctx);
         ctx.add_window(
             AddWindowOptions {
