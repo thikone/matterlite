@@ -25,6 +25,7 @@ use mm_model::{
     Channel, ChannelId, ChannelMember, ChannelType, ServerVersion, SessionToken, Status, User,
     UserId,
 };
+use mm_store::Store;
 use mm_ws::{DisconnectReason, WsConfig, WsOutput};
 
 const USAGE: &str = "usage: mm-cli <server-url> <ping|bootstrap|events> [--login <user>]";
@@ -246,6 +247,20 @@ async fn bootstrap(client: &Client) -> Result<()> {
     };
     lap("DM profiles + statuses", &mut step);
 
+    let mut store = Store::new(me.clone());
+    store.set_config(config.clone());
+    store.set_license(license.clone());
+    store.set_preferences(preferences.clone());
+    store.set_teams(teams.clone(), team_members.clone());
+    store.set_team_unreads(unreads.clone());
+    store.set_channels(channels.clone(), members.clone());
+    for (team, ordered) in &categories {
+        store.set_categories(team.id.clone(), ordered.clone());
+    }
+    store.set_roles(roles.clone());
+    store.add_users(profiles.clone());
+    store.set_statuses(statuses.clone());
+
     println!(
         "server     {} (licensed: {})",
         version_text(client),
@@ -389,11 +404,98 @@ async fn bootstrap(client: &Client) -> Result<()> {
         println!("  [{}] {}", team.display_name, names.join(" · "));
     }
 
+    print_store_sidebar(&store, &unreads, crt);
+
     println!("\ntimings");
     for (name, elapsed) in timings {
         println!("  {name:<34} {:>6} ms", elapsed.as_millis());
     }
     Ok(())
+}
+
+/// The sidebar as `mm_store` derives it, with its team badges checked against the server's.
+fn print_store_sidebar(store: &Store, server: &[mm_model::TeamUnread], crt: bool) {
+    println!("\nsidebar (mm_store)");
+    let badge = |unread: &mm_store::TeamUnread| {
+        let mut text = format!("{} unread, {} mentions", unread.messages, unread.mentions);
+        if crt {
+            text.push_str(&format!(
+                "; threads {} unread, {} mentions",
+                unread.threads, unread.thread_mentions
+            ));
+        }
+        text
+    };
+    let mut teams: Vec<_> = store.teams.values().collect();
+    teams.sort_by(|a, b| mm_store::compare_names(&a.display_name, &b.display_name));
+    for team in teams {
+        let computed = store.team_unread(&team.id);
+        let check = match server.iter().find(|unread| unread.team_id == team.id) {
+            Some(unread) => {
+                let (messages, mentions) = if crt {
+                    (unread.msg_count_root, unread.mention_count_root)
+                } else {
+                    (unread.msg_count, unread.mention_count)
+                };
+                if (messages, mentions) == (computed.messages, computed.mentions) {
+                    "matches the server".to_owned()
+                } else {
+                    format!("server: {messages} unread, {mentions} mentions")
+                }
+            }
+            None => "no server numbers".to_owned(),
+        };
+        println!("  [{}] {} ({check})", team.display_name, badge(&computed));
+        let sidebar = store.sidebar(&team.id, None);
+        if let Some(unreads) = &sidebar.unreads {
+            print_sidebar_group("Unreads", false, unreads);
+        }
+        for view in &sidebar.categories {
+            print_sidebar_group(
+                &view.category.display_name,
+                view.category.collapsed,
+                &view.channels,
+            );
+        }
+    }
+    let direct = store.direct_unread();
+    println!(
+        "  DMs and GMs: {} unread, {} mentions",
+        direct.messages, direct.mentions
+    );
+    let to_save = store.dm_gm_show_preferences_to_save();
+    if !to_save.is_empty() {
+        let names: Vec<String> = to_save
+            .iter()
+            .map(|preference| format!("{}/{}", preference.category, preference.name))
+            .collect();
+        println!(
+            "  the webapp would save {} so these stay visible once read: {}",
+            names.len(),
+            names.join(", ")
+        );
+    }
+}
+
+fn print_sidebar_group(title: &str, collapsed: bool, channels: &[mm_store::SidebarChannel]) {
+    println!("    {title}{}", if collapsed { " (collapsed)" } else { "" });
+    for channel in channels {
+        let mut notes = Vec::new();
+        if channel.unread.messages > 0 && !channel.unread.muted {
+            notes.push(format!("{} unread", channel.unread.messages));
+        }
+        if channel.unread.mentions > 0 {
+            notes.push(format!("{} mentions", channel.unread.mentions));
+        }
+        if channel.unread.muted {
+            notes.push("muted".to_owned());
+        }
+        if channel.archived {
+            notes.push("archived".to_owned());
+        }
+        let marker = if channel.unread.is_unread() { "*" } else { " " };
+        println!("     {marker} {:<30} {}", channel.name, notes.join(", "));
+    }
 }
 
 /// The other user of a DM channel named `<id>__<id>` (yourself for a self-DM).

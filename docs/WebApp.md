@@ -1069,13 +1069,31 @@ Sorting (`makeSortChannels`):
 | `alpha` / `""` (default) | display name (locale-aware, DMs by teammate display name) |
 | `recent` | `max(last_post_at` (or `last_root_post_at` under CRT)`, create_at)` desc |
 
-DM/GM visibility (`makeFilterAutoclosedDMs`, `makeFilterManuallyClosedDMs`):
+For `alpha` and `""`, muted channels go last (`makeCompareChannels`); names compare by the
+user's locale with numbers as numbers (`localeCompare(…, {numeric: true})`), GM names are the
+other members' display names, sorted.
 
-- Hidden if preference `direct_channel_show/<other_user_id> == "false"` (or
-  `group_channel_show/<channel_id>`), unless it has unreads.
-- Show at most `sidebar_settings/limit_visible_dms_gms` (default 20, or "all"), keeping the
-  most recently viewed/posted ones; unread and current channels always shown.
-- DMs with deactivated users are hidden unless current.
+Filters, in this order (`makeFilterAndSortChannelsForCategory`); the current channel passes
+every one:
+
+- **Archived** channels are hidden (`makeFilterArchivedChannels`).
+- **DM/GM visibility is opt-in** (`makeFilterManuallyClosedDMs`): a DM shows only if the
+  preference `direct_channel_show/<other_user_id>` exists and isn't `"false"` (a GM:
+  `group_channel_show/<channel_id>`), or it's unread. A DM without the preference is hidden
+  once read. The webapp keeps them visible by **saving `"true"` itself** for every unread DM/GM
+  that lacks it, after loading the channels (`loadProfilesForDM`/`loadProfilesForGM` in
+  `CS/actions/user_actions.ts`) and when a new DM arrives (`loadNewDMIfNeeded`). The self-DM's
+  key is the empty name (`channel.name` with my id stripped), so it is usually hidden.
+- **Autoclose**, in the `direct_messages` category only (`makeFilterAutoclosedDMs`): DMs with a
+  deactivated user are hidden unless opened after the deactivation (`last_viewed_at`, or the
+  `channel_approximate_view_time`/`channel_open_time` preferences); then at most
+  `sidebar_settings/limit_visible_dms_gms` (**default 40**, `getVisibleDmGmLimit`) stay, or
+  the number of unread ones if larger, ranked current → unread → last viewed.
+
+**Unreads group** (`sidebar_settings/show_unread_section`, default from config
+`ExperimentalGroupUnreadChannels == "default_on"`): unread channels of the team and DMs/GMs at
+the top, out of their categories, sorted muted last → with mentions → most recent
+(`sortUnreadChannels`). A collapsed category still shows its unread and current channels.
 
 Display names:
 

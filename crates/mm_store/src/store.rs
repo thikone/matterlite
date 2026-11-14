@@ -448,7 +448,7 @@ impl Store {
                     .map(|user| (user.username.as_str(), user.as_ref()))
                     .collect();
                 let format = self.name_format();
-                channel
+                let mut names: Vec<String> = channel
                     .display_name
                     .split(',')
                     .map(str::trim)
@@ -458,8 +458,9 @@ impl Store {
                             .get(username)
                             .map_or_else(|| username.to_owned(), |user| format.display(user))
                     })
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                    .collect();
+                names.sort_by(|a, b| crate::sidebar::compare_names(a, b));
+                names.join(", ")
             }
             _ => channel.display_name.clone(),
         })

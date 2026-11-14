@@ -17,6 +17,7 @@ env_logger.workspace = true
 log.workspace = true
 mm_api.workspace = true
 mm_model.workspace = true
+mm_store.workspace = true
 mm_ws.workspace = true
 rpassword = "7"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }

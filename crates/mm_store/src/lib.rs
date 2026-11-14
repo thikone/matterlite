@@ -6,18 +6,28 @@
 //! their counters, timelines per channel and thread, preferences, categories and roles.
 //! [`Store::apply`] takes WebSocket events, the loaders take REST responses, and every change
 //! is reported as [`StoreDelta`]s for the UI copy and the cache writer. Derived views (unread
-//! counts, team badges, display names, permissions) are computed from the state. No I/O and
+//! counts, team badges, display names, permissions, the sidebar and the timeline items) are
+//! computed from the state. No I/O and
 //! no UI: the sync engine (`mm_sync`) drives it.
 
 mod apply;
 mod delta;
+mod items;
 mod names;
+mod sidebar;
 mod store;
 mod timeline;
 mod unread;
 
 pub use delta::{Fetch, StoreDelta};
+pub use items::{
+    ItemOptions, MAX_COMBINED_SYSTEM_POSTS, POST_COLLAPSE_MS, TimelineItem,
+    USER_ACTIVITY_POST_TYPES, Zone, consecutive,
+};
 pub use names::{NameFormat, dm_partner, full_name};
+pub use sidebar::{
+    DEFAULT_DM_GM_LIMIT, Sidebar, SidebarCategoryView, SidebarChannel, compare_names,
+};
 pub use store::{PageRequest, PendingPost, Store, ThreadCounts};
 pub use timeline::{Key, Page, Range, Timeline};
 pub use unread::{

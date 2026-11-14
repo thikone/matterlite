@@ -233,6 +233,11 @@ sidebar categories
   [Second Team] Favorites (0) · Channels (3) · Direct Messages (5)
 ```
 
+After this, `bootstrap` prints the sidebar as `mm_store` derives it (`sidebar (mm_store)`):
+each team's badge with "matches the server", the categories with their visible channels, and
+the DM/GM show preferences the webapp would save. Alice's self-DM is not listed: it is read
+and has no `direct_channel_show` preference, so the webapp hides it too (`WebApp §14`).
+
 Some numbers look odd but are what the server does (`WebApp §10`, `§12`):
 
 - **Collapsed Reply Threads is on.** Channel counts are root posts only (`msg_count_root`,
