@@ -50,7 +50,7 @@ that go beyond the webapp have their own design documents:
 | MVP scope | **Core chat**: login, teams, channels, DMs/GMs, read/send, live updates, unread badges, Markdown, emoji | + threads/reactions, files/previews, notifications/search (later milestones) |
 | Warp reuse | **Copy and adapt, tiered** (§4). `..\warp-terminal` is a read-only reference; the MatterLite repo is self-sufficient and holds only needed code. Framework crates are copied whole then pruned (Warp names kept); app-level pieces are extracted file by file into `ml_*` crates; helpers are inlined or rewritten. Provenance via `PROVENANCE.md`, per-file headers, import/adapt commit pairs and `AGENTS.md` rules | Pull-on-demand only; whole-crate copy of everything; re-implement from reference; path/git deps; `vendor/` split |
 | Markdown | **comrak** (GFM AST) + own Mattermost pass + own WarpUI renderer | Warp `markdown_parser`; pulldown-cmark |
-| Composer | **Warp's `editor` crate** | WarpUI `text_input` |
+| Composer | **Warp's terminal-input editor** (`EditorView` from `app/src/editor`, extracted into `ml_editor`, §13) | Warp's `editor` crate (`warp_editor`, the editor behind Warp's code and notebook views; kept for the file viewers, §14); WarpUI `text_input` |
 | Themes | **Warp's theme system and `Appearance`**, including all Warp built-in themes, **plus new themes matching Mattermost's** (Denim, Sapphire, Quartz, Indigo, Onyx) and the user's server-side Mattermost theme | Mattermost themes only |
 | Window layout | **Warp workspace layout**: tab bar of recent chats (focus-or-open, LRU cap, pinning); left **tool panel** with 6 tabs (Chats, Activity, Channel, History, Files, Search); **right panel** for threads; split panes in a tab after the MVP | Webapp-style fixed sidebar + right-hand sidebar |
 | Channel list | **Tool panel "Chats" tab** (team switcher on top) | Permanent column; vertical tabs only |
@@ -117,7 +117,7 @@ below means "copied whole, then pruned and adapted as needed".
 | `crates/markdown_parser` | Required by `warpui_core`/`editor` (MatterLite's message Markdown uses comrak, §12) |
 | `crates/settings`, `settings_value`, `settings_value_derive` | Typed settings with a TOML backing file and change notifications |
 | `crates/warp_features` | Feature flags; folded into `warp_core::features` with only MatterLite's flags (Tier C) |
-| `crates/editor` | Composer: rich text editing, selection, undo, search, Markdown-aware model (§13) |
+| `crates/editor` | `warp_editor`: the editing model behind Warp's code and notebook views, used by the file viewers (§14). Not the composer, which uses `ml_editor` (§3.2, §13) |
 | `crates/vim` | Required by `editor` (optional Vim mode) |
 | `crates/asset_cache` | Async asset loading from URL/data URI with caching — reuse for avatars, emoji and images |
 | `crates/ipynb_parser` | Required by `editor` (can be stubbed later) |
@@ -134,13 +134,14 @@ below means "copied whole, then pruned and adapted as needed".
 |---|---|---|
 | `crates/warp_core` | `features` (`FeatureFlag`), `ui::{appearance, theme, icons, color}`, `paths` (incl. `portable_root()`), `platform`, `safe_log`, `errors`, `sync_queue`, `interval_timer` | Terminal/agent/telemetry/session code (`cli_agent_protocol`, `semantic_selection`, `telemetry`, `execution_mode`, `command`), the dependency on `command-corrections` (git), `websocket` if unused. Replace `ChannelState`-derived directory names with constants (`"MatterLite"`). |
 | `crates/ui_components` | `dialog`, `button`, `switch`, `tooltip`, `lightbox` (image viewer), `keyboard_shortcut` | Warp-specific styling hooks |
+| `app/src/editor/` (+ `settings/editor.rs`, `settings/select.rs`, small `util` helpers) → new crate `ml_editor` (done in M0) | `EditorView` in one file, `EditorView.rs`: single-line and multi-line editing, CRDT buffer with undo, multiple cursors, soft wrap, IME, placeholders, decorators; cursor and selection settings. Details: [`EditorView.md`](EditorView.md) | Vim mode, voice input, AI context menu and image attachments, autosuggestions, command x-ray, smart select, fold commands, shared-session peers and remote edits (to restore for collaborative drafts: [`MatterLite-Collaborate.md`](MatterLite-Collaborate.md) §8), terminal-only actions |
 | `app/src/themes/` → new crate `ml_themes` | `default_themes.rs` (all built-in `WarpTheme`s and their ANSI palettes), `theme.rs` (`ThemeKind`, custom YAML themes from `themes_dir()`, `RespectSystemTheme` light/dark pairs), `theme_chooser.rs` (picker UI), optionally `theme_creator*` (builds a theme from an image) | Referral-reward themes (`SentReferralReward`, `ReceivedReferralReward`), telemetry, Warp Drive/cloud hooks. Then add the Mattermost themes (§11). |
 | `app/src/workspace/view/{left_panel.rs, right_panel.rs, vertical_tabs*}`, `app/src/tab.rs`, `app/src/pane_group/`, `app/src/undo_close/` → new crate `ml_workspace` | Toolbelt + tool panel (`ToolPanelView` with MatterLite's 6 variants, resizing, persisted state), right panel shell (resizable/maximize/close), tab bar (`TabBarState`, `TabComponent`, pin/colour/rename/drag/close/reopen, `ActivateTabByNumber`), vertical tabs, pane groups (for split panes after the MVP) | Terminal sessions, code review contents of the right panel, agent management, Warp Drive, tab configs/launch configs, telemetry. `workspace/view.rs` is about 29k lines: **copy patterns and the needed parts, don't port it whole**. |
 | `app/src/workspace/view/session_history.rs` → `ml_workspace::search_bar` | The search field + toggle bar + `Matcher` (§10.10) as a reusable `SearchBarView`; the row list and selection patterns as the model for the History pane | Block-list/terminal coupling, block menus, capture commands |
 | `app/src/code/file_tree/` + `app/src/code/icon.rs` | Tree view (collapsible groups, keyboard navigation, context menu) and file-type icons for the Files explorer (§10.9) | File-system watching, repository detection, file editing operations in the tree |
 | `app/src/code/` + `app/src/notebooks/` → new crate `ml_file_views` | Code editor view (`code/editor/*`: element, model, find, goto_line, nav_bar, scroll, Vim handler), `local_code_editor.rs` (load/save + editor model), Markdown/Jupyter viewer with Rendered/Raw toggle (`notebooks/file/`, the needed parts of `notebooks/editor/`), `util/openable_file_type.rs`, `util/image.rs` | LSP (`lsp`, find references, language server extension), AI diff validation, code review comments/inline diff, `remote_server`, `repo_metadata`, cloud objects, workspace/pane-group/terminal coupling. Replace them with small traits (§14.4). About 15k + 16k lines in Warp; the largest reuse job. |
 
-What the editor needs from `warp_core` (measured by grep): `features::FeatureFlag` (incl.
+What `warp_editor` needs from `warp_core` (measured by grep): `features::FeatureFlag` (incl.
 `MarkdownTables`, `MarkdownMermaid`), `ui::theme::Fill`, `ui::theme::color::internal_colors`,
 `ui::appearance::{Appearance, DEFAULT_UI_FONT_SIZE}`, `ui::Icon`, `platform::SessionPlatform`,
 `safe_error`, `channel::ChannelState`. That's a small surface, so a trimmed `warp_core` is
@@ -210,7 +211,7 @@ Strategy depends on how cohesive the Warp code is:
 | Tier | Strategy | Applies to | Naming |
 |---|---|---|---|
 | **A: framework** | Copy the **whole crate**, get it compiling, then **prune** unused modules, features and dependencies. Adapt APIs where MatterLite needs it. | `warpui_core` (63k lines), `warpui` (24k), `warp_editor` (`crates/editor`, 32k), `sum_tree`, `string-offset`, `markdown_parser`, `vim`, `syntax_tree`, `languages`, `warpui_extras`, `asset_cache`, `asset_macro`, `warp_files`, `watcher`, `fuzzy_match`, `settings` + `settings_value` + `settings_value_derive`, `ui_components`, `warp_errors` (tiny, imported by 29 framework files) | **Keep Warp's crate and directory names** so code maps 1:1 to the reference |
-| **B: app-level** | **Selective extraction**: copy only the needed files, types or functions from Warp's `app/` (and from `warp_core`). Cut every link to terminal, AI, Drive, LSP or telemetry; replace app-crate dependencies with small MatterLite traits. | `warp_core` (kept name: `features` with MatterLite flags only, `ui::{appearance, theme, icons, color}`, `paths`, `platform`, `safe_log`, `errors`, `async` helpers); `ml_themes` ← `app/src/themes`; `ml_workspace` ← `app/src/{tab.rs, pane_group/, undo_close/}`, `workspace/view/{left_panel, right_panel, vertical_tabs*, session_history}.rs`, `code/file_tree/`, `code/icon.rs`; `ml_file_views` ← `app/src/code/`, `app/src/notebooks/`, `app/src/util/{openable_file_type, image}.rs` | `warp_core` keeps its name (the editor and themes import it widely); everything extracted from `app/` goes into `ml_*` crates |
+| **B: app-level** | **Selective extraction**: copy only the needed files, types or functions from Warp's `app/` (and from `warp_core`). Cut every link to terminal, AI, Drive, LSP or telemetry; replace app-crate dependencies with small MatterLite traits. | `warp_core` (kept name: `features` with MatterLite flags only, `ui::{appearance, theme, icons, color}`, `paths`, `platform`, `safe_log`, `errors`, `async` helpers); `ml_themes` ← `app/src/themes`; `ml_editor` ← `app/src/editor`, `settings/{editor, select}.rs`; `ml_workspace` ← `app/src/{tab.rs, pane_group/, undo_close/}`, `workspace/view/{left_panel, right_panel, vertical_tabs*, session_history}.rs`, `code/file_tree/`, `code/icon.rs`; `ml_file_views` ← `app/src/code/`, `app/src/notebooks/`, `app/src/util/{openable_file_type, image}.rs` | `warp_core` keeps its name (the editor and themes import it widely); everything extracted from `app/` goes into `ml_*` crates |
 | **C: helpers** | **Inline or rewrite** small utilities rather than carrying whole crates. | `warp_util` → keep only `path`, `standardized_path`, `content_version`, `user_input`, `file`, `file_type` (and `local_or_remote_path`/`remote_path` only if `ml_file_views` still needs them after cutting remote support); `command` → dropped (only needed by `warp_util` parts that aren't kept); `warp_features` → folded into `warp_core::features`; `warp_logging` → rewritten as a small `ml_logging` (env_logger + file rotation, using Warp's `rotation.rs` as reference) | Keep `warp_util` as a small crate if many imports use it, otherwise inline into callers |
 
 Tiers are a starting point, not a rule. If a Tier A crate turns out to be mostly unused,
@@ -262,7 +263,7 @@ For each crate:
 
 | When | Extraction |
 |---|---|
-| M0 | `ml_workspace` shell (tab bar, toolbelt/tool panel, right panel) + `SearchBarView`; `ml_themes` |
+| M0 | `ml_workspace` shell (tab bar, toolbelt/tool panel, right panel) + `SearchBarView`; `ml_themes`; `ml_editor` (`EditorView`, for the search bar, login form and composer) |
 | M3 | History-pane row/selection patterns from `session_history.rs` |
 | M5 | `ml_file_views` (read-only spike in M0), `code/file_tree` for the Files explorer |
 | M8 | `pane_group` for split panes, vertical tabs |
@@ -387,6 +388,9 @@ matterlite/
                              ipynb) with limits, timeouts and panic isolation (§8.6)
     ml_themes/               Warp themes (extracted from app/src/themes) + Mattermost themes,
                              ChatColors, Mattermost theme JSON ⇄ WarpTheme conversion
+    ml_editor/               Warp's EditorView (single- and multi-line text input) in one file,
+                             EditorView.rs, extracted from app/src/editor; used by the search
+                             bar, login form, dialogs and the composer
     ml_file_views/           Warp code editor + Markdown/Jupyter viewer + image lightbox,
                              extracted from app/src/{code,notebooks}, without LSP/AI
     ml_workspace/            Warp-style shell: tab bar, tool panel + toolbelt, right panel,
@@ -991,7 +995,7 @@ on the left with a toolbelt of icons, the **active tab's content** in the middle
 │🔍│   # random             │  [av] bob  10:05   💬 3 replies         │ ┌────────────┐ │
 │  │   🔒 dev           @2  │  carol is typing…                       │ │ reply…     │ │
 │  │ ▾ DIRECT MESSAGES      │ ┌─────────────────────────────────────┐ │ └────────────┘ │
-│  │   ● carol              │ │ composer (warp editor)       Send ▶ │ │                │
+│  │   ● carol              │ │ composer (EditorView)        Send ▶ │ │                │
 └──┴────────────────────────┴─┴─────────────────────────────────────┴─┴────────────────┘
  toolbelt  tool panel (Alt+1…6)        chat tab content                  right panel
 ```
