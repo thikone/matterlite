@@ -37,6 +37,11 @@ jobs:
       # Compiler and clippy messages become annotations on the run and the diff.
       - run: echo "::add-matcher::.github/matchers/rust.json"
       - run: cargo fmt --all -- --check
-      # --keep-going: one failing crate doesn't hide the errors in the others.
+      # --keep-going: one failing crate doesn't hide the errors in the others. No colour codes
+      # here: they stop the problem matcher from recognising the messages.
       - run: cargo clippy --workspace --all-targets --keep-going -- -D warnings
+        env:
+          CARGO_TERM_COLOR: never
       - run: cargo test --workspace --no-fail-fast
+        env:
+          CARGO_TERM_COLOR: never
