@@ -4245,6 +4245,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "ml_editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec",
+ "bounded-vec-deque",
+ "concat-idents",
+ "enum-iterator",
+ "instant",
+ "itertools 0.14.0",
+ "lazy_static",
+ "log",
+ "num-traits",
+ "parking_lot",
+ "pathfinder_geometry",
+ "rayon",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "settings_value",
+ "smallvec",
+ "string-offset",
+ "sum_tree",
+ "vec1",
+ "warp_core",
+ "warp_editor",
+ "warp_errors",
+ "warp_util",
+ "warpui",
+ "warpui_extras",
+]
+
+[[package]]
 name = "ml_logging"
 version = "0.1.0"
 dependencies = [

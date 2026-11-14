@@ -1,0 +1,41 @@
+[package]
+name = "ml_editor"
+version = "0.1.0"
+description = "Single- and multi-line text editor view for MatterLite"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+arrayvec.workspace = true
+bounded-vec-deque.workspace = true
+concat-idents.workspace = true
+enum-iterator.workspace = true
+instant.workspace = true
+itertools.workspace = true
+lazy_static.workspace = true
+log.workspace = true
+num-traits.workspace = true
+parking_lot.workspace = true
+pathfinder_geometry.workspace = true
+rayon.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+settings_value = { workspace = true, features = ["derive"] }
+smallvec.workspace = true
+string-offset.workspace = true
+sum_tree.workspace = true
+vec1.workspace = true
+warp_core.workspace = true
+warp_editor.workspace = true
+warp_errors.workspace = true
+warp_util.workspace = true
+warpui.workspace = true
+
+[dev-dependencies]
+warp_core = { workspace = true, features = ["test-util"] }
+warpui_extras.workspace = true
