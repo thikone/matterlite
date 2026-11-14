@@ -7,7 +7,6 @@ extern crate num_derive;
 
 pub mod accessibility;
 pub mod actions;
-mod app_focus_telemetry;
 pub mod assets;
 pub mod r#async;
 pub mod clipboard;
@@ -27,14 +26,12 @@ pub mod prelude;
 pub mod presenter;
 pub mod rendering;
 pub mod scene;
-pub mod telemetry;
 #[cfg(test)]
 mod test;
 pub mod text;
 pub mod text_layout;
 pub mod text_selection_utils;
 pub mod time;
-pub mod traces;
 pub mod ui_components;
 pub mod units;
 pub mod util;

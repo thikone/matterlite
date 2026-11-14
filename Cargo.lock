@@ -8069,7 +8069,6 @@ dependencies = [
  "async-fs",
  "async-io",
  "async-task",
- "bounded-vec-deque",
  "bytes",
  "cfg-if",
  "cfg_aliases",
