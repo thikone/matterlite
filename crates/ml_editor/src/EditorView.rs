@@ -4936,8 +4936,8 @@ pub use selection_settings::{SelectionSettings, SelectionSettingsChangedEvent};
 
 // Each settings group lives in its own module: the macro expands to imports that would clash.
 mod editor_settings {
+    use settings::SupportedPlatforms;
     use settings::macros::define_settings_group;
-    use settings::{SupportedPlatforms, SyncToCloud};
 
     use super::{CursorBlink, CursorDisplayType};
 
@@ -4946,7 +4946,6 @@ mod editor_settings {
             type: CursorBlink,
             default: CursorBlink::default(),
             supported_platforms: SupportedPlatforms::ALL,
-            sync_to_cloud: SyncToCloud::Never,
             surface: settings::SettingSurfaces::GUI,
             private: false,
             storage_key: "CursorBlink",
@@ -4957,7 +4956,6 @@ mod editor_settings {
             type: CursorDisplayType,
             default: CursorDisplayType::default(),
             supported_platforms: SupportedPlatforms::ALL,
-            sync_to_cloud: SyncToCloud::Never,
             surface: settings::SettingSurfaces::GUI,
             private: false,
             storage_key: "CursorDisplayType",
@@ -4968,7 +4966,6 @@ mod editor_settings {
             type: bool,
             default: true,
             supported_platforms: SupportedPlatforms::ALL,
-            sync_to_cloud: SyncToCloud::Never,
             surface: settings::SettingSurfaces::GUI,
             private: false,
             toml_path: "text_editing.autocomplete_symbols",
@@ -4979,7 +4976,7 @@ mod editor_settings {
 
 mod selection_settings {
     use settings::macros::define_settings_group;
-    use settings::{Setting as _, SupportedPlatforms, SyncToCloud};
+    use settings::{Setting as _, SupportedPlatforms};
     use warpui::AppContext;
     use warpui::clipboard::ClipboardContent;
 
@@ -4988,7 +4985,6 @@ mod selection_settings {
             type: bool,
             default: true,
             supported_platforms: SupportedPlatforms::LINUX,
-            sync_to_cloud: SyncToCloud::Never,
             surface: settings::SettingSurfaces::GUI,
             private: false,
             toml_path: "system.linux_selection_clipboard",
@@ -5001,7 +4997,6 @@ mod selection_settings {
                 SupportedPlatforms::WINDOWS.into(),
                 SupportedPlatforms::MAC.into()
             ),
-            sync_to_cloud: SyncToCloud::Never,
             surface: settings::SettingSurfaces::GUI,
             private: false,
             toml_path: "text_editing.middle_click_paste_enabled",

@@ -3,7 +3,7 @@
 // Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
 
 use settings::macros::define_settings_group;
-use settings::{Setting, SupportedPlatforms, SyncToCloud};
+use settings::{Setting, SupportedPlatforms};
 use warpui::AppContext;
 use warpui::platform::SystemTheme;
 
@@ -20,7 +20,6 @@ define_settings_group!(ThemeSettings, settings: [
         type: ThemeKind,
         default: ThemeKind::default(),
         supported_platforms: SupportedPlatforms::ALL,
-        sync_to_cloud: SyncToCloud::Never,
         surface: settings::SettingSurfaces::GUI,
         private: false,
         toml_path: "appearance.themes.theme",
@@ -31,7 +30,6 @@ define_settings_group!(ThemeSettings, settings: [
         type: bool,
         default: false,
         supported_platforms: SupportedPlatforms::ALL,
-        sync_to_cloud: SyncToCloud::Never,
         surface: settings::SettingSurfaces::GUI,
         private: false,
         storage_key: "SystemTheme",
@@ -42,7 +40,6 @@ define_settings_group!(ThemeSettings, settings: [
         type: SelectedSystemThemes,
         default: SelectedSystemThemes::default(),
         supported_platforms: SupportedPlatforms::ALL,
-        sync_to_cloud: SyncToCloud::Never,
         surface: settings::SettingSurfaces::GUI,
         private: false,
         storage_key: "SelectedSystemThemes",
