@@ -1723,6 +1723,8 @@ Mirror the Warp fork's portable scheme (`script/windows/build-portable.ps1`,
 - **Integration tests** against a real Mattermost: run the official Docker image (or
   `make run-server` from this repo), create users/teams via `mmctl --local` or the API,
   then drive `mm_api`/`mm_sync` end-to-end (login, MFA, send, receive via WS, reconnect).
+  The seeded test server on the Ubuntu VM is described in
+  [`MatterLite-TestServer.md`](MatterLite-TestServer.md).
 - **UI tests**: WarpUI has an integration-test framework (`crates/integration`, behind the
   `integration_tests` feature) — use selectively; mostly verify UI manually.
 - Run `cargo nextest`, `clippy -D warnings`, `fmt --check`, `cargo deny` in CI on all three
