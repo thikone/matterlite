@@ -4,7 +4,7 @@ MatterLite is a native Rust desktop client for Mattermost servers (Windows x64, 
 macOS arm64), built on WarpUI, the UI framework from the Warp terminal. The design document
 is `docs/MatterLite.md`; the Mattermost webapp/protocol reference is `docs/WebApp.md` (written
 from the Mattermost server/webapp checkout at `C:\Projects\Libs\mattermost`). Milestone
-progress is tracked in `docs/M0.md`, `docs/M1.md` (and later milestone files).
+progress is tracked in `docs/M0.md`, `docs/M1.md`, `docs/M2.md` (and later milestone files).
 
 ## Commands
 

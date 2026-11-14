@@ -4435,6 +4435,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mm_store"
+version = "0.1.0"
+dependencies = [
+ "mm_model",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mm_ws"
 version = "0.1.0"
 dependencies = [
