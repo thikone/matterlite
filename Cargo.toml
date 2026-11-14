@@ -14,6 +14,7 @@ members = [
   "crates/ml_themes",
   "crates/ml_workspace",
   "crates/mm_api",
+  "crates/mm_cache",
   "crates/mm_cli",
   "crates/mm_model",
   "crates/mm_store",
@@ -61,6 +62,7 @@ ml_logging = { path = "crates/ml_logging" }
 ml_themes = { path = "crates/ml_themes" }
 ml_workspace = { path = "crates/ml_workspace" }
 mm_api = { path = "crates/mm_api" }
+mm_cache = { path = "crates/mm_cache" }
 mm_model = { path = "crates/mm_model" }
 mm_store = { path = "crates/mm_store" }
 mm_ws = { path = "crates/mm_ws" }
@@ -142,6 +144,7 @@ cfg-if = "1.0.0"
 cfg_aliases = "0.2.1"
 chrono = { version = "0.4.38", features = ["serde"] }
 chrono-tz = "0.10"
+diesel = { version = "2.3.10", default-features = false }
 cocoa = "=0.26.0"
 concat-idents = "1.1.4"
 core-foundation = "0.10.1"

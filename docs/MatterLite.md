@@ -617,9 +617,13 @@ CREATE TABLE channel_sync (channel_id TEXT PRIMARY KEY,
                         last_full_check INTEGER, priority INTEGER);
 ```
 
-FTS5 needs SQLite compiled with `SQLITE_ENABLE_FTS5`; confirm the bundled
-`libsqlite3-sys` build enables it, or add the define. Diesel runs FTS queries through
-`sql_query`.
+FTS5 needs SQLite compiled with `SQLITE_ENABLE_FTS5`; the bundled `libsqlite3-sys` build
+enables it. Diesel runs FTS queries through `sql_query`.
+
+The implemented schema is `crates/mm_cache/migrations/` (M2): as above, except that ranges
+belong to a channel or a thread (`timeline_ranges.owner_kind`), "known empty" timelines have
+their own table, categories, roles, custom emoji and followed threads have JSON tables, and
+the `files`, `file_text_fts` and `outbox` tables come with later migrations (M5, M2 step 6).
 
 - **Local retention = the history backfill window** (§8.5). It's the single rule for how
   long messages stay in the cache, whatever the server's own retention policy (§8.7):

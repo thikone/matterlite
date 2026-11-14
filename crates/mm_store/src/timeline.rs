@@ -66,6 +66,30 @@ impl Timeline {
         Self::default()
     }
 
+    /// Rebuilds a timeline from its saved parts (the cache): the posts it holds, its ranges
+    /// and whether the channel was seen empty.
+    pub fn from_parts(
+        keys: impl IntoIterator<Item = Key>,
+        mut ranges: Vec<Range>,
+        empty: bool,
+    ) -> Self {
+        let mut timeline = Self {
+            empty,
+            ..Self::default()
+        };
+        for key in keys {
+            timeline.insert_key(key);
+        }
+        ranges.sort_by(|a, b| a.oldest.cmp(&b.oldest));
+        timeline.ranges = ranges;
+        timeline
+    }
+
+    /// Whether a page reported the channel empty (saved with the ranges).
+    pub fn is_known_empty(&self) -> bool {
+        self.empty
+    }
+
     /// Whether the newest posts are loaded, so live posts can be appended.
     pub fn has_recent(&self) -> bool {
         self.empty || self.ranges.last().is_some_and(|range| range.recent)

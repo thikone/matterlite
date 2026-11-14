@@ -1,0 +1,17 @@
+DROP TABLE posts_fts;
+DROP TABLE channel_sync;
+DROP TABLE drafts;
+DROP TABLE threads;
+DROP TABLE emoji;
+DROP TABLE roles;
+DROP TABLE categories;
+DROP TABLE preferences;
+DROP TABLE timeline_empty;
+DROP TABLE timeline_ranges;
+DROP TABLE posts;
+DROP TABLE channel_members;
+DROP TABLE channels;
+DROP TABLE team_members;
+DROP TABLE teams;
+DROP TABLE users;
+DROP TABLE kv;
