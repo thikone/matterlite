@@ -8,9 +8,21 @@
 /// to avoid duplication. These tests focus on Windows-specific clipboard behavior.
 #[cfg(target_os = "windows")]
 mod clipboard_tests {
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+
     use crate::Clipboard;
     use crate::clipboard::ClipboardContent;
     use crate::windowing::winit::windows::clipboard::WindowsClipboard;
+
+    /// The tests share the system clipboard. Run in parallel they race on it, and the process
+    /// can die with STATUS_HEAP_CORRUPTION.
+    static SYSTEM_CLIPBOARD: Mutex<()> = Mutex::new(());
+
+    fn lock_system_clipboard() -> MutexGuard<'static, ()> {
+        SYSTEM_CLIPBOARD
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
 
     fn create_test_clipboard() -> Option<WindowsClipboard> {
         WindowsClipboard::new().ok()
@@ -18,6 +30,7 @@ mod clipboard_tests {
 
     #[test]
     fn test_clipboard_round_trip() {
+        let _lock = lock_system_clipboard();
         let mut clipboard = match create_test_clipboard() {
             Some(clipboard) => clipboard,
             None => {
@@ -42,6 +55,7 @@ mod clipboard_tests {
 
     #[test]
     fn test_html_content_handling() {
+        let _lock = lock_system_clipboard();
         let mut clipboard = match create_test_clipboard() {
             Some(clipboard) => clipboard,
             None => {
@@ -72,6 +86,7 @@ mod clipboard_tests {
 
     #[test]
     fn test_empty_content_handling() {
+        let _lock = lock_system_clipboard();
         let mut clipboard = match create_test_clipboard() {
             Some(clipboard) => clipboard,
             None => {
