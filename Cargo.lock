@@ -4122,6 +4122,7 @@ dependencies = [
  "anyhow",
  "env_logger",
  "log",
+ "ml_editor",
  "ml_logging",
  "ml_themes",
  "ml_workspace",
@@ -4312,8 +4313,14 @@ name = "ml_workspace"
 version = "0.1.0"
 dependencies = [
  "enum-iterator",
+ "ml_editor",
+ "pathfinder_color",
+ "pathfinder_geometry",
+ "regex",
+ "settings",
  "warp_core",
  "warpui",
+ "warpui_extras",
 ]
 
 [[package]]

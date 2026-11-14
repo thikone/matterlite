@@ -18,7 +18,7 @@ use warpui::{
 
 use crate::right_panel::RightPanel;
 use crate::tab_bar::{ChatTab, render_tab_bar};
-use crate::tool_panel::{ToolPanel, ToolPanelTab};
+use crate::tool_panel::{ToolPanel, ToolPanelEvent, ToolPanelTab};
 
 /// Keymap context set while the right panel is open (Esc closes it).
 const RIGHT_PANEL_OPEN: &str = "Workspace_RightPanelOpen";
@@ -94,6 +94,10 @@ impl Workspace {
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
         ctx.subscribe_to_model(&Appearance::handle(ctx), |_, _, _, ctx| ctx.notify());
         let tool_panel = ctx.add_typed_action_view(ToolPanel::new);
+        ctx.subscribe_to_view(&tool_panel, |_, _, event, ctx| match event {
+            // Until chats have a composer, the workspace itself takes the focus back.
+            ToolPanelEvent::ReturnFocus => ctx.focus_self(),
+        });
         let right_panel = ctx.add_typed_action_view(RightPanel::new);
         ctx.focus_self();
         Self {
@@ -108,14 +112,30 @@ impl Workspace {
         }
     }
 
+    /// Shows the tab and focuses its search field, if it has one; showing the tab that is
+    /// already showing hides the panel.
     fn show_tool_panel_tab(&mut self, tab: ToolPanelTab, ctx: &mut ViewContext<Self>) {
         let showing = self.tool_panel.as_ref(ctx).active_tab();
         if self.tool_panel_open && showing == tab {
-            self.tool_panel_open = false;
-        } else {
-            self.tool_panel_open = true;
-            self.tool_panel
-                .update(ctx, |panel, ctx| panel.set_active_tab(tab, ctx));
+            self.set_tool_panel_open(false, ctx);
+            return;
+        }
+        self.tool_panel_open = true;
+        let focused_search = self.tool_panel.update(ctx, |panel, ctx| {
+            panel.set_active_tab(tab, ctx);
+            panel.focus_search(ctx)
+        });
+        // Don't leave the focus in the search field of a tab that is no longer showing.
+        if !focused_search && self.tool_panel.as_ref(ctx).has_focus(ctx) {
+            ctx.focus_self();
+        }
+        ctx.notify();
+    }
+
+    fn set_tool_panel_open(&mut self, open: bool, ctx: &mut ViewContext<Self>) {
+        self.tool_panel_open = open;
+        if !open && self.tool_panel.as_ref(ctx).has_focus(ctx) {
+            ctx.focus_self();
         }
         ctx.notify();
     }
@@ -255,8 +275,7 @@ impl TypedActionView for Workspace {
         match *action {
             WorkspaceAction::ShowToolPanelTab(tab) => self.show_tool_panel_tab(tab, ctx),
             WorkspaceAction::ToggleToolPanel => {
-                self.tool_panel_open = !self.tool_panel_open;
-                ctx.notify();
+                self.set_tool_panel_open(!self.tool_panel_open, ctx);
             }
             WorkspaceAction::ToggleRightPanel => {
                 self.right_panel_open = !self.right_panel_open;

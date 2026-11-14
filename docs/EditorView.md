@@ -16,7 +16,7 @@ Related files:
 |---|---:|---|
 | `crates/ml_editor/src/EditorView.rs` | 15,508 | everything below |
 | `crates/ml_editor/src/EditorView_tests.rs` | 231 | 7 smoke tests (typing, enter handling, newlines, undo/redo, limits, placeholder) |
-| `crates/ml_editor/src/lib.rs` | 9 | loads `EditorView.rs` as module `editor` and re-exports it |
+| `crates/ml_editor/src/lib.rs` | 11 | loads `EditorView.rs` as module `editor` and re-exports it, plus `NavigationKey` |
 
 ## Contents
 

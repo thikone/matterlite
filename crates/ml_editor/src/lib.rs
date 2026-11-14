@@ -7,3 +7,5 @@
 mod editor;
 
 pub use editor::*;
+/// Carried by [`Event::Navigate`].
+pub use warp_editor::editor::NavigationKey;

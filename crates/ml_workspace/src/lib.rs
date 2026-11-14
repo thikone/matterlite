@@ -5,10 +5,12 @@
 
 mod buttons;
 mod right_panel;
+pub mod search_bar;
 mod tab_bar;
 mod tool_panel;
 mod workspace;
 
+pub use search_bar::{SearchBarEvent, SearchBarOptions, SearchBarView};
 pub use tool_panel::ToolPanelTab;
 pub use workspace::{Workspace, WorkspaceAction, init};
 

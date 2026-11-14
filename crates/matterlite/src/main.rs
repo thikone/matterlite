@@ -39,6 +39,7 @@ fn main() -> anyhow::Result<()> {
             ctx.terminate_app(warpui::platform::TerminationMode::ForceTerminate, None);
             return;
         }
+        ml_editor::init(ctx);
         ml_workspace::init(ctx);
         ctx.add_window(
             AddWindowOptions {

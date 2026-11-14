@@ -1248,9 +1248,12 @@ reusable **`SearchBarView`**. It is extracted from Warp's
   (Warp's `output_match_cache` pattern).
 - **Keyboard**: arrows navigate rows (`PropagateAndNoOpNavigationKeys::Always`), Enter
   activates, Esc clears then blurs.
-- **API**:
-  `SearchBarView::new(placeholder, toggles: Vec<ToggleSpec>)`, which emits
-  `SearchBarEvent::{QueryChanged, ToggleChanged(id, bool), Submit, Cleared}`. The pane
+- **API** (`ml_workspace::search_bar`):
+  `SearchBarView::new(SearchBarOptions { placeholder, query_options, toggle_groups }, ctx)`.
+  Each `ToggleGroup` holds `ToggleSpec { id, icon, tooltip, on }` and can keep one toggle
+  on (scope toggles). `query_options: false` hides Regex and Aa (server-only search). It
+  emits `SearchBarEvent::{QueryChanged, ToggleChanged { id, on }, Submit, Cleared,
+  Dismissed, Navigate(key)}`; the pane reads `query`, `matcher`, `is_toggle_on`. The pane
   owns the matching, local and server-side, and debounces server requests (~300 ms).
 - **Server results** are merged asynchronously, with a small spinner in the field while a
   server pass runs and a "server search unavailable for regex" hint when it's skipped.
