@@ -120,10 +120,11 @@ pub enum Error {
     DecodeError(#[from] std::str::Utf8Error),
 
     /// Generic I/O error.
-    #[error("i/o error")]
+    #[error("i/o error: {0}")]
     IoError(#[from] std::io::Error),
 
     /// Catch-all for unclassifiable errors.
-    #[error("unknown error")]
+    /// Displays the cause, e.g. the TOML parser's message with line and column.
+    #[error("{0:#}")]
     Unknown(#[from] anyhow::Error),
 }

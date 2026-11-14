@@ -9,14 +9,20 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+dunce.workspace = true
 env_logger.workspace = true
 log.workspace = true
 ml_editor.workspace = true
 ml_logging.workspace = true
 ml_themes.workspace = true
 ml_workspace.workspace = true
+notify-debouncer-full.workspace = true
 rust-embed.workspace = true
 settings.workspace = true
 warp_core.workspace = true
 warpui.workspace = true
 warpui_extras.workspace = true
+watcher.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

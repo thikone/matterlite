@@ -948,6 +948,10 @@ Reuse `warp_core::paths` (trimmed) with the app name `MatterLite`:
 
 Like the Warp fork, portable mode collapses roaming/local into one `state/`.
 
+The config directory is watched while MatterLite runs: edits to `settings.toml` apply at once
+(a file that doesn't parse keeps the current settings) and changes in `themes/` reload the
+custom themes.
+
 **Token**: `warpui_extras::secure_storage` with service name `MatterLite`, key
 `token:<server_id>`:
 

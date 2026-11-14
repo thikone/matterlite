@@ -4120,17 +4120,21 @@ name = "matterlite"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dunce",
  "env_logger",
  "log",
  "ml_editor",
  "ml_logging",
  "ml_themes",
  "ml_workspace",
+ "notify-debouncer-full",
  "rust-embed",
  "settings",
+ "tempfile",
  "warp_core",
  "warpui",
  "warpui_extras",
+ "watcher",
 ]
 
 [[package]]

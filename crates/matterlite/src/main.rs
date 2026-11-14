@@ -4,6 +4,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod assets;
+mod config_watcher;
 mod settings_init;
 
 use ml_themes::AppearanceManager;
@@ -39,6 +40,7 @@ fn main() -> anyhow::Result<()> {
             ctx.terminate_app(warpui::platform::TerminationMode::ForceTerminate, None);
             return;
         }
+        config_watcher::init(ctx);
         ml_editor::init(ctx);
         ml_themes::theme_chooser::init(ctx);
         ml_workspace::init(ctx);
