@@ -22,7 +22,7 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | crates/asset_cache/ | crates/asset_cache/ | 5bb7bcc6a | adapted | AGPL-3.0 | wasm branches removed |
 | crates/asset_macro/ | crates/asset_macro/ | 5bb7bcc6a | adapted | AGPL-3.0 | assets resolved from the repository assets/ dir; remote_asset! removed; bundled_or_fetched_asset! always bundles; warp_util::assets constants inlined |
 | crates/warpui_extras/ | crates/warpui_extras/ | 5bb7bcc6a | adapted | AGPL-3.0 | removed registry, UserDefaults and localStorage preference stores; TOML and JSON-file stores always built; wasm branch removed; preference errors show their cause |
-| crates/warp_features/ | crates/warp_features/ | 5bb7bcc6a | verbatim | AGPL-3.0 | Warp flag list still complete; pruned to MatterLite flags at the end of M0 |
+| crates/warp_features/ | crates/warp_features/ | 5bb7bcc6a | adapted | AGPL-3.0 | flags cut to the four MatterLite code checks; no release-channel flag lists, changelog descriptions, per-user flag preferences or integration_tests feature |
 | crates/settings/ | crates/settings/ | 5bb7bcc6a | adapted | AGPL-3.0 | no integration_tests feature (new_with_defaults is test-only) |
 | crates/warp_core/ | crates/warp_core/ | 5bb7bcc6a | adapted | AGPL-3.0 | Tier B: kept app_id, assertions, async, features, platform, safe_log, ui (appearance, theme, icons, color, builder), user_preferences; removed channels, context flags, telemetry, execution mode, sync queue, semantic selection and the other Warp product modules; safe_log full output in debug builds |
 | crates/warp_core/src/paths.rs | crates/warp_core/src/paths.rs | 5bb7bcc6a | rewritten | AGPL-3.0 | MatterLite storage layout (§9); portable data/ detection kept |

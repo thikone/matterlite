@@ -2,23 +2,23 @@
 // Derived from warp-terminal `crates/warp_features/src/features_tests.rs` @ 5bb7bcc6a — adapted for MatterLite.
 // Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
 
+use enum_iterator::all;
+
 use super::*;
 
 #[test]
-#[ignore = "CORE-3768 - need to clean up PREVIEW_FLAGS, but this is a temporary fix for the cluttered changelog"]
-fn test_all_preview_flags_have_a_description() {
-    for flag in PREVIEW_FLAGS {
+fn flags_start_disabled() {
+    mark_initialized();
+    for flag in all::<FeatureFlag>() {
         assert!(
-            flag.flag_description()
-                .is_some_and(|description| !description.is_empty()),
-            "Missing description for preview-enabled flag {flag:?}"
+            !flag.is_enabled(),
+            "{flag:?} is on before anything enabled it"
         );
     }
 }
 
 #[test]
-fn local_child_harnesses_are_local_only_by_default() {
-    assert!(LOCAL_FLAGS.contains(&FeatureFlag::LocalClaudeCodexChildHarnesses));
-    assert!(!DEBUG_FLAGS.contains(&FeatureFlag::LocalClaudeCodexChildHarnesses));
-    assert!(!DOGFOOD_FLAGS.contains(&FeatureFlag::LocalClaudeCodexChildHarnesses));
+#[should_panic(expected = "override_enabled")]
+fn tests_must_not_change_flags_globally() {
+    FeatureFlag::MarkdownTables.set_enabled(true);
 }
