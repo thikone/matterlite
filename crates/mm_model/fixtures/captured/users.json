@@ -1,0 +1,74 @@
+[
+  {
+    "id": "noeqfec93jfy8fi5pd7e55w59e",
+    "create_at": 1794690503652,
+    "update_at": 1794690506678,
+    "delete_at": 0,
+    "username": "bob",
+    "auth_data": "",
+    "auth_service": "",
+    "email": "bob@example.com",
+    "nickname": "",
+    "first_name": "Bob",
+    "last_name": "Brown",
+    "position": "",
+    "roles": "system_user",
+    "locale": "en",
+    "timezone": {
+      "automaticTimezone": "",
+      "manualTimezone": "",
+      "useAutomaticTimezone": "true"
+    },
+    "remote_id": "",
+    "disable_welcome_email": false
+  },
+  {
+    "id": "oxzu1xybufykjxgib5probxqse",
+    "create_at": 1794690503749,
+    "update_at": 1794690506298,
+    "delete_at": 0,
+    "username": "carol",
+    "auth_data": "",
+    "auth_service": "",
+    "email": "carol@example.com",
+    "nickname": "",
+    "first_name": "Carol",
+    "last_name": "Chen",
+    "position": "",
+    "roles": "system_user",
+    "locale": "en",
+    "timezone": {
+      "automaticTimezone": "",
+      "manualTimezone": "",
+      "useAutomaticTimezone": "true"
+    },
+    "remote_id": "",
+    "disable_welcome_email": false
+  },
+  {
+    "id": "p3446mkkoinnzp5gp7aaeg6t4h",
+    "create_at": 1794690503845,
+    "update_at": 1794690518979,
+    "delete_at": 0,
+    "username": "dave",
+    "auth_data": "",
+    "auth_service": "",
+    "email": "dave@example.com",
+    "nickname": "",
+    "first_name": "Dave",
+    "last_name": "Davis",
+    "position": "",
+    "roles": "system_user",
+    "props": {
+      "customStatus": "{\"emoji\":\"palm_tree\",\"text\":\"On vacation\",\"duration\":\"\",\"expires_at\":\"0001-01-01T00:00:00Z\"}"
+    },
+    "locale": "en",
+    "timezone": {
+      "automaticTimezone": "",
+      "manualTimezone": "",
+      "useAutomaticTimezone": "true"
+    },
+    "remote_id": "",
+    "disable_welcome_email": false
+  }
+]

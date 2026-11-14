@@ -4,10 +4,11 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use mm_model::error::ids;
 use mm_model::{
     AppError, Channel, ChannelId, ChannelMember, ClientConfig, OrderedSidebarCategories, PostId,
-    PostList, Preference, Role, SessionToken, Status, Team, TeamId, TeamMember, TeamUnread, User,
-    UserId,
+    PostList, Preference, Role, ServerVersion, SessionToken, Status, Team, TeamId, TeamMember,
+    TeamUnread, User, UserId,
 };
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{Method, RequestBuilder, Response, StatusCode};
@@ -179,6 +180,11 @@ impl Client {
             .clone()
     }
 
+    /// [`Client::server_version`], parsed.
+    pub fn version(&self) -> Option<ServerVersion> {
+        ServerVersion::parse(&self.server_version()?)
+    }
+
     fn request(&self, method: Method, segments: &[&str]) -> RequestBuilder {
         let builder = self
             .http
@@ -319,22 +325,42 @@ impl Client {
     // Channels (WebApp.md §5.2).
 
     /// `GET /users/me/channels`: my channels in all teams, DMs and GMs included.
+    ///
+    /// A user in no channel gets a 404 `app.channel.get_channels.not_found.app_error` instead of
+    /// an empty list (the server streams the response and fails on the first, empty page), which
+    /// this returns as an empty list.
     pub async fn my_channels(&self) -> Result<Vec<Channel>, ApiError> {
-        self.json(self.get(&["users", "me", "channels"])).await
+        match self.json(self.get(&["users", "me", "channels"])).await {
+            Err(ApiError::App(error))
+                if error.status_code == 404 && error.id == ids::CHANNELS_NOT_FOUND =>
+            {
+                Ok(Vec::new())
+            }
+            other => other,
+        }
     }
 
     /// `GET /users/{user_id}/channel_members?page=-1`: all my channel memberships. The server
-    /// streams them as NDJSON; a JSON array is accepted too.
+    /// streams them as NDJSON; a JSON array is accepted too. A user in no channel gets a 404
+    /// `app.channel.get_member.missing.app_error`, returned as an empty list.
     pub async fn my_channel_members(
         &self,
         user_id: &UserId,
     ) -> Result<Vec<ChannelMember>, ApiError> {
-        let response = self
+        let response = match self
             .send(
                 self.get(&["users", user_id.as_str(), "channel_members"])
                     .query(&[("page", "-1")]),
             )
-            .await?;
+            .await
+        {
+            Err(ApiError::App(error))
+                if error.status_code == 404 && error.id == ids::CHANNEL_MEMBER_MISSING =>
+            {
+                return Ok(Vec::new());
+            }
+            other => other?,
+        };
         let path = response.url().path().to_owned();
         let body = response.bytes().await?;
         parse_json_lines(&body).map_err(|source| ApiError::Decode { path, source })
@@ -443,7 +469,9 @@ async fn check_status(response: Response) -> Result<Response, ApiError> {
         });
     }
     let body = response.text().await.unwrap_or_default();
-    match serde_json::from_str::<AppError>(&body) {
+    // Streaming endpoints write `[` before they know whether the query fails.
+    let error_json = body.strip_prefix('[').unwrap_or(&body);
+    match serde_json::from_str::<AppError>(error_json) {
         Ok(mut error) if !error.id.is_empty() => {
             if error.status_code == 0 {
                 error.status_code = status.as_u16();

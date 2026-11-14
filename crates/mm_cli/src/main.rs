@@ -22,9 +22,10 @@ use mm_api::{Client, ClientOptions, LoginRequest, ServerUrl};
 use mm_model::preference::keys;
 use mm_model::ws::{Broadcast, WsEvent};
 use mm_model::{
-    Channel, ChannelId, ChannelMember, ChannelType, SessionToken, Status, User, UserId,
+    Channel, ChannelId, ChannelMember, ChannelType, ServerVersion, SessionToken, Status, User,
+    UserId,
 };
-use mm_ws::{WsConfig, WsOutput};
+use mm_ws::{DisconnectReason, WsConfig, WsOutput};
 
 const USAGE: &str = "usage: mm-cli <server-url> <ping|bootstrap|events> [--login <user>]";
 
@@ -143,15 +144,20 @@ async fn authenticate(mut client: Client, login: Option<String>) -> Result<(Clie
     Ok((client, true))
 }
 
+fn version_text(client: &Client) -> String {
+    match (client.version(), client.server_version()) {
+        (Some(version), _) => version.to_string(),
+        (None, Some(raw)) => raw,
+        (None, None) => "?".to_owned(),
+    }
+}
+
 async fn ping(client: &Client) -> Result<()> {
     let start = Instant::now();
     client.ping().await?;
     println!("ping OK in {} ms", start.elapsed().as_millis());
     let config = client.client_config().await?;
-    println!(
-        "server     {}",
-        client.server_version().as_deref().unwrap_or("?")
-    );
+    println!("server     {}", version_text(client));
     println!("site URL   {}", config.site_url().unwrap_or("(not set)"));
     if let Some(url) = config.websocket_url() {
         println!("WebSocket  {url}");
@@ -242,7 +248,7 @@ async fn bootstrap(client: &Client) -> Result<()> {
 
     println!(
         "server     {} (licensed: {})",
-        client.server_version().as_deref().unwrap_or("?"),
+        version_text(client),
         if license.bool("IsLicensed") {
             "yes"
         } else {
@@ -408,17 +414,24 @@ fn full_name(user: &User) -> String {
 async fn events(client: &Client) -> Result<()> {
     let (config, me, channels) =
         tokio::try_join!(client.client_config(), client.me(), client.my_channels())?;
-    let names: HashMap<ChannelId, String> = channels
-        .into_iter()
-        .map(|channel| {
-            let name = if channel.channel_type.is_direct_or_group() {
-                channel.display_name.clone()
-            } else {
-                format!("~{}", channel.name)
-            };
-            (channel.id, name)
-        })
+    let mut names = Names::default();
+    let partners: HashMap<ChannelId, UserId> = channels
+        .iter()
+        .filter(|channel| channel.channel_type == ChannelType::Direct)
+        .filter_map(|channel| Some((channel.id.clone(), dm_partner(&channel.name, &me.id)?)))
         .collect();
+    let mut partner_ids: Vec<UserId> = partners.values().cloned().collect();
+    partner_ids.sort_unstable();
+    partner_ids.dedup();
+    names.fetch_users(client, &partner_ids).await;
+    for channel in channels {
+        let name = match partners.get(&channel.id) {
+            Some(partner) => format!("DM {}", names.user(partner)),
+            None if channel.channel_type.is_direct_or_group() => channel.display_name.clone(),
+            None => format!("~{}", channel.name),
+        };
+        names.channels.insert(channel.id, name);
+    }
     let url = client.server().websocket_url(config.websocket_url())?;
     let token = client.token().context("not logged in")?.clone();
     let (handle, output) = mm_ws::connect(WsConfig::new(
@@ -455,7 +468,14 @@ async fn events(client: &Client) -> Result<()> {
                 seq,
                 broadcast,
                 event,
-            } => println!("{time} #{seq:<4} {}", describe(&event, &broadcast, &names)),
+            } => {
+                if let Some(user) = event_user(&event)
+                    && !names.users.contains_key(user)
+                {
+                    names.fetch_users(client, std::slice::from_ref(user)).await;
+                }
+                println!("{time} #{seq:<4} {}", describe(&event, &broadcast, &names));
+            }
             WsOutput::Undecodable { seq, error } => {
                 println!("{time} #{seq:<4} undecodable: {error}");
             }
@@ -469,7 +489,7 @@ async fn events(client: &Client) -> Result<()> {
                 session_confirmed,
             } => println!(
                 "{time} disconnected: {reason:?}{}; retrying in {:.1} s",
-                if session_confirmed {
+                if session_confirmed || matches!(reason, DisconnectReason::ConnectFailed(_)) {
                     ""
                 } else {
                     " before the server confirmed the session (is the token valid?)"
@@ -477,7 +497,7 @@ async fn events(client: &Client) -> Result<()> {
                 retry_in.as_secs_f64()
             ),
             WsOutput::AuthFailed => {
-                println!("{time} the server rejected the token");
+                println!("{time} the server rejected the token (revoked or expired): log in again");
                 break;
             }
             WsOutput::Closed => {
@@ -493,12 +513,66 @@ fn format_elapsed(elapsed: Duration) -> String {
     format!("[{:>7.1}s]", elapsed.as_secs_f64())
 }
 
-fn describe(event: &WsEvent, broadcast: &Broadcast, names: &HashMap<ChannelId, String>) -> String {
-    let channel = |id: &ChannelId| names.get(id).cloned().unwrap_or_else(|| id.to_string());
+/// Channel and user names for `events`.
+#[derive(Default)]
+struct Names {
+    channels: HashMap<ChannelId, String>,
+    users: HashMap<UserId, String>,
+}
+
+impl Names {
+    fn channel(&self, id: &ChannelId) -> String {
+        self.channels
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| id.to_string())
+    }
+
+    fn user(&self, id: &UserId) -> String {
+        self.users
+            .get(id)
+            .map_or_else(|| id.to_string(), |name| format!("@{name}"))
+    }
+
+    /// Looks up usernames; on an error the ids are shown instead.
+    async fn fetch_users(&mut self, client: &Client, ids: &[UserId]) {
+        if ids.is_empty() {
+            return;
+        }
+        match client.users_by_ids(ids).await {
+            Ok(users) => {
+                for user in users {
+                    self.users.insert(user.id, user.username);
+                }
+            }
+            Err(error) => log::warn!("could not look up users: {error}"),
+        }
+    }
+}
+
+/// The user an event names by id only.
+fn event_user(event: &WsEvent) -> Option<&UserId> {
+    match event {
+        WsEvent::Typing(typing) => Some(&typing.user_id),
+        WsEvent::StatusChange(change) => Some(&change.user_id),
+        WsEvent::ReactionAdded(reaction) | WsEvent::ReactionRemoved(reaction) => {
+            Some(&reaction.user_id)
+        }
+        _ => None,
+    }
+}
+
+fn describe(event: &WsEvent, broadcast: &Broadcast, names: &Names) -> String {
+    let channel = |id: &ChannelId| names.channel(id);
     match event {
         WsEvent::Hello(hello) => format!(
             "hello: connection {} on {}, server {}",
-            hello.connection_id, hello.server_hostname, hello.server_version
+            hello.connection_id,
+            hello.server_hostname,
+            ServerVersion::parse(&hello.server_version).map_or_else(
+                || hello.server_version.clone(),
+                |version| version.to_string()
+            )
         ),
         WsEvent::Posted(posted) => format!(
             "posted in {} by {}: {}{}",
@@ -524,16 +598,24 @@ fn describe(event: &WsEvent, broadcast: &Broadcast, names: &HashMap<ChannelId, S
         WsEvent::Typing(typing) => format!(
             "typing in {}: {}",
             channel(&broadcast.channel_id),
-            typing.user_id
+            names.user(&typing.user_id)
         ),
-        WsEvent::StatusChange(change) => format!("status of {}: {}", change.user_id, change.status),
+        WsEvent::StatusChange(change) => format!(
+            "status of {}: {}",
+            names.user(&change.user_id),
+            change.status
+        ),
         WsEvent::ReactionAdded(reaction) => format!(
             "reaction :{}: on {} by {}",
-            reaction.emoji_name, reaction.post_id, reaction.user_id
+            reaction.emoji_name,
+            reaction.post_id,
+            names.user(&reaction.user_id)
         ),
         WsEvent::ReactionRemoved(reaction) => format!(
-            "reaction :{}: removed from {}",
-            reaction.emoji_name, reaction.post_id
+            "reaction :{}: removed from {} by {}",
+            reaction.emoji_name,
+            reaction.post_id,
+            names.user(&reaction.user_id)
         ),
         WsEvent::Unknown(name) => format!("{name} (not decoded)"),
         other => shorten(&format!("{other:?}"), 160),

@@ -20,6 +20,7 @@ pub mod team;
 pub mod thread;
 pub mod token;
 pub mod user;
+pub mod version;
 pub mod ws;
 
 pub use channel::{Channel, ChannelMember, ChannelType, OrderedSidebarCategories, SidebarCategory};
@@ -33,3 +34,4 @@ pub use team::{Team, TeamMember, TeamUnread};
 pub use thread::{ThreadList, ThreadResponse};
 pub use token::SessionToken;
 pub use user::{Status, User};
+pub use version::ServerVersion;

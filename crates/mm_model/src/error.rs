@@ -25,6 +25,19 @@ pub mod ids {
     pub const MFA_SETUP_REQUIRED: &str = "api.context.mfa_required.app_error";
     /// The session expired or was revoked.
     pub const SESSION_EXPIRED: &str = "api.context.session_expired.app_error";
+    /// Wrong login id or password (the id names the sign-in methods that are enabled, e.g.
+    /// `..._email_username`), so compare with `starts_with`.
+    pub const INVALID_CREDENTIALS_PREFIX: &str = "api.user.login.invalid_credentials";
+    /// The account is deactivated.
+    pub const USER_INACTIVE: &str = "api.user.login.inactive.app_error";
+    /// `GET /users/me/channels` for a user in no channel (a 404, not an empty list).
+    pub const CHANNELS_NOT_FOUND: &str = "app.channel.get_channels.not_found.app_error";
+    /// No channel membership; also what `GET /users/{id}/channel_members` returns for a user in
+    /// no channel.
+    pub const CHANNEL_MEMBER_MISSING: &str = "app.channel.get_member.missing.app_error";
+    /// A WebSocket request on a connection whose session was revoked or expired. The server
+    /// keeps such sockets open but stops sending events.
+    pub const WS_NOT_AUTHENTICATED: &str = "api.web_socket_router.not_authenticated.app_error";
 }
 
 impl AppError {

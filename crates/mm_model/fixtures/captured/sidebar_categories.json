@@ -1,0 +1,61 @@
+{
+  "categories": [
+    {
+      "id": "favorites_y5uhpy7zmpdi9q5kgnuwaa34sy_ufajxddmgib8jpqr96hh1s4tuy",
+      "user_id": "y5uhpy7zmpdi9q5kgnuwaa34sy",
+      "team_id": "ufajxddmgib8jpqr96hh1s4tuy",
+      "sort_order": 0,
+      "sorting": "",
+      "type": "favorites",
+      "display_name": "Favorites",
+      "muted": false,
+      "collapsed": false,
+      "channel_ids": [
+        "ouyfcjuhrjnmtnqpwgyjkdxmjh"
+      ]
+    },
+    {
+      "id": "channels_y5uhpy7zmpdi9q5kgnuwaa34sy_ufajxddmgib8jpqr96hh1s4tuy",
+      "user_id": "y5uhpy7zmpdi9q5kgnuwaa34sy",
+      "team_id": "ufajxddmgib8jpqr96hh1s4tuy",
+      "sort_order": 10,
+      "sorting": "",
+      "type": "channels",
+      "display_name": "Channels",
+      "muted": false,
+      "collapsed": false,
+      "channel_ids": [
+        "yijecnuksiyefq4xti3n6oqjwa",
+        "7yuu6uqbxtdsxp3kidhke7d7nr",
+        "t771m9rd43rufe4m57xyeggbyo",
+        "zm5hbz7wzt8t9fnrb6ot57i3bc",
+        "4tt877sgci88zq3nsf6fmuccdo",
+        "rrfje5qf3trnzbewoxs6j6isur",
+        "pp3g93zdgbygirwuzoenusmjwo"
+      ]
+    },
+    {
+      "id": "direct_messages_y5uhpy7zmpdi9q5kgnuwaa34sy_ufajxddmgib8jpqr96hh1s4tuy",
+      "user_id": "y5uhpy7zmpdi9q5kgnuwaa34sy",
+      "team_id": "ufajxddmgib8jpqr96hh1s4tuy",
+      "sort_order": 20,
+      "sorting": "recent",
+      "type": "direct_messages",
+      "display_name": "Direct Messages",
+      "muted": false,
+      "collapsed": false,
+      "channel_ids": [
+        "pmexifyhi7d6jdneduoznn5rah",
+        "68cn4epitpbhmy8we898yuz6gw",
+        "8npex7inbi87pj1gx5cx8ez1za",
+        "d4j9i63jdt8qpy9qmcxbozedyo",
+        "zwijufx4zbgq7jgsijsjmhqpao"
+      ]
+    }
+  ],
+  "order": [
+    "favorites_y5uhpy7zmpdi9q5kgnuwaa34sy_ufajxddmgib8jpqr96hh1s4tuy",
+    "channels_y5uhpy7zmpdi9q5kgnuwaa34sy_ufajxddmgib8jpqr96hh1s4tuy",
+    "direct_messages_y5uhpy7zmpdi9q5kgnuwaa34sy_ufajxddmgib8jpqr96hh1s4tuy"
+  ]
+}

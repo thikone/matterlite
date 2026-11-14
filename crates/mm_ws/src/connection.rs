@@ -6,6 +6,7 @@ use async_channel::{Receiver, Sender};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use mm_model::SessionToken;
+use mm_model::error::ids;
 use mm_model::ws::{Broadcast, ClientAction, ServerFrame, WsEvent, WsResponse};
 use tokio::net::TcpStream;
 use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep_until, timeout};
@@ -86,8 +87,10 @@ pub enum WsOutput {
         /// count as failures for the backoff.
         session_confirmed: bool,
     },
-    /// The server rejected the token on the upgrade request (401). The task has ended; log in
-    /// again.
+    /// The server rejected the token: a 401 on the upgrade request, or a request on an open
+    /// socket answered with `api.web_socket_router.not_authenticated.app_error` (the session
+    /// was revoked or expired; the server keeps such sockets open but sends no more events).
+    /// The task has ended; log in again.
     AuthFailed,
     /// [`WsHandle::close`] was called or the handle dropped. The task has ended.
     Closed,
@@ -171,6 +174,7 @@ pub fn connect(config: WsConfig) -> (WsHandle, Receiver<WsOutput>) {
 enum Ended {
     Closed,
     OutputDropped,
+    AuthFailed,
     Disconnected(DisconnectReason),
 }
 
@@ -205,6 +209,10 @@ async fn run(config: WsConfig, commands: Receiver<Command>, output: Sender<WsOut
                         return;
                     }
                     Ended::OutputDropped => return,
+                    Ended::AuthFailed => {
+                        let _ = output.send(WsOutput::AuthFailed).await;
+                        return;
+                    }
                     Ended::Disconnected(reason) => reason,
                 }
             }
@@ -359,6 +367,8 @@ async fn drive(
                         continue;
                     }
                 };
+                // `RUST_LOG=mm_ws::frames=trace` logs every frame as received.
+                log::trace!(target: "mm_ws::frames", "{}", text.as_str());
                 let frame = match ServerFrame::parse(text.as_str()) {
                     Ok(frame) => frame,
                     Err(error) => {
@@ -368,7 +378,16 @@ async fn drive(
                 };
                 let out = match frame {
                     ServerFrame::Response(response) => {
+                        if response
+                            .error
+                            .as_ref()
+                            .is_some_and(|error| error.id == ids::WS_NOT_AUTHENTICATED)
+                        {
+                            close(&mut sink, &mut stream, NORMAL_CLOSE_CODE).await;
+                            return Ended::AuthFailed;
+                        }
                         if pending_ping == Some(response.seq_reply) {
+                            log::debug!("ping reply: {} {:?}", response.status, response.error);
                             pending_ping = None;
                             *session_confirmed |= response.is_ok();
                             continue;

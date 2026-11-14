@@ -1,0 +1,23 @@
+[
+  {
+    "user_id": "noeqfec93jfy8fi5pd7e55w59e",
+    "status": "dnd",
+    "manual": true,
+    "last_activity_at": 1794692441171,
+    "dnd_end_time": 0
+  },
+  {
+    "user_id": "oxzu1xybufykjxgib5probxqse",
+    "status": "away",
+    "manual": true,
+    "last_activity_at": 1794690509096,
+    "dnd_end_time": 0
+  },
+  {
+    "user_id": "p3446mkkoinnzp5gp7aaeg6t4h",
+    "status": "offline",
+    "manual": false,
+    "last_activity_at": 1794690508669,
+    "dnd_end_time": 0
+  }
+]

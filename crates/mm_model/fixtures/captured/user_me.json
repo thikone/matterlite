@@ -1,0 +1,38 @@
+{
+  "id": "y5uhpy7zmpdi9q5kgnuwaa34sy",
+  "create_at": 1794690503557,
+  "update_at": 1794692218904,
+  "delete_at": 0,
+  "username": "alice",
+  "auth_service": "",
+  "email": "alice@example.com",
+  "nickname": "Ali",
+  "first_name": "Alice",
+  "last_name": "Anderson",
+  "position": "",
+  "roles": "system_user",
+  "notify_props": {
+    "channel": "true",
+    "channel_mention_auto_follow_threads": "true",
+    "comments": "never",
+    "desktop": "mention",
+    "desktop_sound": "true",
+    "desktop_threads": "all",
+    "email": "true",
+    "email_threads": "all",
+    "first_name": "false",
+    "mention_keys": "",
+    "push": "mention",
+    "push_status": "online",
+    "push_threads": "all"
+  },
+  "last_password_update": 1794690503557,
+  "locale": "en",
+  "timezone": {
+    "automaticTimezone": "",
+    "manualTimezone": "",
+    "useAutomaticTimezone": "true"
+  },
+  "remote_id": "",
+  "disable_welcome_email": false
+}

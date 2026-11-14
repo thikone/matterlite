@@ -378,6 +378,41 @@ async fn a_rejected_token_ends_the_task() {
 }
 
 #[tokio::test]
+async fn a_revoked_session_ends_the_task() {
+    // Seen on a live server: after a revoke the socket stays open, events stop and every
+    // request is answered with `not_authenticated`.
+    let (listener, addr) = listen().await;
+    let config = WsConfig {
+        ping_interval: Duration::from_millis(50),
+        ..config(addr)
+    };
+    let (_handle, output) = connect(config);
+
+    let mut server = accept(&listener).await;
+    server.handshake().await;
+    server.hello("conn1").await;
+    assert!(matches!(next(&output).await, WsOutput::Connected { .. }));
+    assert_eq!(event_name(&next(&output).await), "Hello");
+
+    let ping = server.recv().await;
+    assert_eq!(ping["action"], "ping");
+    server
+        .send(json!({
+            "status": "FAIL",
+            "seq_reply": ping["seq"],
+            "error": {
+                "id": "api.web_socket_router.not_authenticated.app_error",
+                "message": "WebSocket connection is not authenticated. Please log in and try again.",
+                "status_code": 401,
+            },
+        }))
+        .await;
+    assert_eq!(server.expect_close().await, Some(NORMAL_CLOSE_CODE));
+    assert!(matches!(next(&output).await, WsOutput::AuthFailed));
+    assert!(timeout(WAIT, output.recv()).await.unwrap().is_err());
+}
+
+#[tokio::test]
 async fn connect_failures_back_off_and_reconnect_now_skips_the_wait() {
     // Nothing listens on this port at first.
     let (listener, addr) = listen().await;

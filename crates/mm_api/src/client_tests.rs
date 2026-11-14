@@ -179,6 +179,50 @@ async fn channel_members_as_ndjson_or_array() {
 }
 
 #[tokio::test]
+async fn a_user_in_no_channel_gets_empty_lists() {
+    // Bodies as a live 12.2 server sends them: the channel list is streamed, so the error
+    // follows the opening `[`.
+    let (mock, client) = server().await;
+    let client = logged_in(client);
+    Mock::given(path("/api/v4/users/me/channels"))
+        .respond_with(ResponseTemplate::new(404).set_body_raw(
+            "[{\"id\":\"app.channel.get_channels.not_found.app_error\",\"message\":\"No channels were found.\",\"status_code\":404}
+",
+            "application/json",
+        ))
+        .mount(&mock)
+        .await;
+    Mock::given(path("/api/v4/users/u1/channel_members"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "id": "app.channel.get_member.missing.app_error",
+            "message": "No channel member found for that user ID and channel ID.",
+            "status_code": 404
+        })))
+        .mount(&mock)
+        .await;
+    Mock::given(path("/api/v4/users/u2/channel_members"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "id": "api.user.get.app_error", "status_code": 404
+        })))
+        .mount(&mock)
+        .await;
+
+    assert!(client.my_channels().await.unwrap().is_empty());
+    assert!(
+        client
+            .my_channel_members(&"u1".into())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    // Other 404s stay errors.
+    match client.my_channel_members(&"u2".into()).await {
+        Err(ApiError::App(error)) => assert_eq!(error.id, "api.user.get.app_error"),
+        other => panic!("expected an AppError, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn post_queries_and_view() {
     let (mock, client) = server().await;
     let client = logged_in(client);
