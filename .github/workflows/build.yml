@@ -1,0 +1,71 @@
+name: build
+
+# Release binaries for each platform, uploaded as run artifacts. A first step towards the
+# portable archives of MatterLite.md §16 (no version tags, Info.plist or install script yet).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x64
+          # The oldest supported Ubuntu sets the glibc baseline (MatterLite.md §15.1).
+          - os: ubuntu-24.04
+            target: linux-x64
+          - os: macos-latest
+            target: macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libx11-xcb-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libfontconfig-dev libfreetype-dev libdbus-1-dev clang
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - run: echo "::add-matcher::.github/matchers/rust.json"
+      - run: cargo build --release -p matterlite
+      - name: Package
+        shell: bash
+        run: |
+          stage="matterlite-${GITHUB_SHA::7}-${{ matrix.target }}"
+          mkdir -p "$stage/data"
+          printf '%s\n' \
+            "MatterLite keeps its settings, cache and logs in this folder (portable mode)." \
+            "Delete the folder to use the per-user folders of your system instead." \
+            > "$stage/data/README.txt"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp target/release/matterlite.exe "$stage/"
+          else
+            cp target/release/matterlite "$stage/"
+          fi
+          cp LICENSE LICENSE-MIT README.md "$stage/"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "ARTIFACT_PATH=$stage" >> "$GITHUB_ENV"
+          else
+            # Artifact zips drop the executable bit; a tarball keeps it.
+            tar -czf "$stage.tar.gz" "$stage"
+            echo "ARTIFACT_PATH=$stage.tar.gz" >> "$GITHUB_ENV"
+          fi
+          echo "ARTIFACT_NAME=$stage" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ARTIFACT_PATH }}
+          if-no-files-found: error
+          retention-days: 14
