@@ -194,6 +194,12 @@ Use `GET /config/client` keys (`EnableSignInWithEmail`, `EnableSignInWithUsernam
 - `POST /users/logout` revokes the session.
 - An expired/revoked session returns `401` with id `api.context.session_expired.app_error`
   (`server/channels/web/context.go`). Treat any 401 on an authenticated call as "logged out".
+- **The WebSocket is not closed on revocation** (checked against 12.2). The socket stays open;
+  the server stops sending events and answers every request (including `ping`) with
+  `{"status":"FAIL","error":{"id":"api.web_socket_router.not_authenticated.app_error",
+  "status_code":401}}` (`platform/websocket_router.go`). A client that ignores failed ping
+  replies keeps a silent socket until the session's original expiry. `mm_ws` treats that
+  reply as `AuthFailed`.
 - The webapp broadcasts logout across tabs via a localStorage key; a native client should
   just wipe its token and cache.
 
@@ -212,8 +218,12 @@ Use `GET /config/client` keys (`EnableSignInWithEmail`, `EnableSignInWithUsernam
   - `Accept-Language`, `User-Agent` — optional
   - `Connection-Id: <ws connection_id>` — sent on some calls (e.g. file upload) so the server
     can attribute the action to your WebSocket connection
-- Useful response headers: `X-Version-Id` (server version + build hash, stored as
-  `serverVersion`), `X-Cluster-Id`, `Token` (login), rate-limit headers (below).
+- Useful response headers: `X-Version-Id` (stored as `serverVersion`), `X-Cluster-Id`,
+  `Token` (login), rate-limit headers (below).
+  - `X-Version-Id` is `<version>.<build number>.<client config hash>.<licensed>`
+    (`server/channels/web/handlers.go`), e.g. `12.2.0.123.a16e….false`. A build from source
+    has an empty build number (`12.2.0..a16e….false`). `hello.server_version` has the same
+    format. A changed config hash means the client config changed (`mm_model::ServerVersion`).
 
 ### 4.2 Response bodies
 
@@ -244,6 +254,15 @@ has a plain-text body ("limit exceeded"), not JSON. Rate-limit headers:
 - Posts additionally support `before=<post_id>`, `after=<post_id>`, `since=<epoch_ms>`.
 - Threads support `before`/`after` (thread ids), `since`, `per_page`.
 - `GET /users/{id}/channel_members?page=-1` returns **all** memberships as NDJSON stream.
+- **A user in no channel gets a 404, not an empty list**, from both streamed endpoints
+  (checked against 12.2; `api4/channel.go` `getChannelsForUser`, `api4/user.go`
+  `getChannelMembersForUser`):
+  - `GET /users/me/channels`: `404` with the body `[` followed by the `AppError`
+    `app.channel.get_channels.not_found.app_error` (the `[` is written before the first page
+    is queried);
+  - `GET /users/{id}/channel_members?page=-1`: `404` `app.channel.get_member.missing.app_error`.
+
+  Treat both as empty lists; `mm_api` does.
 
 ### 4.5 ETag / 304
 
@@ -538,8 +557,13 @@ Distinguish responses from events by the presence of `seq_reply` vs `event`.
   connection (code 4001) and reconnect; else `expected = seq + 1` (`PC/websocket.ts` ~L395).
 - `hello.data = {server_version, connection_id, server_hostname}`. Store `connection_id`.
 - On reconnect pass the stored `connection_id` and `sequence_number=expected`:
-  - If the server still has the missed events (per-connection dead queue of 128 events, kept
-    for a while after disconnect), it **replays them**, continuing the old sequence.
+  - If the server still has the missed events, it **replays them**, continuing the old
+    sequence. A disconnected connection stays in the hub, inactive, and keeps queueing events
+    in its send queue (**256**, `sendQueueSize`). The **128**-event dead queue
+    (`deadQueueSize`) holds frames already written to the dropped socket. Resume therefore
+    works until the send queue overflows (the hub then drops the connection) or the reaper
+    removes inactive connections (`inactiveConnReaperInterval`, 5 min) (`web_conn.go`,
+    `web_hub.go`). Checked against 12.2: 152 events while offline resumed; 300 did not.
   - Otherwise it starts a new connection and sends `hello` with a **new** `connection_id`.
     The client must then **reset `expected` to 0 and run a full resync** (the
     `missedEventCallback` in `PC/websocket.ts` → `reconnect()` in
@@ -594,7 +618,7 @@ The channel of an event is usually in `broadcast.channel_id`; team in `broadcast
 | `reaction_added` / `reaction_removed` | `reaction` (str) | Update reactions |
 | `post_acknowledgement_added` / `_removed` | `acknowledgement` (str) | Update acks (priority messages) |
 | `typing` | `user_id, parent_id` | Show typing indicator for `broadcast.channel_id` |
-| `status_change` | `user_id, status` | Update status |
+| `status_change` | `user_id, status` | Update status. **Sent only to that user** (own status set on another device, or auto-away), not to others: `BroadcastStatus` in `platform/status.go` |
 | `multiple_channels_viewed` | `channel_times: {channel_id: ms}` | Mark those channels read (other device/tab viewed them) |
 | `channel_created`, `channel_updated` (`channel` str), `channel_deleted`, `channel_restored`, `channel_converted` | – | Update channel |
 | `channel_member_updated` | `channelMember` (str) | Update my membership (notify props, roles, counts) |
@@ -606,7 +630,7 @@ The channel of an event is usually in `broadcast.channel_id`; team in `broadcast
 | `thread_updated` | `thread` (str), `previous_unread_mentions`, `previous_unread_replies` | Update thread + counts |
 | `thread_read_changed` | `thread_id, timestamp, unread_mentions, unread_replies, channel_id, …` (or empty = all read) | Update thread read state |
 | `thread_follow_changed` | `thread_id, state, reply_count` | Follow state |
-| `sidebar_category_created` / `_updated` / `_deleted` / `_order_updated` | category ids / categories (str) / order | Sidebar |
+| `sidebar_category_created` / `_updated` / `_deleted` / `_order_updated` | category ids / categories (str) / order | Sidebar. Every preference change also sends `sidebar_category_updated` with **no data and no `team_id`** (`app/preference.go`). The webapp ignores the payload: it refetches the team's categories when `broadcast.team_id` is set and does nothing otherwise |
 | `emoji_added` | `emoji` (str) | New custom emoji |
 | `role_updated`, `memberrole_updated`, `channel_scheme_updated` | role (str) | Refresh permissions |
 | `config_changed`, `license_changed` | `config` / `license` (plain objects) | Replace client config/license |
@@ -1076,8 +1100,9 @@ Display names:
 - **Presence/activity**: send `presence` with the viewed channel/thread; send
   `user_update_active_status {user_is_active: true/false, manual: false}` based on
   OS idle state — the server sets `away` after inactivity.
-- **Statuses**: `status_change` events for users you share channels with; for others poll
-  `POST /users/status/ids` (the webapp polls visible users every ~60 s). Statuses:
+- **Statuses**: `status_change` only arrives for your own status (see §7); other users'
+  statuses must be polled with `POST /users/status/ids` (the webapp polls visible users every
+  ~60 s). Statuses:
   `online`, `away`, `dnd` (+`dnd_end_time`), `offline`, `ooo`. Custom status lives in
   `user.props.customStatus` (JSON string: emoji, text, expires_at).
 - **Drafts**: kept locally per channel and per thread (`CS/actions/views/drafts.ts`). Synced to

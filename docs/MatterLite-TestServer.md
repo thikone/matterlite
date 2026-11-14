@@ -102,6 +102,10 @@ cargo run -p mm_cli -- https://ubuntu ping
 MM_PASSWORD=matterlite cargo run -p mm_cli -- https://ubuntu bootstrap --login alice
 MM_TOKEN=$MM_ALICE_TOKEN cargo run -p mm_cli -- https://ubuntu events    # wss://ubuntu/api/v4/websocket
 cargo run -p mm_cli -- http://ubuntu:8065 ping                          # plain HTTP, same server
+# MFA: the code is read from stdin when there is no terminal
+ssh andrew@ubuntu "oathtool --totp -b $MM_FRANK_MFA_SECRET" | MM_PASSWORD=matterlite cargo run -p mm_cli -- https://ubuntu bootstrap --login frank
+# raw WebSocket frames
+RUST_LOG=mm_ws::frames=trace MM_TOKEN=$MM_ALICE_TOKEN cargo run -p mm_cli -- https://ubuntu events
 ```
 
 In MatterLite, add the server as `https://ubuntu` (or `http://ubuntu:8065`) and sign in as
@@ -304,7 +308,8 @@ as_bob -X DELETE $API/users/$BOB/posts/$P/reactions/heart >/dev/null
 as_bob -X DELETE $API/posts/$P >/dev/null
 # typing
 as_bob -X POST $API/users/$BOB/typing -d "{\"channel_id\":\"$DEV\"}" >/dev/null
-# status_change (bob's seeded status is dnd; put it back afterwards)
+# bob's status (seeded dnd; put it back afterwards). The server sends status_change only to
+# bob's own connections, so alice sees it by polling POST /users/status/ids (WebApp §15)
 as_bob -X PUT $API/users/$BOB/status -d "{\"user_id\":\"$BOB\",\"status\":\"online\"}" >/dev/null
 as_bob -X PUT $API/users/$BOB/status -d "{\"user_id\":\"$BOB\",\"status\":\"dnd\"}" >/dev/null
 # DM to alice
@@ -320,11 +325,12 @@ admin token (`POST /users/{id}/tokens`).
 
 | Goal | How |
 |---|---|
-| A short drop, then resume with `connection_id` and `sequence_number` | Disconnect the client briefly (pause it, or disable the VM's network adapter in VMware), post a few messages as bob, reconnect. The server buffers the last **128** events per connection (`deadQueueSize`, `server/channels/app/platform/web_conn.go`) |
-| A gap too large to resume | While alice is disconnected, send more than 128 events, e.g. `for i in $(seq 150); do as_bob -X POST $API/posts -d "{\"channel_id\":\"$DEV\",\"message\":\"burst $i\"}" >/dev/null; done`. Reconnecting gets a new connection id; the client must resync |
+| A short drop, then resume with `connection_id` and `sequence_number` | Disconnect the client briefly (pause it, or disable the VM's network adapter in VMware), post a few messages as bob, reconnect. The server keeps the dropped connection for about 5 minutes and queues up to **256** events for it (`sendQueueSize`; the 128-event `deadQueueSize` holds frames already sent), `server/channels/app/platform/web_conn.go` |
+| A gap too large to resume | While alice is disconnected, send more than 256 events, e.g. `for i in $(seq 300); do as_bob -X POST $API/posts -d "{\"channel_id\":\"$DEV\",\"message\":\"burst $i\"}" >/dev/null; done`. Reconnecting gets a new connection id; the client must resync |
 | Server restart (a new connection id, a short outage) | `ssh andrew@ubuntu sudo systemctl restart mattermost-dev` |
 | A long outage (backoff) | `ssh andrew@ubuntu sudo systemctl stop mattermost-dev`, then `start` |
-| Session revoked (401 on REST, WebSocket closes) | `curl -X POST -H "Authorization: Bearer $MM_ADMIN_TOKEN" $API/users/$ALICE/sessions/revoke/all`. This revokes password sessions only; `MM_ALICE_TOKEN` keeps working |
+| Session revoked (401 on REST; the WebSocket stays open but answers requests with `not_authenticated`) | `curl -X POST -H "Authorization: Bearer $MM_ADMIN_TOKEN" $API/users/$ALICE/sessions/revoke/all`. This revokes password sessions only; `MM_ALICE_TOKEN` keeps working |
+| Keep the client offline (for the gap above) | On the VM: `sudo nft add table inet mltest; sudo nft add chain inet mltest input '{ type filter hook input priority -10; }'; sudo nft add rule inet mltest input ip saddr 192.168.199.1 tcp dport 443 reject with tcp reset; sudo ss -K state established '( sport = :443 )' dst 192.168.199.1`. Undo: `sudo nft delete table inet mltest`. A short drop without blocking: only the `ss -K` part |
 
 ## 9. Server configuration
 

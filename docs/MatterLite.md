@@ -808,7 +808,7 @@ and it's rebuilt:
 |---|---|
 | `mm_store` | **Hydrated from SQLite** before any network call; first frame drawn from cache (stale marker on badges until P0 finishes) |
 | Sync scheduler queue | Rebuilt from durable state: `channel_sync` (backfill progress), `files.dl_state = pending/downloading` (→ re-queued), `text_state = pending` (→ re-extracted) |
-| WebSocket `connection_id` + next `seq` | **Persisted** in `kv` (on clean shutdown and every ~30 s). On start, reconnect with them. The server keeps a disconnected connection's last 128 events for about **5 minutes** (`deadQueueSize` in `web_conn.go`, `inactiveConnReaperInterval` in `web_hub.go`). A quick restart therefore **resumes with no resync at all**; otherwise the server sends a new `connection_id` and the normal resync runs (§8.5). |
+| WebSocket `connection_id` + next `seq` | **Persisted** in `kv` (on clean shutdown and every ~30 s). On start, reconnect with them. The server keeps a disconnected connection for about **5 minutes** and queues up to **256** events for it, plus the 128 last sent (`sendQueueSize`/`deadQueueSize` in `web_conn.go`, `inactiveConnReaperInterval` in `web_hub.go`; WebApp.md §7.4). A quick restart therefore **resumes with no resync at all**; otherwise the server sends a new `connection_id` and the normal resync runs (§8.5). |
 | Statuses, typing indicators | Shown as unknown/stale until `get_statuses_by_ids` and live events arrive |
 | Ephemeral posts | Dropped (they never existed on the server; the webapp behaves the same) |
 | Unread "New messages" line position | Restored from `channel_members.last_viewed_at` in the cache, then corrected by P0 |
