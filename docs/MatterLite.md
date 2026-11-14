@@ -9,7 +9,8 @@ This document records the **design decisions**, the **Warp reuse plan**, the
 and behaviour details (REST, WebSocket, unreads, rendering rules) are in
 [`WebApp.md`](WebApp.md) — this document refers to its sections as `WebApp §N`. Features
 that go beyond the webapp have their own design documents:
-[`MatterLite-Collaborate.md`](MatterLite-Collaborate.md) (collaborative drafts).
+[`MatterLite-Collaborate.md`](MatterLite-Collaborate.md) (collaborative drafts),
+[`MatterLite-ComposerVim.md`](MatterLite-ComposerVim.md) (Vim mode in the composer).
 
 > Planned home: a new repository at `C:\Projects\Libs\matterlite`. This file lives next to
 > `WebApp.md` until that repository exists, then moves there.
@@ -1494,7 +1495,10 @@ The `matterlite` crate converts `MessageDoc` into WarpUI elements
 - Vim mode was removed from `ml_editor` during the extraction. Bringing it back means porting
   Warp's `VimHandler` implementation for `EditorView` and the vim parts of the editor model
   (`app/src/editor/view/mod.rs`, `view/model/mod.rs`, in import commit `79a4f9f`) on top of
-  the `vim` crate, which is already in the workspace. Then expose it as a setting.
+  the `vim` crate, which is already in the workspace. Then expose it as a setting. Planned as
+  an opt-in for the multi-line composers around M5, shared with the code editor's Vim mode;
+  features, Warp locations, the Esc/Enter rules for the composer and the plan are in
+  [`MatterLite-ComposerVim.md`](MatterLite-ComposerVim.md).
 - **Collaborative drafts** (optional, M9): the user invites channel members to see and edit an
   unsent message together; the owner sends the result as a normal post. Needs a small server
   plugin as a relay, since Mattermost clients can't exchange custom data. Design, protocol and
@@ -1597,7 +1601,8 @@ notebooks), tied to the rest of Warp's app. The extraction:
 3. Replace `crate::…` app dependencies with small traits implemented by the `matterlite`
    binary:
    - `FileViewHost`: open, close, set title, request save-as, "send as new version" callback
-   - `ViewerSettings`: font, soft wrap, Vim mode, from `ml_settings`/`Appearance`
+   - `ViewerSettings`: font, soft wrap, Vim mode (shared with the composer, see
+     [`MatterLite-ComposerVim.md`](MatterLite-ComposerVim.md)), from `ml_settings`/`Appearance`
    - `LinkHandler`: open URLs and Mattermost permalinks
 4. Keep `#[cfg(feature = "local_fs")]` paths enabled (MatterLite always works on local
    cached files).
@@ -1717,7 +1722,7 @@ Mirror the Warp fork's portable scheme (`script/windows/build-portable.ps1`,
 | M2 Store + cache | `mm_store` with unread math and timelines; diesel cache with hydration; sync engine bootstrap and resync; **eager sync scheduler** P0–P3 + P5 (priority queue, rate limit, resumable `channel_sync`), FTS for messages; **lifecycle** (§8.7): hydrate-then-reconcile on start, persisted WebSocket resume, 1000-post `since` gap handling, outbox with 30 s dedupe rules, crash-safe cursors, logout dialog that keeps data by default, stored-accounts list |
 | M3 Core chat UI (**MVP**) | Login; Warp-style layout: chat tabs (focus-or-open, LRU cap, pin, persisted), tool panel **Chats** tab (team switcher + categories), **Channel** tab (Info, Members, Pinned), **History** pane (date groups, local search, navigate, filter-the-chat); channel view with paging, Markdown + emoji + code highlighting, composer (editor) with send/pending/retry, mark read, unread badges, typing indicator, DMs/GMs, channel switcher, reconnect banner, portable packaging; themes: all Warp themes + 5 Mattermost themes + `ChatColors`, theme chooser, follow server theme |
 | M4 Threads + reactions | Inline replies, thread in the **right panel** (+ "Open in tab"), **Activity** tab (Threads, Mentions, Saved, Drafts, Scheduled), reactions, edit/delete, edit history in the right panel; History server-side search pass |
-| M5 Files + previews | Upload (multipart order!), **eager attachment pipeline** (P4: download on receive/cache, thumbnails, quota/eviction, `ml_extract` text extraction, `file_text_fts`, coverage reporting), file cards and thumbnails, OpenGraph/permalink embeds, message attachments; **Warp viewers** (`ml_file_views`): code editor, Markdown/Jupyter viewer, image lightbox; editing with "send as new version" / "save as"; snippets; edit attachments before sending; **Files explorer** pane (grouped by chat, local index + per-chat server listing, name/content search); History "files" search scope; Channel › Bookmarks |
+| M5 Files + previews | Upload (multipart order!), **eager attachment pipeline** (P4: download on receive/cache, thumbnails, quota/eviction, `ml_extract` text extraction, `file_text_fts`, coverage reporting), file cards and thumbnails, OpenGraph/permalink embeds, message attachments; **Warp viewers** (`ml_file_views`): code editor, Markdown/Jupyter viewer, image lightbox; editing with "send as new version" / "save as"; snippets; edit attachments before sending; **Files explorer** pane (grouped by chat, local index + per-chat server listing, name/content search); History "files" search scope; Channel › Bookmarks; optional **Vim mode** for the code editor and the multi-line composers ([`MatterLite-ComposerVim.md`](MatterLite-ComposerVim.md)) |
 | M6 Notifications + search | OS notifications (WarpUI), mention highlighting/keys, tray + dock/taskbar badges, **Search** tab (server-wide messages/files with modifiers), slash commands, interactive buttons/dialogs |
 | M7 Auth + multi-server | Personal access tokens, SSO via system browser + custom URL scheme, multiple servers (store already keyed by `ServerId`) |
 | M8 Polish | **Split panes** in chat tabs (pane groups), vertical tabs option, tab groups, settings (notify props, display), theme creator, export/upload themes to Mattermost, i18n, drafts sync, LaTeX, accessibility |

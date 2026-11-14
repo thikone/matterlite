@@ -483,7 +483,7 @@ code-like inputs, such as a code-block editor or slash-command arguments.
 Removed during the extraction (see the commit `adapt(ml_editor): extract Warp's EditorView into
 EditorView.rs`):
 
-- vim mode
+- vim mode (what it did and how to bring it back: [`MatterLite-ComposerVim.md`](MatterLite-ComposerVim.md))
 - voice input
 - the AI "@" context menu
 - image and file attachments for AI
