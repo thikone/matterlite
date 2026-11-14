@@ -1,0 +1,22 @@
+[package]
+name = "mm_cli"
+version = "0.1.0"
+description = "Developer harness for the protocol crates: login, bootstrap summary, live WebSocket events"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "mm-cli"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+env_logger.workspace = true
+log.workspace = true
+mm_api.workspace = true
+mm_model.workspace = true
+mm_ws.workspace = true
+rpassword = "7"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }

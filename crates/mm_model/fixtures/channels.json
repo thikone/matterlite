@@ -1,0 +1,50 @@
+[
+  {
+    "id": "c9xq8uzj4pbs5r7a2f3g4h5j6k",
+    "create_at": 1700000000000,
+    "update_at": 1700000000000,
+    "delete_at": 0,
+    "team_id": "t5r4e3w2q1a9s8d7f6g5h4j3k2",
+    "type": "O",
+    "display_name": "Town Square",
+    "name": "town-square",
+    "header": "",
+    "purpose": "",
+    "last_post_at": 1763112000500,
+    "total_msg_count": 412,
+    "extra_update_at": 0,
+    "creator_id": "",
+    "scheme_id": null,
+    "props": null,
+    "group_constrained": null,
+    "shared": null,
+    "total_msg_count_root": 380,
+    "policy_id": null,
+    "last_root_post_at": 1763111000000
+  },
+  {
+    "id": "d1m2n3b4v5c6x7z8l9k0j1h2g3",
+    "create_at": 1710000000000,
+    "update_at": 1710000000000,
+    "delete_at": 0,
+    "team_id": "",
+    "type": "D",
+    "display_name": "",
+    "name": "a1b2c3d4e5f6g7h8i9j0k1l2m3__u4k8r9mnpfdc3qz6ka1b2c3d4e",
+    "header": "",
+    "purpose": "",
+    "last_post_at": 1763000000000,
+    "total_msg_count": 17,
+    "creator_id": "a1b2c3d4e5f6g7h8i9j0k1l2m3",
+    "props": {"pinned_post_count": 0},
+    "total_msg_count_root": 17,
+    "last_root_post_at": 1763000000000
+  },
+  {
+    "id": "z9y8x7w6v5u4t3s2r1q0p9o8n7",
+    "team_id": "t5r4e3w2q1a9s8d7f6g5h4j3k2",
+    "type": "X",
+    "display_name": "Some future channel kind",
+    "name": "future"
+  }
+]

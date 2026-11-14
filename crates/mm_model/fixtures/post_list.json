@@ -1,0 +1,70 @@
+{
+  "order": ["w7ab3b8k6tgmdmbrc6s8xy1n4c", "k9q6fxm3u7rdmrj7d1mk6c5wzr"],
+  "posts": {
+    "w7ab3b8k6tgmdmbrc6s8xy1n4c": {
+      "id": "w7ab3b8k6tgmdmbrc6s8xy1n4c",
+      "create_at": 1763112000500,
+      "update_at": 1763112003000,
+      "edit_at": 0,
+      "delete_at": 0,
+      "is_pinned": false,
+      "user_id": "u4k8r9mnpfdc3qz6ka1b2c3d4e",
+      "channel_id": "c9xq8uzj4pbs5r7a2f3g4h5j6k",
+      "root_id": "k9q6fxm3u7rdmrj7d1mk6c5wzr",
+      "original_id": "",
+      "message": "Looks good :+1:",
+      "type": "",
+      "props": {"disable_group_highlight": true},
+      "hashtags": "",
+      "pending_post_id": "",
+      "reply_count": 1,
+      "last_reply_at": 0,
+      "participants": null,
+      "metadata": {
+        "reactions": [
+          {"user_id": "a1b2c3d4e5f6g7h8i9j0k1l2m3", "post_id": "w7ab3b8k6tgmdmbrc6s8xy1n4c",
+           "emoji_name": "tada", "create_at": 1763112003000, "update_at": 1763112003000,
+           "delete_at": 0, "remote_id": "", "channel_id": "c9xq8uzj4pbs5r7a2f3g4h5j6k"}
+        ]
+      },
+      "a_field_from_a_newer_server": {"nested": [1, 2, 3]}
+    },
+    "k9q6fxm3u7rdmrj7d1mk6c5wzr": {
+      "id": "k9q6fxm3u7rdmrj7d1mk6c5wzr",
+      "create_at": 1763111000000,
+      "update_at": 1763111000000,
+      "edit_at": 1763111500000,
+      "delete_at": 0,
+      "is_pinned": true,
+      "user_id": "a1b2c3d4e5f6g7h8i9j0k1l2m3",
+      "channel_id": "c9xq8uzj4pbs5r7a2f3g4h5j6k",
+      "root_id": "",
+      "original_id": "",
+      "message": "Release notes attached",
+      "type": "",
+      "props": {},
+      "hashtags": "",
+      "file_ids": ["f3h7k2m9q4w8e1r5t6y0u2i3o4"],
+      "pending_post_id": "",
+      "reply_count": 1,
+      "last_reply_at": 1763112000500,
+      "participants": [{"id": "u4k8r9mnpfdc3qz6ka1b2c3d4e", "username": "bob", "delete_at": 0,
+                        "first_name": "", "last_name": "", "nickname": "", "position": "",
+                        "roles": "system_user", "locale": "en", "timezone": null, "auth_service": ""}],
+      "is_following": true,
+      "metadata": {
+        "files": [
+          {"id": "f3h7k2m9q4w8e1r5t6y0u2i3o4", "user_id": "a1b2c3d4e5f6g7h8i9j0k1l2m3",
+           "post_id": "k9q6fxm3u7rdmrj7d1mk6c5wzr", "channel_id": "c9xq8uzj4pbs5r7a2f3g4h5j6k",
+           "create_at": 1763110990000, "update_at": 1763110990000, "delete_at": 0,
+           "name": "notes.pdf", "extension": "pdf", "size": 48213, "mime_type": "application/pdf",
+           "mini_preview": null, "remote_id": "", "archived": false}
+        ],
+        "embeds": [{"type": "permalink", "url": "", "data": {"post_id": "x"}}]
+      }
+    }
+  },
+  "next_post_id": "",
+  "prev_post_id": "p1o2i3u4y5t6r7e8w9q0a1s2d3",
+  "first_inaccessible_post_time": 0
+}

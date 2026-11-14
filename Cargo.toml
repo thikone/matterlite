@@ -13,6 +13,10 @@ members = [
   "crates/ml_logging",
   "crates/ml_themes",
   "crates/ml_workspace",
+  "crates/mm_api",
+  "crates/mm_cli",
+  "crates/mm_model",
+  "crates/mm_ws",
   "crates/settings",
   "crates/settings_value",
   "crates/settings_value_derive",
@@ -55,6 +59,9 @@ ml_file_views = { path = "crates/ml_file_views" }
 ml_logging = { path = "crates/ml_logging" }
 ml_themes = { path = "crates/ml_themes" }
 ml_workspace = { path = "crates/ml_workspace" }
+mm_api = { path = "crates/mm_api" }
+mm_model = { path = "crates/mm_model" }
+mm_ws = { path = "crates/mm_ws" }
 settings = { path = "crates/settings" }
 settings_value = { path = "crates/settings_value", default-features = false }
 settings_value_derive = { path = "crates/settings_value_derive" }

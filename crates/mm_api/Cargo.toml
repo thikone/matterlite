@@ -1,0 +1,21 @@
+[package]
+name = "mm_api"
+version = "0.1.0"
+description = "Mattermost REST client: Bearer auth, AppError handling, rate limits, NDJSON"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+log.workspace = true
+mm_model.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+wiremock = "0.6"

@@ -1,0 +1,23 @@
+[package]
+name = "mm_ws"
+version = "0.1.0"
+description = "Mattermost WebSocket client: authentication, sequence checks, resume, ping and backoff"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-channel.workspace = true
+futures-util = { workspace = true, features = ["sink"] }
+log.workspace = true
+mm_model.workspace = true
+rand.workspace = true
+rustls.workspace = true
+rustls-platform-verifier = "0.6"
+tokio = { workspace = true, features = ["macros", "net", "rt", "time"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+url.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
