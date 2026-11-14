@@ -17,7 +17,7 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | crates/command/ | crates/command/ | 5bb7bcc6a | verbatim | AGPL-3.0 | |
 | crates/warp_util/ | crates/warp_util/ | 5bb7bcc6a | adapted | AGPL-3.0 | Tier C: kept content_version, file, file_type, path, standardized_path, user_input, windows; removed git, worktree, remote-host, sync and on_cancel helpers |
 | crates/warpui_core/ | crates/warpui_core/ | 5bb7bcc6a | adapted | MIT | removed the TUI front-end (`tui` feature, elements/tui, runtime), wasm deps, telemetry and app focus telemetry, traces, the defer_scene_build and log_named_telemetry_events features; Roboto path points at assets/; test GIF moved to test_data/ |
-| crates/warpui/ | crates/warpui/ | 5bb7bcc6a | adapted | MIT | removed the wasm platform and wasm deps; only the list and scrolling examples; font tests read assets/bundled/fonts; Windows clipboard tests serialised |
+| crates/warpui/ | crates/warpui/ | 5bb7bcc6a | adapted | MIT | removed the wasm platform, wasm deps and all wasm-only code paths (browser soft keyboard, is_mobile_device); only the list and scrolling examples; font tests read assets/bundled/fonts; Windows clipboard tests serialised |
 | crates/virtual_fs/ | crates/virtual_fs/ | 5bb7bcc6a | adapted | AGPL-3.0 | test helper for warpui; one clippy fix |
 | crates/asset_cache/ | crates/asset_cache/ | 5bb7bcc6a | adapted | AGPL-3.0 | wasm branches removed |
 | crates/asset_macro/ | crates/asset_macro/ | 5bb7bcc6a | adapted | AGPL-3.0 | assets resolved from the repository assets/ dir; remote_asset! removed; bundled_or_fetched_asset! always bundles; warp_util::assets constants inlined |

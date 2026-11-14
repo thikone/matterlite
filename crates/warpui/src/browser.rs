@@ -17,7 +17,7 @@ pub fn escape_html_attribute(value: &str) -> String {
     escaped
 }
 
-#[cfg(any(target_family = "wasm", test))]
+#[cfg(test)]
 pub(crate) fn safe_browser_open_url(url: &str) -> Option<String> {
     let parsed_url = url::Url::parse(url).ok()?;
     match parsed_url.scheme() {

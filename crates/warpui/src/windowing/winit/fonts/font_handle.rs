@@ -2,14 +2,11 @@
 // Derived from warp-terminal `crates/warpui/src/windowing/winit/fonts/font_handle.rs` @ 5bb7bcc6a — adapted for MatterLite.
 // Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
 
-// Neither macOS nor wasm make use of the "load font from path" functionality,
+// Neither macOS nor Windows make use of the "load font from path" functionality,
 // and so there's a lot of unused code in here.  Instead of marking each of the
 // relevant functions with allow(dead_code), we'll do it at the module level
 // instead for simplicity.
-#![cfg_attr(
-    any(target_os = "macos", target_os = "windows", target_family = "wasm"),
-    allow(dead_code)
-)]
+#![cfg_attr(any(target_os = "macos", target_os = "windows"), allow(dead_code))]
 
 use std::fs::File;
 use std::path::PathBuf;
