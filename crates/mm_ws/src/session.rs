@@ -34,6 +34,10 @@ impl Session {
         }
     }
 
+    pub(crate) fn state(&self) -> &ResumeState {
+        &self.state
+    }
+
     pub(crate) fn is_resuming(&self) -> bool {
         !self.state.connection_id.is_empty()
     }

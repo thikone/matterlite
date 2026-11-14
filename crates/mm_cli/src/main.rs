@@ -6,7 +6,13 @@
 //! mm-cli <server-url> ping
 //! mm-cli <server-url> bootstrap [--login <user>]
 //! mm-cli <server-url> events [--login <user>]
+//! mm-cli <server-url> sync --data <dir> [--login <user>]
 //! ```
+//!
+//! `sync` runs the sync engine (`mm_sync`) with its cache under `<dir>` and prints what it
+//! reports. It reads commands from stdin, one per line: `open <channel>`, `older <channel>`,
+//! `newer <channel>`, `close`, `send <channel> <text>`, `show <channel>`, `unread`, `search <words>`,
+//! `quit`. A channel is its name (`dev`) or `@user` for a DM.
 //!
 //! Authentication: `MM_TOKEN` (a session or personal access token), or a password login with
 //! `--login` (asked for when missing), the password from `MM_PASSWORD` or asked for without
@@ -26,9 +32,12 @@ use mm_model::{
     UserId,
 };
 use mm_store::Store;
+
+mod sync;
 use mm_ws::{DisconnectReason, WsConfig, WsOutput};
 
-const USAGE: &str = "usage: mm-cli <server-url> <ping|bootstrap|events> [--login <user>]";
+const USAGE: &str =
+    "usage: mm-cli <server-url> <ping|bootstrap|events|sync> [--login <user>] [--data <dir>]";
 
 enum Command {
     Ping,
@@ -39,21 +48,25 @@ enum Command {
 enum Task {
     Bootstrap,
     Events,
+    Sync,
 }
 
 struct Args {
     server: ServerUrl,
     command: Command,
     login: Option<String>,
+    data: Option<std::path::PathBuf>,
 }
 
 fn parse_args() -> Result<Args> {
     let mut args = std::env::args().skip(1);
     let mut positional = Vec::new();
     let mut login = None;
+    let mut data = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--login" => login = Some(args.next().context("--login needs a user name")?),
+            "--data" => data = Some(args.next().context("--data needs a directory")?.into()),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 std::process::exit(0);
@@ -68,12 +81,14 @@ fn parse_args() -> Result<Args> {
         "ping" => Command::Ping,
         "bootstrap" => Command::LoggedIn(Task::Bootstrap),
         "events" => Command::LoggedIn(Task::Events),
+        "sync" => Command::LoggedIn(Task::Sync),
         other => bail!("unknown command `{other}`\n{USAGE}"),
     };
     Ok(Args {
         server: ServerUrl::parse(server)?,
         command,
         login,
+        data,
     })
 }
 
@@ -90,6 +105,10 @@ async fn main() -> Result<()> {
     let result = match task {
         Task::Bootstrap => bootstrap(&client).await,
         Task::Events => events(&client).await,
+        Task::Sync => {
+            let data = args.data.context("sync needs --data <dir> for the cache")?;
+            sync::run(&client, data).await
+        }
     };
     if logged_in_here {
         match client.logout().await {
@@ -562,6 +581,11 @@ async fn events(client: &Client) -> Result<()> {
                     "{time} connected{}",
                     if resuming { " (resuming)" } else { "" }
                 );
+            }
+            WsOutput::Confirmed { resumed } => {
+                if resumed {
+                    println!("{time} resumed: missed events are replayed");
+                }
             }
             WsOutput::MissedEvents => println!(
                 "{time} the server started a new connection: events were missed (a client resyncs now)"

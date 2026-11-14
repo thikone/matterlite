@@ -106,7 +106,13 @@ cargo run -p mm_cli -- http://ubuntu:8065 ping                          # plain 
 ssh andrew@ubuntu "oathtool --totp -b $MM_FRANK_MFA_SECRET" | MM_PASSWORD=matterlite cargo run -p mm_cli -- https://ubuntu bootstrap --login frank
 # raw WebSocket frames
 RUST_LOG=mm_ws::frames=trace MM_TOKEN=$MM_ALICE_TOKEN cargo run -p mm_cli -- https://ubuntu events
+# the sync engine with a cache under ./mlsync; commands on stdin (open dev, show dev, send dev hi,
+# older dev, newer dev, close, unread, search words, quit). Run it again to start from the cache.
+MM_TOKEN=$MM_ALICE_TOKEN cargo run -p mm_cli -- https://ubuntu sync --data mlsync
 ```
+
+Use a token, not a password login, for `sync` runs you want to restart from the cache: a
+password session `mm-cli` created is logged out when it exits.
 
 In MatterLite, add the server as `https://ubuntu` (or `http://ubuntu:8065`) and sign in as
 `alice` / `matterlite`. Both URLs reach the same server and data.

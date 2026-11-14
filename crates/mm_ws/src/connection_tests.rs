@@ -130,7 +130,17 @@ fn config(addr: SocketAddr) -> WsConfig {
     }
 }
 
+/// The next output, skipping `Confirmed` (tested on its own).
 async fn next(output: &Receiver<WsOutput>) -> WsOutput {
+    loop {
+        match next_any(output).await {
+            WsOutput::Confirmed { .. } => continue,
+            other => return other,
+        }
+    }
+}
+
+async fn next_any(output: &Receiver<WsOutput>) -> WsOutput {
     timeout(WAIT, output.recv()).await.unwrap().unwrap()
 }
 
@@ -351,6 +361,10 @@ async fn answered_pings_keep_the_connection() {
             .await;
     }
     assert!(matches!(next(&output).await, WsOutput::Connected { .. }));
+    assert!(matches!(
+        next_any(&output).await,
+        WsOutput::Confirmed { resumed: false }
+    ));
     assert!(output.is_empty(), "pongs are not reported");
     handle.close();
     assert!(matches!(next(&output).await, WsOutput::Closed));
@@ -510,4 +524,66 @@ async fn unconfirmed_connections_count_as_failures() {
             ..
         } if retry_in == Duration::from_millis(10)
     ));
+}
+
+#[tokio::test]
+async fn confirmation_tells_a_resume_from_a_new_session() {
+    let (listener, addr) = listen().await;
+    let (handle, output) = connect(config(addr));
+
+    // Fresh: confirmed by the first ping reply, not resumed.
+    let mut first = accept(&listener).await;
+    first.handshake().await;
+    first.hello("conn1").await;
+    first.event("typing", 1, json!({"user_id": "u1"})).await;
+    assert!(matches!(
+        next_any(&output).await,
+        WsOutput::Connected { resuming: false }
+    ));
+    assert!(matches!(
+        next_any(&output).await,
+        WsOutput::Confirmed { resumed: false }
+    ));
+    assert_eq!(event_name(&next_any(&output).await), "Hello");
+    assert_eq!(event_name(&next_any(&output).await), "Typing");
+    assert_eq!(
+        handle.resume_state(),
+        ResumeState {
+            connection_id: "conn1".into(),
+            sequence_number: 2
+        }
+    );
+
+    // A lossless resume, confirmed by the ping reply before any event.
+    handle.reconnect_now();
+    first.expect_close().await;
+    assert!(matches!(next(&output).await, WsOutput::Disconnected { .. }));
+    let mut second = accept(&listener).await;
+    second.handshake().await;
+    assert!(matches!(
+        next_any(&output).await,
+        WsOutput::Connected { resuming: true }
+    ));
+    assert!(matches!(
+        next_any(&output).await,
+        WsOutput::Confirmed { resumed: true }
+    ));
+
+    // The server lost the connection: a new id, missed events, not resumed.
+    handle.reconnect_now();
+    second.expect_close().await;
+    assert!(matches!(next(&output).await, WsOutput::Disconnected { .. }));
+    let mut third = accept(&listener).await;
+    third.hello("conn2").await;
+    assert!(matches!(
+        next_any(&output).await,
+        WsOutput::Connected { resuming: true }
+    ));
+    assert!(matches!(next_any(&output).await, WsOutput::MissedEvents));
+    assert!(matches!(
+        next_any(&output).await,
+        WsOutput::Confirmed { resumed: false }
+    ));
+    assert_eq!(event_name(&next_any(&output).await), "Hello");
+    assert_eq!(handle.resume_state().connection_id, "conn2");
 }

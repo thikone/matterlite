@@ -1,0 +1,1142 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! The engine loop: startup, then commands, WebSocket outputs and timers.
+
+use std::collections::{BTreeSet, HashSet};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use async_channel::{Receiver, Sender};
+use mm_api::{ApiError, Client, ClientOptions, NewPost, PostsQuery};
+use mm_cache::{Cache, Op, Writer, account_id, kv, metadata_ops, ops_for};
+use mm_model::ws::{Broadcast, WsEvent};
+use mm_model::{ChannelId, ChannelType, Post, ServerVersion, User, UserId};
+use mm_store::{PageRequest, StoreDelta, dm_partner};
+use mm_ws::{ResumeState, WsConfig, WsHandle, WsOutput};
+use serde_json::json;
+use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, timeout};
+
+use crate::bootstrap::{self, PAGE};
+use crate::{Command, ConnectionState, EngineConfig, Event, SharedStore};
+
+/// How long a resumed connection may take to be confirmed before the engine bootstraps anyway.
+const RESUME_WAIT: Duration = Duration::from_secs(10);
+/// Unconfirmed WebSocket connections in a row before the token is checked over REST (the
+/// server accepts any token on the upgrade and drops the socket later, WebApp.md §7.2).
+const UNCONFIRMED_BEFORE_CHECK: u32 = 3;
+/// Unread window when opening a channel (`limit_before`/`limit_after`).
+const UNREAD_WINDOW: u32 = 30;
+
+/// Results of work done off the loop.
+enum Internal {
+    PostSent {
+        pending: String,
+        result: Result<Post, ApiError>,
+    },
+}
+
+struct Engine {
+    config: EngineConfig,
+    client: Client,
+    store: SharedStore,
+    events: Sender<Event>,
+    writer: Option<Writer>,
+    ws: Option<WsHandle>,
+    internal_tx: Sender<Internal>,
+    /// The channel on screen and whether the window has focus.
+    open_channel: Option<ChannelId>,
+    focused: bool,
+    online: bool,
+    unconfirmed: u32,
+    config_hash: Option<String>,
+    /// DM/GM show preferences already sent this session.
+    show_preferences_sent: HashSet<(String, String)>,
+    /// Pending posts kept for a retry.
+    unsent: std::collections::HashMap<String, NewPost>,
+    /// The last saved `synced_through` (ms).
+    last_saved_sync: i64,
+    /// The `seq` of the last event the engine applied (or dropped as covered by a sync), so
+    /// the saved resume state never skips an event that was received but not yet applied.
+    applied_seq: Option<i64>,
+    stopping: bool,
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as i64)
+}
+
+pub(crate) async fn run(
+    config: EngineConfig,
+    store: SharedStore,
+    commands: Receiver<Command>,
+    events: Sender<Event>,
+) {
+    let client = match Client::new(
+        config.server.clone(),
+        ClientOptions {
+            user_agent: config.user_agent.clone(),
+            ..ClientOptions::default()
+        },
+    ) {
+        Ok(client) => client.with_token(config.token.clone()),
+        Err(error) => {
+            let _ = events.send(Event::Error(error.to_string())).await;
+            return;
+        }
+    };
+    let (internal_tx, internal_rx) = async_channel::unbounded();
+    let mut engine = Engine {
+        config,
+        client,
+        store,
+        events,
+        writer: None,
+        ws: None,
+        internal_tx,
+        open_channel: None,
+        focused: true,
+        online: false,
+        unconfirmed: 0,
+        config_hash: None,
+        show_preferences_sent: HashSet::new(),
+        unsent: Default::default(),
+        last_saved_sync: 0,
+        applied_seq: None,
+        stopping: false,
+    };
+    let Some(ws_output) = engine.start(&commands).await else {
+        engine.stop().await;
+        return;
+    };
+    engine.main_loop(&commands, &ws_output, &internal_rx).await;
+    engine.stop().await;
+}
+
+impl Engine {
+    async fn emit(&self, event: Event) {
+        let _ = self.events.send(event).await;
+    }
+
+    async fn emit_changes(&self, deltas: Vec<StoreDelta>) {
+        if deltas.is_empty() {
+            return;
+        }
+        if let Some(writer) = &self.writer {
+            let ops = ops_for(&self.store.read().expect("store lock"), &deltas);
+            if let Err(error) = writer.send(ops) {
+                log::error!("cache: {error}");
+            }
+        }
+        self.emit(Event::Changed(deltas)).await;
+    }
+
+    /// Startup up to `Ready`. Returns the WebSocket outputs, or `None` when the engine must
+    /// stop (logged out, shut down).
+    async fn start(&mut self, commands: &Receiver<Command>) -> Option<Receiver<WsOutput>> {
+        // 1. The cache, if the account is known: draw before any request.
+        let mut cache = None;
+        if let Some(user) = self.config.user_id.clone() {
+            cache = self.open_cache(&user).await;
+        }
+
+        // 2. The token, retried while the network is down.
+        let me = self.check_token(commands).await?;
+        if self.store.read().expect("store lock").me != me.id {
+            // Another user than the cached one, or no cache yet.
+            *self.store.write().expect("store lock") = mm_store::Store::new(me.clone());
+            cache = None;
+        }
+        if cache.is_none() {
+            cache = self.open_cache(&me.id).await;
+        }
+        let mut resume = None;
+        let mut synced_through = None;
+        let mut diagnostic_id = None;
+        if let Some(cache) = cache.as_mut() {
+            resume = cache
+                .get_kv(kv::WS_RESUME)
+                .ok()
+                .flatten()
+                .and_then(|text| parse_resume(&text));
+            synced_through = cache
+                .get_kv(kv::SYNCED_THROUGH)
+                .ok()
+                .flatten()
+                .and_then(|text| text.parse::<i64>().ok());
+            diagnostic_id = cache.get_kv(kv::DIAGNOSTIC_ID).ok().flatten();
+        }
+        self.last_saved_sync = synced_through.unwrap_or(0);
+        if let Some(cache) = cache {
+            match cache.into_writer() {
+                Ok(writer) => self.writer = Some(writer),
+                Err(error) => log::error!("cache writer: {error}"),
+            }
+        }
+
+        // 3. Resume the saved event stream, or bootstrap.
+        let has_cache = !self.store.read().expect("store lock").channels.is_empty();
+        let (ws, output) = self.connect_ws(resume.filter(|_| has_cache));
+        self.ws = Some(ws);
+        self.emit(Event::Connection(ConnectionState::Connecting))
+            .await;
+        let mut resumed = false;
+        if has_cache
+            && self
+                .ws
+                .as_ref()
+                .is_some_and(|ws| !ws.resume_state().connection_id.is_empty())
+        {
+            resumed = self.wait_for_resume(&output).await?;
+        }
+        if !resumed {
+            self.full_sync(&output, synced_through).await?;
+            self.check_server_identity(diagnostic_id).await;
+        }
+        self.emit(Event::Ready { resumed }).await;
+        Some(output)
+    }
+
+    async fn open_cache(&mut self, user: &UserId) -> Option<Cache> {
+        let path = self
+            .config
+            .servers_dir
+            .join(account_id(self.config.server.as_str(), user))
+            .join("cache.sqlite");
+        match Cache::open(&path) {
+            Ok((mut cache, report)) => {
+                if let Some(aside) = report.moved_aside {
+                    self.emit(Event::CacheMovedAside(aside)).await;
+                }
+                match cache.hydrate() {
+                    Ok(Some(hydrated)) if hydrated.me == *user => {
+                        *self.store.write().expect("store lock") = hydrated;
+                        self.emit(Event::Hydrated).await;
+                    }
+                    Ok(_) => {}
+                    Err(error) => log::error!("cache hydration: {error}"),
+                }
+                Some(cache)
+            }
+            Err(error) => {
+                log::error!("cache {}: {error}", path.display());
+                self.emit(Event::Error(format!("local cache unavailable: {error}")))
+                    .await;
+                None
+            }
+        }
+    }
+
+    /// `GET /users/me` until it answers. 401: logged out.
+    async fn check_token(&mut self, commands: &Receiver<Command>) -> Option<User> {
+        let mut delay = Duration::from_secs(3);
+        loop {
+            match self.client.me().await {
+                Ok(me) => return Some(me),
+                Err(error) if error.is_session_expired() => {
+                    self.emit(Event::LoggedOut).await;
+                    return None;
+                }
+                Err(error) => {
+                    log::warn!("server unreachable: {error}");
+                    self.emit(Event::Connection(ConnectionState::Offline {
+                        retry_in: delay,
+                    }))
+                    .await;
+                    tokio::select! {
+                        _ = sleep(delay) => {}
+                        command = commands.recv() => match command {
+                            Ok(Command::Shutdown) | Err(_) => return None,
+                            // Nothing can be done offline before the first contact; the UI
+                            // reads the hydrated store meanwhile.
+                            Ok(_) => {}
+                        },
+                    }
+                    delay = (delay * 2).min(Duration::from_secs(60));
+                }
+            }
+        }
+    }
+
+    fn connect_ws(&self, resume: Option<ResumeState>) -> (WsHandle, Receiver<WsOutput>) {
+        let url = {
+            let store = self.store.read().expect("store lock");
+            self.config
+                .server
+                .websocket_url(store.config.websocket_url())
+        };
+        let url = url.unwrap_or_else(|_| {
+            self.config
+                .server
+                .websocket_url(None)
+                .expect("a valid server URL has a WebSocket URL")
+        });
+        let mut ws_config = WsConfig::new(
+            url,
+            self.config.token.clone(),
+            self.config.user_agent.clone(),
+        );
+        ws_config.resume = resume;
+        mm_ws::connect(ws_config)
+    }
+
+    /// After a restart with a saved session: waits for the server to confirm it. `true` if
+    /// it resumed with nothing lost.
+    async fn wait_for_resume(&mut self, output: &Receiver<WsOutput>) -> Option<bool> {
+        let deadline = Instant::now() + RESUME_WAIT;
+        loop {
+            let next = timeout(
+                deadline.saturating_duration_since(Instant::now()),
+                output.recv(),
+            )
+            .await;
+            match next {
+                Ok(Ok(WsOutput::Confirmed { resumed })) => {
+                    self.set_online(true).await;
+                    return Some(resumed);
+                }
+                Ok(Ok(WsOutput::MissedEvents)) => return Some(false),
+                Ok(Ok(WsOutput::AuthFailed)) => {
+                    self.emit(Event::LoggedOut).await;
+                    return None;
+                }
+                Ok(Ok(WsOutput::Closed)) | Ok(Err(_)) => return None,
+                Ok(Ok(WsOutput::Disconnected { .. })) | Err(_) => return Some(false),
+                Ok(Ok(_)) => {}
+            }
+        }
+    }
+
+    /// The P0 bootstrap and the catch-up of loaded timelines. WebSocket events that arrive
+    /// meanwhile are dropped: the fetched data already contains them, and applying them on
+    /// top would count new posts twice. The catch-up covers posts in that window.
+    async fn full_sync(
+        &mut self,
+        output: &Receiver<WsOutput>,
+        synced_through: Option<i64>,
+    ) -> Option<()> {
+        let started = now_ms();
+        loop {
+            match bootstrap::bootstrap(&self.client, &self.store).await {
+                Ok(()) => break,
+                Err(error) if error.is_session_expired() => {
+                    self.emit(Event::LoggedOut).await;
+                    return None;
+                }
+                Err(error) => {
+                    log::warn!("bootstrap failed: {error}");
+                    self.emit(Event::Error(format!("sync failed: {error}")))
+                        .await;
+                    sleep(Duration::from_secs(5)).await;
+                }
+            }
+        }
+        self.config_hash = self.client.version().map(|version| version.config_hash);
+        if let Some(writer) = &self.writer {
+            let ops = metadata_ops(&self.store.read().expect("store lock"));
+            if let Err(error) = writer.send(ops) {
+                log::error!("cache: {error}");
+            }
+        }
+        let since = synced_through.unwrap_or(started);
+        match bootstrap::catch_up(&self.client, &self.store, since).await {
+            Ok(deltas) => self.emit_changes(deltas).await,
+            Err(error) => log::warn!("catch-up failed: {error}"),
+        }
+        let dropped = self.drop_queued_events(output).await?;
+        if dropped > 0 {
+            log::info!("dropped {dropped} events received during the sync");
+            // Posts among them: covered by a second, short catch-up.
+            if let Ok(deltas) = bootstrap::catch_up(&self.client, &self.store, started).await {
+                self.emit_changes(deltas).await;
+            }
+        }
+        self.save_show_preferences().await;
+        self.save_sync_time(started);
+        self.emit_changes(vec![StoreDelta::PreferencesChanged])
+            .await;
+        Some(())
+    }
+
+    /// Discards queued events, handling the connection outputs among them.
+    async fn drop_queued_events(&mut self, output: &Receiver<WsOutput>) -> Option<usize> {
+        let mut dropped = 0;
+        while let Ok(next) = output.try_recv() {
+            match next {
+                WsOutput::Event { seq, .. } | WsOutput::Undecodable { seq, .. } => {
+                    dropped += 1;
+                    self.applied_seq = Some(seq);
+                }
+                other => {
+                    if !self.on_connection_output(other).await {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(dropped)
+    }
+
+    async fn main_loop(
+        &mut self,
+        commands: &Receiver<Command>,
+        output: &Receiver<WsOutput>,
+        internal: &Receiver<Internal>,
+    ) {
+        let mut statuses = interval_at(
+            Instant::now() + self.config.status_interval,
+            self.config.status_interval,
+        );
+        statuses.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut save = interval_at(
+            Instant::now() + self.config.save_interval,
+            self.config.save_interval,
+        );
+        save.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        while !self.stopping {
+            tokio::select! {
+                command = commands.recv() => match command {
+                    Ok(command) => self.on_command(command).await,
+                    Err(_) => break,
+                },
+                next = output.recv() => match next {
+                    Ok(WsOutput::Event { seq, broadcast, event }) => {
+                        self.on_event(event, broadcast).await;
+                        self.applied_seq = Some(seq);
+                    }
+                    Ok(WsOutput::Undecodable { seq, error }) => {
+                        log::warn!("event {seq} not decoded: {error}");
+                        self.applied_seq = Some(seq);
+                    }
+                    Ok(WsOutput::MissedEvents) => {
+                        // The server lost our session: refetch, as at startup. The new
+                        // connection's numbering starts over.
+                        self.applied_seq = None;
+                        let synced = self.synced_through();
+                        if self.full_sync(output, Some(synced)).await.is_none() {
+                            break;
+                        }
+                        self.emit(Event::Resynced).await;
+                    }
+                    Ok(other) => {
+                        if !self.on_connection_output(other).await {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                },
+                Ok(message) = internal.recv() => self.on_internal(message).await,
+                _ = statuses.tick() => {
+                    self.poll_statuses().await;
+                    self.check_config_hash(None).await;
+                }
+                _ = save.tick() => {
+                    if self.online {
+                        self.save_sync_time(now_ms());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Connection outputs (not events). Returns `false` when the engine must stop.
+    async fn on_connection_output(&mut self, output: WsOutput) -> bool {
+        match output {
+            WsOutput::Connected { .. } => {
+                self.emit(Event::Connection(ConnectionState::Connecting))
+                    .await;
+            }
+            WsOutput::Confirmed { .. } => self.set_online(true).await,
+            WsOutput::Disconnected {
+                retry_in,
+                session_confirmed,
+                ..
+            } => {
+                if self.online {
+                    self.save_sync_time(now_ms());
+                }
+                self.online = false;
+                self.emit(Event::Connection(ConnectionState::Offline { retry_in }))
+                    .await;
+                if session_confirmed {
+                    self.unconfirmed = 0;
+                } else {
+                    self.unconfirmed += 1;
+                    if self.unconfirmed >= UNCONFIRMED_BEFORE_CHECK {
+                        self.unconfirmed = 0;
+                        if let Err(error) = self.client.me().await
+                            && error.is_session_expired()
+                        {
+                            self.emit(Event::LoggedOut).await;
+                            return false;
+                        }
+                    }
+                }
+            }
+            WsOutput::AuthFailed => {
+                self.emit(Event::LoggedOut).await;
+                return false;
+            }
+            WsOutput::Closed => return false,
+            WsOutput::MissedEvents
+            | WsOutput::Event { .. }
+            | WsOutput::Undecodable { .. }
+            | WsOutput::Response(_) => {}
+        }
+        true
+    }
+
+    async fn set_online(&mut self, online: bool) {
+        if self.online != online {
+            self.online = online;
+            if online {
+                self.unconfirmed = 0;
+                self.emit(Event::Connection(ConnectionState::Online)).await;
+            }
+        }
+    }
+
+    async fn on_event(&mut self, event: WsEvent, broadcast: Broadcast) {
+        if let WsEvent::Hello(hello) = &event {
+            let hash =
+                ServerVersion::parse(&hello.server_version).map(|version| version.config_hash);
+            self.check_config_hash(hash).await;
+        }
+        let deltas = self
+            .store
+            .write()
+            .expect("store lock")
+            .apply(&event, &broadcast);
+        let mut fetches = Vec::new();
+        for delta in &deltas {
+            match delta {
+                StoreDelta::Fetch(fetch) => fetches.push(fetch.clone()),
+                StoreDelta::MarkedRead {
+                    channel,
+                    notify_server: true,
+                } => self.view_on_server(channel.clone()),
+                _ => {}
+            }
+        }
+        if let WsEvent::Posted(posted) = &event {
+            let author = &posted.post.user_id;
+            if !self
+                .store
+                .read()
+                .expect("store lock")
+                .users
+                .contains_key(author)
+            {
+                fetches.push(mm_store::Fetch::Users(vec![author.clone()]));
+            }
+        }
+        self.emit_changes(deltas).await;
+        for fetch in fetches {
+            self.fetch(fetch).await;
+        }
+        if matches!(event, WsEvent::Posted(_)) {
+            self.save_show_preferences().await;
+        }
+    }
+
+    async fn fetch(&mut self, fetch: mm_store::Fetch) {
+        let result: Result<Vec<StoreDelta>, ApiError> = async {
+            Ok(match fetch {
+                mm_store::Fetch::Channel(id) => {
+                    let (channel, member) = tokio::try_join!(
+                        self.client.channel(&id),
+                        self.client.my_channel_member(&id)
+                    )?;
+                    let partner = (channel.channel_type == ChannelType::Direct)
+                        .then(|| {
+                            let me = self.store.read().expect("store lock").me.clone();
+                            dm_partner(&channel.name, &me)
+                        })
+                        .flatten();
+                    let mut deltas = self
+                        .store
+                        .write()
+                        .expect("store lock")
+                        .upsert_channel(channel, member);
+                    // Decide first: no store guard may live across an await.
+                    let unknown = partner.filter(|partner| {
+                        !self
+                            .store
+                            .read()
+                            .expect("store lock")
+                            .users
+                            .contains_key(partner)
+                    });
+                    if let Some(partner) = unknown {
+                        let users = self.client.users_by_ids(&[partner]).await?;
+                        deltas.extend(self.store.write().expect("store lock").add_users(users));
+                    }
+                    deltas
+                }
+                mm_store::Fetch::Team(_)
+                | mm_store::Fetch::Categories(_)
+                | mm_store::Fetch::Roles => {
+                    // Rare: a full bootstrap brings teams, channels, categories and roles
+                    // consistently.
+                    bootstrap::bootstrap(&self.client, &self.store).await?;
+                    let mut deltas = vec![StoreDelta::RolesChanged, StoreDelta::PreferencesChanged];
+                    let store = self.store.read().expect("store lock");
+                    deltas.extend(store.teams.keys().cloned().map(StoreDelta::TeamChanged));
+                    deltas.extend(
+                        store
+                            .categories
+                            .keys()
+                            .cloned()
+                            .map(StoreDelta::CategoriesChanged),
+                    );
+                    deltas.extend(
+                        store
+                            .channels
+                            .keys()
+                            .cloned()
+                            .map(StoreDelta::ChannelChanged),
+                    );
+                    deltas.extend(
+                        store
+                            .channel_members
+                            .keys()
+                            .cloned()
+                            .map(StoreDelta::MemberChanged),
+                    );
+                    deltas
+                }
+                mm_store::Fetch::Users(ids) => {
+                    let users = self.client.users_by_ids(&ids).await?;
+                    self.store.write().expect("store lock").add_users(users)
+                }
+            })
+        }
+        .await;
+        match result {
+            Ok(deltas) => self.emit_changes(deltas).await,
+            Err(error) => log::warn!("fetch failed: {error}"),
+        }
+    }
+
+    async fn on_command(&mut self, command: Command) {
+        match command {
+            Command::OpenChannel(channel) => self.open_channel(channel).await,
+            Command::CloseChannel => {
+                self.open_channel = None;
+                self.store.write().expect("store lock").viewing = None;
+            }
+            Command::SetFocused(focused) => {
+                self.focused = focused;
+                let open = self.open_channel.clone();
+                self.store.write().expect("store lock").viewing = open.clone().filter(|_| focused);
+                if focused && let Some(channel) = open {
+                    self.mark_viewed(&channel).await;
+                }
+            }
+            Command::LoadOlder(channel) => self.load_older(channel).await,
+            Command::LoadNewer(channel) => self.load_newer(channel).await,
+            Command::OpenThread(root) => match self.client.post_thread(&root).await {
+                Ok(list) => {
+                    let deltas = self
+                        .store
+                        .write()
+                        .expect("store lock")
+                        .add_thread(&root, &list);
+                    self.emit_changes(deltas).await;
+                }
+                Err(error) => self.emit(Event::Error(format!("thread: {error}"))).await,
+            },
+            Command::SendPost {
+                channel,
+                root,
+                message,
+            } => {
+                let me = self.store.read().expect("store lock").me.clone();
+                let now = now_ms();
+                let post = NewPost {
+                    channel_id: channel,
+                    root_id: root,
+                    message,
+                    pending_post_id: format!("{me}:{now}"),
+                    ..NewPost::default()
+                };
+                self.send_post(post, now).await;
+            }
+            Command::RetryPost(pending) => {
+                if let Some(post) = self.unsent.get(&pending).cloned() {
+                    if let Some(state) = self
+                        .store
+                        .write()
+                        .expect("store lock")
+                        .pending
+                        .get_mut(&pending)
+                    {
+                        state.failed = false;
+                    }
+                    self.emit_changes(vec![StoreDelta::PendingChanged(pending.clone())])
+                        .await;
+                    self.spawn_send(post);
+                }
+            }
+            Command::DiscardPost(pending) => {
+                self.unsent.remove(&pending);
+                let deltas = self
+                    .store
+                    .write()
+                    .expect("store lock")
+                    .discard_pending(&pending);
+                self.emit_changes(deltas).await;
+            }
+            Command::Shutdown => self.stopping = true,
+        }
+    }
+
+    async fn open_channel(&mut self, channel: ChannelId) {
+        let previous = self.open_channel.replace(channel.clone());
+        let (needs_posts, unread, last_viewed_at) = {
+            let mut store = self.store.write().expect("store lock");
+            if let Some(previous) = &previous
+                && *previous != channel
+            {
+                store.manually_unread.remove(previous);
+            }
+            store.viewing = self.focused.then(|| channel.clone());
+            let needs_posts = store
+                .timelines
+                .get(&channel)
+                .is_none_or(|timeline| !timeline.has_recent());
+            let unread = store
+                .channel_unread(&channel)
+                .is_some_and(|unread| unread.messages > 0);
+            let last_viewed_at = store
+                .channel_members
+                .get(&channel)
+                .map_or(0, |member| member.last_viewed_at);
+            (needs_posts, unread, last_viewed_at)
+        };
+        self.emit(Event::ChannelOpened {
+            channel: channel.clone(),
+            last_viewed_at,
+        })
+        .await;
+        if needs_posts {
+            let (me, crt) = {
+                let store = self.store.read().expect("store lock");
+                (store.me.clone(), store.crt_enabled())
+            };
+            let result = if unread {
+                self.client
+                    .posts_around_first_unread(&me, &channel, UNREAD_WINDOW, UNREAD_WINDOW, crt)
+                    .await
+                    .map(|list| (list, PageRequest::AroundUnread))
+            } else {
+                self.client
+                    .channel_posts(
+                        &channel,
+                        &PostsQuery {
+                            per_page: Some(PAGE),
+                            collapsed_threads: crt,
+                            collapsed_threads_extended: crt,
+                            ..PostsQuery::default()
+                        },
+                    )
+                    .await
+                    .map(|list| (list, PageRequest::Newest))
+            };
+            match result {
+                Ok((list, request)) => {
+                    let deltas = self
+                        .store
+                        .write()
+                        .expect("store lock")
+                        .add_posts(&channel, &list, request);
+                    self.emit_changes(deltas).await;
+                    self.fetch_missing_authors(&list).await;
+                }
+                Err(error) => {
+                    self.emit(Event::Error(format!("loading the channel: {error}")))
+                        .await
+                }
+            }
+        }
+        if self.focused {
+            self.mark_viewed(&channel).await;
+        }
+    }
+
+    async fn mark_viewed(&mut self, channel: &ChannelId) {
+        if self
+            .store
+            .read()
+            .expect("store lock")
+            .manually_unread
+            .contains(channel)
+        {
+            return;
+        }
+        let deltas = self
+            .store
+            .write()
+            .expect("store lock")
+            .mark_viewed(channel, now_ms());
+        self.emit_changes(deltas).await;
+        self.view_on_server(channel.clone());
+    }
+
+    fn view_on_server(&self, channel: ChannelId) {
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            if let Err(error) = client.view_channel(&channel, None).await {
+                log::warn!("marking {channel} read: {error}");
+            }
+        });
+    }
+
+    async fn load_older(&mut self, channel: ChannelId) {
+        let (anchor, crt) = {
+            let store = self.store.read().expect("store lock");
+            let anchor = store
+                .timelines
+                .get(&channel)
+                .and_then(|timeline| timeline.oldest_of_recent().cloned());
+            (anchor, store.crt_enabled())
+        };
+        let Some((_, anchor)) = anchor else {
+            return;
+        };
+        match self
+            .client
+            .channel_posts(
+                &channel,
+                &PostsQuery {
+                    before: Some(anchor.clone()),
+                    per_page: Some(PAGE),
+                    collapsed_threads: crt,
+                    collapsed_threads_extended: crt,
+                    ..PostsQuery::default()
+                },
+            )
+            .await
+        {
+            Ok(list) => {
+                let deltas = self.store.write().expect("store lock").add_posts(
+                    &channel,
+                    &list,
+                    PageRequest::Before(anchor),
+                );
+                self.emit_changes(deltas).await;
+                self.fetch_missing_authors(&list).await;
+            }
+            Err(error) => {
+                self.emit(Event::Error(format!("loading older posts: {error}")))
+                    .await
+            }
+        }
+    }
+
+    async fn load_newer(&mut self, channel: ChannelId) {
+        let (anchor, crt) = {
+            let store = self.store.read().expect("store lock");
+            let anchor = store
+                .timelines
+                .get(&channel)
+                .filter(|timeline| !timeline.has_recent())
+                .and_then(|timeline| timeline.ranges().last().map(|range| range.newest.clone()));
+            (anchor, store.crt_enabled())
+        };
+        let Some((_, anchor)) = anchor else {
+            return;
+        };
+        match self
+            .client
+            .channel_posts(
+                &channel,
+                &PostsQuery {
+                    after: Some(anchor.clone()),
+                    per_page: Some(PAGE),
+                    collapsed_threads: crt,
+                    collapsed_threads_extended: crt,
+                    ..PostsQuery::default()
+                },
+            )
+            .await
+        {
+            Ok(list) => {
+                let deltas = self.store.write().expect("store lock").add_posts(
+                    &channel,
+                    &list,
+                    PageRequest::After(anchor),
+                );
+                self.emit_changes(deltas).await;
+                self.fetch_missing_authors(&list).await;
+            }
+            Err(error) => {
+                self.emit(Event::Error(format!("loading newer posts: {error}")))
+                    .await
+            }
+        }
+    }
+
+    async fn fetch_missing_authors(&mut self, list: &mm_model::PostList) {
+        let missing: Vec<UserId> = {
+            let store = self.store.read().expect("store lock");
+            list.posts
+                .values()
+                .map(|post| post.user_id.clone())
+                .filter(|id| !id.is_empty() && !store.users.contains_key(id))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        };
+        if !missing.is_empty() {
+            self.fetch(mm_store::Fetch::Users(missing)).await;
+        }
+    }
+
+    async fn send_post(&mut self, post: NewPost, now: i64) {
+        let pending: Post = serde_json::from_value(json!({
+            "channel_id": post.channel_id,
+            "root_id": post.root_id,
+            "message": post.message,
+            "pending_post_id": post.pending_post_id,
+            "create_at": now,
+            "update_at": now,
+        }))
+        .expect("a post from known fields");
+        let deltas = self.store.write().expect("store lock").add_pending(pending);
+        self.emit_changes(deltas).await;
+        self.unsent
+            .insert(post.pending_post_id.clone(), post.clone());
+        self.spawn_send(post);
+    }
+
+    fn spawn_send(&self, post: NewPost) {
+        let client = self.client.clone();
+        let internal = self.internal_tx.clone();
+        tokio::spawn(async move {
+            let result = client.create_post(&post).await;
+            let _ = internal
+                .send(Internal::PostSent {
+                    pending: post.pending_post_id,
+                    result,
+                })
+                .await;
+        });
+    }
+
+    async fn on_internal(&mut self, message: Internal) {
+        match message {
+            Internal::PostSent { pending, result } => match result {
+                Ok(post) => {
+                    self.unsent.remove(&pending);
+                    let deltas = self.store.write().expect("store lock").confirm_post(&post);
+                    self.emit_changes(deltas).await;
+                }
+                Err(error) => {
+                    log::warn!("sending {pending}: {error}");
+                    let deltas = self
+                        .store
+                        .write()
+                        .expect("store lock")
+                        .fail_pending(&pending);
+                    self.emit_changes(deltas).await;
+                    self.emit(Event::Error(format!("message not sent: {error}")))
+                        .await;
+                }
+            },
+        }
+    }
+
+    /// Statuses of the users on screen: DM partners and the authors of the open channel's
+    /// recent posts (`status_change` arrives only for my own status).
+    async fn poll_statuses(&mut self) {
+        let ids: Vec<UserId> = {
+            let store = self.store.read().expect("store lock");
+            let mut ids: BTreeSet<UserId> = store
+                .channels
+                .values()
+                .filter(|channel| channel.channel_type == ChannelType::Direct)
+                .filter_map(|channel| dm_partner(&channel.name, &store.me))
+                .collect();
+            if let Some(open) = &self.open_channel {
+                for post in store
+                    .timeline_posts(open)
+                    .into_iter()
+                    .flatten()
+                    .take(PAGE as usize)
+                {
+                    ids.insert(post.user_id.clone());
+                }
+            }
+            ids.insert(store.me.clone());
+            ids.into_iter().filter(|id| !id.is_empty()).collect()
+        };
+        match self.client.statuses_by_ids(&ids).await {
+            Ok(statuses) => {
+                let deltas = self
+                    .store
+                    .write()
+                    .expect("store lock")
+                    .set_statuses(statuses);
+                // Only to the UI: statuses aren't cached.
+                self.emit(Event::Changed(deltas)).await;
+            }
+            Err(error) if error.is_session_expired() => {
+                self.emit(Event::LoggedOut).await;
+                self.stopping = true;
+            }
+            Err(error) => log::debug!("status poll: {error}"),
+        }
+    }
+
+    /// Refetches the client config when the server's config hash changed (from `hello` or the
+    /// last response's `X-Version-Id`).
+    async fn check_config_hash(&mut self, from_hello: Option<String>) {
+        let current =
+            from_hello.or_else(|| self.client.version().map(|version| version.config_hash));
+        let Some(current) = current.filter(|hash| !hash.is_empty()) else {
+            return;
+        };
+        if self.config_hash.as_ref() == Some(&current) {
+            return;
+        }
+        let first = self.config_hash.is_none();
+        self.config_hash = Some(current);
+        if first {
+            return;
+        }
+        match tokio::try_join!(self.client.client_config(), self.client.client_license()) {
+            Ok((config, license)) => {
+                let crt_before = self.store.read().expect("store lock").crt_enabled();
+                let mut deltas = vec![StoreDelta::ConfigChanged, StoreDelta::LicenseChanged];
+                {
+                    let mut store = self.store.write().expect("store lock");
+                    store.set_config(config);
+                    store.set_license(license);
+                    if store.crt_enabled() != crt_before {
+                        deltas.push(StoreDelta::CrtChanged);
+                    }
+                }
+                self.emit_changes(deltas).await;
+            }
+            Err(error) => log::warn!("refetching the config: {error}"),
+        }
+    }
+
+    /// Saves the `direct_channel_show`/`group_channel_show` preferences the webapp writes for
+    /// unread DMs/GMs, so they stay in the sidebar once read (WebApp.md §14).
+    async fn save_show_preferences(&mut self) {
+        let (me, preferences) = {
+            let store = self.store.read().expect("store lock");
+            let preferences: Vec<_> = store
+                .dm_gm_show_preferences_to_save()
+                .into_iter()
+                .filter(|p| {
+                    !self
+                        .show_preferences_sent
+                        .contains(&(p.category.clone(), p.name.clone()))
+                })
+                .collect();
+            (store.me.clone(), preferences)
+        };
+        if preferences.is_empty() {
+            return;
+        }
+        match self.client.save_preferences(&me, &preferences).await {
+            Ok(()) => {
+                let mut store = self.store.write().expect("store lock");
+                for preference in preferences {
+                    self.show_preferences_sent
+                        .insert((preference.category.clone(), preference.name.clone()));
+                    store
+                        .preferences
+                        .insert((preference.category, preference.name), preference.value);
+                }
+            }
+            Err(error) => log::warn!("saving DM visibility: {error}"),
+        }
+    }
+
+    async fn check_server_identity(&mut self, cached: Option<String>) {
+        let current = self
+            .store
+            .read()
+            .expect("store lock")
+            .config
+            .get("DiagnosticId")
+            .map(str::to_owned);
+        if let (Some(cached), Some(current)) = (&cached, &current)
+            && cached != current
+        {
+            self.emit(Event::ServerChanged).await;
+        }
+        if let (Some(writer), Some(current)) = (&self.writer, current) {
+            let _ = writer.send(vec![
+                Op::Kv(kv::DIAGNOSTIC_ID.into(), Some(current)),
+                Op::Kv(
+                    kv::SERVER_URL.into(),
+                    Some(self.config.server.as_str().to_owned()),
+                ),
+            ]);
+        }
+    }
+
+    /// Saved every `save_interval` while online and at each disconnect.
+    fn synced_through(&self) -> i64 {
+        self.last_saved_sync
+    }
+
+    fn save_sync_time(&mut self, at: i64) {
+        self.last_saved_sync = at;
+        if let Some(writer) = &self.writer {
+            let mut ops = vec![Op::Kv(kv::SYNCED_THROUGH.into(), Some(at.to_string()))];
+            if let Some(ws) = &self.ws {
+                let mut resume = ws.resume_state();
+                if let Some(seq) = self.applied_seq {
+                    resume.sequence_number = seq + 1;
+                }
+                if !resume.connection_id.is_empty() {
+                    ops.push(Op::Kv(
+                        kv::WS_RESUME.into(),
+                        Some(
+                            json!({
+                                "connection_id": resume.connection_id,
+                                "sequence_number": resume.sequence_number,
+                            })
+                            .to_string(),
+                        ),
+                    ));
+                }
+            }
+            let _ = writer.send(ops);
+        }
+    }
+
+    async fn stop(&mut self) {
+        if self.ws.is_some() {
+            // The resume state too, also when offline: the server may still hold the session.
+            let at = if self.online {
+                now_ms()
+            } else {
+                self.last_saved_sync
+            };
+            self.save_sync_time(at);
+        }
+        if let Some(ws) = self.ws.take() {
+            ws.close();
+        }
+        if let Some(writer) = self.writer.take()
+            && let Err(error) = writer.close()
+        {
+            log::error!("closing the cache: {error}");
+        }
+    }
+}
+
+fn parse_resume(text: &str) -> Option<ResumeState> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    Some(ResumeState {
+        connection_id: value.get("connection_id")?.as_str()?.to_owned(),
+        sequence_number: value.get("sequence_number")?.as_i64()?,
+    })
+}

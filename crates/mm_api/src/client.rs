@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use mm_model::error::ids;
 use mm_model::{
-    AppError, Channel, ChannelId, ChannelMember, ClientConfig, OrderedSidebarCategories, PostId,
-    PostList, Preference, Role, ServerVersion, SessionToken, Status, Team, TeamId, TeamMember,
-    TeamUnread, User, UserId,
+    AppError, Channel, ChannelId, ChannelMember, ClientConfig, OrderedSidebarCategories, Post,
+    PostId, PostList, Preference, Role, ServerVersion, SessionToken, Status, Team, TeamId,
+    TeamMember, TeamUnread, ThreadList, User, UserId,
 };
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{Method, RequestBuilder, Response, StatusCode};
@@ -455,6 +455,144 @@ impl Client {
     pub async fn statuses_by_ids(&self, user_ids: &[UserId]) -> Result<Vec<Status>, ApiError> {
         self.json(self.post(&["users", "status", "ids"]).json(user_ids))
             .await
+    }
+
+    // Single entities, for events that name something the client doesn't have yet.
+
+    /// `GET /channels/{id}`.
+    pub async fn channel(&self, channel_id: &ChannelId) -> Result<Channel, ApiError> {
+        self.json(self.get(&["channels", channel_id.as_str()]))
+            .await
+    }
+
+    /// `GET /channels/{id}/members/me`.
+    pub async fn my_channel_member(
+        &self,
+        channel_id: &ChannelId,
+    ) -> Result<ChannelMember, ApiError> {
+        self.json(self.get(&["channels", channel_id.as_str(), "members", "me"]))
+            .await
+    }
+
+    /// `GET /teams/{id}`.
+    pub async fn team(&self, team_id: &TeamId) -> Result<Team, ApiError> {
+        self.json(self.get(&["teams", team_id.as_str()])).await
+    }
+
+    /// `GET /teams/{id}/members/me`.
+    pub async fn my_team_member(&self, team_id: &TeamId) -> Result<TeamMember, ApiError> {
+        self.json(self.get(&["teams", team_id.as_str(), "members", "me"]))
+            .await
+    }
+
+    // Writing.
+
+    /// `POST /posts` (WebApp.md §9.3). `pending_post_id` lets the server recognise a retry
+    /// for 30 s and comes back in the reply and the `posted` event.
+    pub async fn create_post(&self, post: &NewPost) -> Result<Post, ApiError> {
+        let body = json!({
+            "channel_id": post.channel_id,
+            "root_id": post.root_id,
+            "message": post.message,
+            "pending_post_id": post.pending_post_id,
+            "file_ids": post.file_ids,
+            "props": post.props,
+            "create_at": 0,
+        });
+        self.json(self.post(&["posts"]).json(&body)).await
+    }
+
+    /// `PUT /users/{id}/preferences`: saves (creates or replaces) preferences.
+    pub async fn save_preferences(
+        &self,
+        user_id: &UserId,
+        preferences: &[Preference],
+    ) -> Result<(), ApiError> {
+        self.empty(
+            self.request(Method::PUT, &["users", user_id.as_str(), "preferences"])
+                .json(preferences),
+        )
+        .await
+    }
+
+    // Threads (CRT, WebApp.md §10.3).
+
+    /// `GET /users/{uid}/teams/{tid}/threads`: followed threads, newest activity first.
+    pub async fn team_threads(
+        &self,
+        user_id: &UserId,
+        team_id: &TeamId,
+        query: &ThreadsQuery,
+    ) -> Result<ThreadList, ApiError> {
+        self.json(
+            self.get(&[
+                "users",
+                user_id.as_str(),
+                "teams",
+                team_id.as_str(),
+                "threads",
+            ])
+            .query(&query.pairs()),
+        )
+        .await
+    }
+
+    /// `GET /posts/{id}/thread`: the root and all replies.
+    pub async fn post_thread(&self, root_id: &PostId) -> Result<PostList, ApiError> {
+        self.json(self.get(&["posts", root_id.as_str(), "thread"]).query(&[
+            ("collapsedThreads", "true"),
+            ("collapsedThreadsExtended", "true"),
+        ]))
+        .await
+    }
+}
+
+/// A post to send ([`Client::create_post`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NewPost {
+    pub channel_id: ChannelId,
+    /// Empty for a root post.
+    pub root_id: PostId,
+    pub message: String,
+    /// `"{user_id}:{now_ms}"`.
+    pub pending_post_id: String,
+    pub file_ids: Vec<mm_model::FileId>,
+    pub props: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Query of [`Client::team_threads`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ThreadsQuery {
+    /// Threads with activity since (ms), for a resync.
+    pub since: Option<i64>,
+    /// Older than this thread (paging).
+    pub before: Option<PostId>,
+    pub per_page: Option<u32>,
+    pub unread_only: bool,
+    /// Counts only, no threads.
+    pub totals_only: bool,
+}
+
+impl ThreadsQuery {
+    fn pairs(&self) -> Vec<(&'static str, String)> {
+        let mut pairs = vec![("extended", "true".to_owned())];
+        if let Some(since) = self.since {
+            pairs.push(("since", since.to_string()));
+        }
+        if let Some(before) = &self.before {
+            pairs.push(("before", before.to_string()));
+        }
+        if let Some(per_page) = self.per_page {
+            pairs.push(("per_page", per_page.to_string()));
+        }
+        if self.unread_only {
+            pairs.push(("unread", "true".to_owned()));
+        }
+        if self.totals_only {
+            pairs.push(("totalsOnly", "true".to_owned()));
+            pairs.push(("threadsOnly", "false".to_owned()));
+        }
+        pairs
     }
 }
 

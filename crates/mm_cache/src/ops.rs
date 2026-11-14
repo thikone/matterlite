@@ -42,6 +42,9 @@ pub mod kv {
     pub const DIAGNOSTIC_ID: &str = "diagnostic_id";
     /// `mm_ws::ResumeState` as JSON: resume the WebSocket after a restart.
     pub const WS_RESUME: &str = "ws_resume";
+    /// The last time (ms) the cache was known to be in sync with the server: resyncs fetch
+    /// changes since then.
+    pub const SYNCED_THROUGH: &str = "synced_through";
     pub const LAST_TEAM: &str = "last_team";
     pub const LAST_CHANNEL: &str = "last_channel";
 }
@@ -90,8 +93,28 @@ fn json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).expect("entities serialize")
 }
 
-/// The writes that save everything in the store (after a bootstrap or a resync).
+/// The writes that save everything in the store.
 pub fn snapshot_ops(store: &Store) -> Vec<Op> {
+    let mut ops = metadata_ops(store);
+    ops.extend(
+        store
+            .posts
+            .values()
+            .filter(|post| !store.pending.contains_key(post.id.as_str()))
+            .map(|post| Op::PutPost(post.as_ref().clone())),
+    );
+    for (channel, timeline) in &store.timelines {
+        ops.push(ranges_op(Owner::Channel, channel.to_string(), timeline));
+    }
+    for (root, timeline) in &store.threads {
+        ops.push(ranges_op(Owner::Thread, root.to_string(), timeline));
+    }
+    ops
+}
+
+/// Everything but posts, timelines and threads: what a bootstrap replaces (posts are written
+/// as they're fetched).
+pub fn metadata_ops(store: &Store) -> Vec<Op> {
     let mut ops = Vec::new();
     if let Some(me) = store.users.get(&store.me) {
         ops.push(Op::Kv(kv::ME.into(), Some(json(me.as_ref()))));
@@ -129,19 +152,6 @@ pub fn snapshot_ops(store: &Store) -> Vec<Op> {
             .cloned()
             .map(Op::PutChannelMember),
     );
-    ops.extend(
-        store
-            .posts
-            .values()
-            .filter(|post| !store.pending.contains_key(post.id.as_str()))
-            .map(|post| Op::PutPost(post.as_ref().clone())),
-    );
-    for (channel, timeline) in &store.timelines {
-        ops.push(ranges_op(Owner::Channel, channel.to_string(), timeline));
-    }
-    for (root, timeline) in &store.threads {
-        ops.push(ranges_op(Owner::Thread, root.to_string(), timeline));
-    }
     ops.push(preferences(store));
     for (team, categories) in &store.categories {
         ops.push(Op::PutCategories(team.clone(), categories.clone()));

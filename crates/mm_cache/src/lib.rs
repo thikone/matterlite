@@ -27,7 +27,7 @@ use mm_store::Store;
 pub use account::account_id;
 pub use db::{OpenReport, open_reader};
 pub use error::CacheError;
-pub use ops::{Op, Owner, kv, ops_for, snapshot_ops};
+pub use ops::{Op, Owner, kv, metadata_ops, ops_for, snapshot_ops};
 pub use search::{SearchHit, fts_query};
 pub use writer::{BATCH_OPS, BATCH_WINDOW, Writer};
 

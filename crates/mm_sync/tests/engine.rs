@@ -1,0 +1,340 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! The engine against a mock server that answers with the responses captured from the test
+//! server (`mm_model/fixtures/captured`). The WebSocket upgrade fails against the mock, so
+//! these runs are "online over REST, offline over WebSocket".
+
+use std::path::Path;
+use std::time::Duration;
+
+use mm_api::ServerUrl;
+use mm_cache::Cache;
+use mm_model::{ChannelId, PostId, SessionToken};
+use mm_sync::{Command, EngineConfig, EngineHandle, Event};
+use serde_json::{Value, json};
+use wiremock::matchers::{method, path, path_regex};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+const ALICE: &str = "y5uhpy7zmpdi9q5kgnuwaa34sy";
+const WAIT: Duration = Duration::from_secs(15);
+
+macro_rules! captured {
+    ($name:literal) => {
+        include_str!(concat!("../../mm_model/fixtures/captured/", $name))
+    };
+}
+
+fn json_body(text: &str) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_raw(text.to_owned(), "application/json")
+}
+
+fn dev_channel() -> String {
+    let channels: Vec<Value> = serde_json::from_str(captured!("channels.json")).unwrap();
+    channels
+        .iter()
+        .find(|channel| channel["name"] == "dev")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+async fn server() -> MockServer {
+    let server = MockServer::start().await;
+    let get = |route: &str, body: &str| {
+        Mock::given(method("GET"))
+            .and(path(format!("/api/v4{route}")))
+            .respond_with(json_body(body))
+    };
+    for (route, body) in [
+        ("/config/client", captured!("config_client.json")),
+        ("/license/client", captured!("license_client.json")),
+        ("/users/me", captured!("user_me.json")),
+        ("/users/me/preferences", captured!("preferences.json")),
+        ("/users/me/teams", captured!("teams.json")),
+        ("/users/me/teams/members", captured!("team_members.json")),
+        ("/users/me/teams/unread", captured!("team_unreads.json")),
+        ("/users/me/channels", captured!("channels.json")),
+    ] {
+        get(route, body).mount(&server).await;
+    }
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v4/users/{ALICE}/channel_members")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(captured!("channel_members.ndjson"), "application/x-ndjson"),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(
+            r"^/api/v4/users/[a-z0-9]+/teams/[a-z0-9]+/channels/categories$",
+        ))
+        .respond_with(json_body(captured!("sidebar_categories.json")))
+        .mount(&server)
+        .await;
+    for (route, body) in [
+        ("/roles/names", captured!("roles.json")),
+        ("/users/ids", captured!("users.json")),
+        ("/users/status/ids", captured!("statuses.json")),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(format!("/api/v4{route}")))
+            .respond_with(json_body(body))
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("PUT"))
+        .and(path_regex(r"^/api/v4/users/[a-z0-9]+/preferences$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "OK"})))
+        .mount(&server)
+        .await;
+    let dev = dev_channel();
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/api/v4/users/{ALICE}/channels/{dev}/posts/unread"
+        )))
+        .respond_with(json_body(captured!("dev_posts.json")))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/api/v4/channels/[a-z0-9]+/posts$"))
+        .respond_with(json_body(
+            r#"{"order": [], "posts": {}, "next_post_id": "", "prev_post_id": ""}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v4/channels/members/me/view"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "OK"})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v4/posts"))
+        .respond_with(|request: &Request| {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            ResponseTemplate::new(201).set_body_json(json!({
+                "id": "realpost00000000000000000a",
+                "channel_id": body["channel_id"],
+                "user_id": ALICE,
+                "message": body["message"],
+                "pending_post_id": body["pending_post_id"],
+                "create_at": 1_900_000_000_000_i64,
+                "update_at": 1_900_000_000_000_i64,
+            }))
+        })
+        .mount(&server)
+        .await;
+    server
+}
+
+fn start(server: &MockServer, dir: &Path, known_user: bool) -> EngineHandle {
+    let mut config = EngineConfig::new(
+        ServerUrl::parse(&server.uri()).unwrap(),
+        SessionToken::new("token"),
+        dir.to_owned(),
+    );
+    if known_user {
+        config.user_id = Some(ALICE.into());
+    }
+    mm_sync::start(config)
+}
+
+/// Events until one matches; all of them, in order.
+async fn until(engine: &EngineHandle, matches: impl Fn(&Event) -> bool) -> Vec<Event> {
+    let mut seen = Vec::new();
+    loop {
+        let event = tokio::time::timeout(WAIT, engine.events().recv())
+            .await
+            .unwrap_or_else(|_| panic!("timed out; events so far: {seen:#?}"))
+            .unwrap();
+        let done = matches(&event);
+        seen.push(event);
+        if done {
+            return seen;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn first_start_bootstraps_and_fills_the_cache() {
+    let server = server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = start(&server, dir.path(), false);
+    let events = until(&engine, |event| matches!(event, Event::Ready { .. })).await;
+    assert!(!events.contains(&Event::Hydrated), "nothing cached yet");
+    assert!(events.contains(&Event::Ready { resumed: false }));
+    {
+        let store = engine.store().read().unwrap();
+        assert_eq!(store.me.as_str(), ALICE);
+        assert_eq!(store.teams.len(), 2);
+        assert!(store.crt_enabled());
+    }
+    // The unread DMs got their show preference (`direct_channel_show`).
+    let saved: Vec<Value> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|request| request.method == wiremock::http::Method::PUT)
+        .map(|request| serde_json::from_slice(&request.body).unwrap())
+        .collect();
+    assert_eq!(saved.len(), 1);
+    assert!(
+        saved[0]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["category"] == "direct_channel_show")
+    );
+    engine.shutdown();
+
+    // Everything is in the cache now.
+    let cache_dir = std::fs::read_dir(dir.path())
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let (mut cache, _) = Cache::open(&cache_dir.join("cache.sqlite")).unwrap();
+    let hydrated = cache.hydrate().unwrap().unwrap();
+    assert_eq!(hydrated.teams.len(), 2);
+    assert_eq!(hydrated.channels.len(), 16);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_known_account_draws_from_the_cache_first() {
+    let server = server().await;
+    let dir = tempfile::tempdir().unwrap();
+    start(&server, dir.path(), false).shutdown();
+
+    let engine = start(&server, dir.path(), true);
+    let events = until(&engine, |event| matches!(event, Event::Ready { .. })).await;
+    assert_eq!(events[0], Event::Hydrated, "{events:#?}");
+    // The WebSocket is down (the mock has none), so the saved session can't resume.
+    assert!(events.contains(&Event::Ready { resumed: false }));
+    engine.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn opening_a_channel_loads_the_unread_window_and_marks_it_read() {
+    let server = server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = start(&server, dir.path(), false);
+    until(&engine, |event| matches!(event, Event::Ready { .. })).await;
+    let dev = ChannelId::new(dev_channel());
+    assert!(
+        engine
+            .store()
+            .read()
+            .unwrap()
+            .channel_unread(&dev)
+            .unwrap()
+            .is_unread()
+    );
+
+    engine.send(Command::OpenChannel(dev.clone()));
+    let events = until(&engine, |event| {
+        matches!(event, Event::Changed(deltas) if deltas.iter().any(|d|
+            matches!(d, mm_store::StoreDelta::MarkedRead { .. })))
+    })
+    .await;
+    assert!(events.iter().any(
+        |event| matches!(event, Event::ChannelOpened { channel, last_viewed_at }
+                if *channel == dev && *last_viewed_at > 0)
+    ));
+    {
+        let store = engine.store().read().unwrap();
+        assert_eq!(store.timeline_posts(&dev).iter().flatten().count(), 16);
+        assert!(!store.channel_unread(&dev).unwrap().is_unread());
+    }
+    // The server is told too (in the background).
+    let mut viewed = false;
+    for _ in 0..50 {
+        viewed = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .any(|request| request.url.path() == "/api/v4/channels/members/me/view");
+        if viewed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(viewed);
+    engine.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sent_post_replaces_its_pending_copy() {
+    let server = server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = start(&server, dir.path(), false);
+    until(&engine, |event| matches!(event, Event::Ready { .. })).await;
+    let dev = ChannelId::new(dev_channel());
+    engine.send(Command::OpenChannel(dev.clone()));
+    until(&engine, |event| {
+        matches!(event, Event::ChannelOpened { .. })
+    })
+    .await;
+
+    engine.send(Command::SendPost {
+        channel: dev.clone(),
+        root: PostId::default(),
+        message: "hello from the engine".into(),
+    });
+    until(&engine, |event| {
+        matches!(event, Event::Changed(deltas) if deltas.iter().any(|d|
+            matches!(d, mm_store::StoreDelta::PostsRemoved(ids)
+                if ids.iter().any(|id| id.as_str().starts_with(ALICE)))))
+    })
+    .await;
+    {
+        let store = engine.store().read().unwrap();
+        assert!(store.pending.is_empty());
+        // The captured page doesn't reach the newest post, so the timeline shows it below a
+        // hole and the new post waits there; the store has the server's copy.
+        let sent = &store.posts[&PostId::new("realpost00000000000000000a")];
+        assert_eq!(sent.message, "hello from the engine");
+        assert!(!store.posts.keys().any(|id| id.as_str().starts_with(ALICE)));
+    }
+    let sent = server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|request| request.url.path() == "/api/v4/posts")
+        .unwrap();
+    let body: Value = serde_json::from_slice(&sent.body).unwrap();
+    assert!(
+        body["pending_post_id"]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("{ALICE}:"))
+    );
+    engine.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_expired_token_logs_out_and_keeps_the_cache() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/users/me"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+            "id": "api.context.session_expired.app_error",
+            "message": "Invalid or expired session, please login again.",
+            "status_code": 401
+        })))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = start(&server, dir.path(), true);
+    let events = until(&engine, |event| *event == Event::LoggedOut).await;
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::Ready { .. }))
+    );
+    until(&engine, |event| *event == Event::Stopped).await;
+}

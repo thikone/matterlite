@@ -18,6 +18,7 @@ members = [
   "crates/mm_cli",
   "crates/mm_model",
   "crates/mm_store",
+  "crates/mm_sync",
   "crates/mm_ws",
   "crates/settings",
   "crates/settings_value",
@@ -65,6 +66,7 @@ mm_api = { path = "crates/mm_api" }
 mm_cache = { path = "crates/mm_cache" }
 mm_model = { path = "crates/mm_model" }
 mm_store = { path = "crates/mm_store" }
+mm_sync = { path = "crates/mm_sync" }
 mm_ws = { path = "crates/mm_ws" }
 settings = { path = "crates/settings" }
 settings_value = { path = "crates/settings_value", default-features = false }

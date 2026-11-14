@@ -13,11 +13,14 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+async-channel.workspace = true
 env_logger.workspace = true
 log.workspace = true
 mm_api.workspace = true
+mm_cache.workspace = true
 mm_model.workspace = true
 mm_store.workspace = true
+mm_sync.workspace = true
 mm_ws.workspace = true
 rpassword = "7"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }

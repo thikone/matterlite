@@ -467,6 +467,11 @@ entities as `Arc<T>`) avoids locks on the UI thread. An alternative is
 `Arc<RwLock<Store>>` read by the UI; simpler, but risks contention while paging large
 channels.
 
+M2 implements the `Arc<RwLock<Store>>` variant (`mm_sync::SharedStore`): the engine holds the
+write lock for one change at a time and reports the changes as `Event::Changed(deltas)`, so
+the UI re-reads only what changed. If contention shows up in M3, the deltas already name
+everything a UI-side copy would need.
+
 ---
 
 ## 7. Networking layer

@@ -4597,11 +4597,14 @@ name = "mm_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "env_logger",
  "log",
  "mm_api",
+ "mm_cache",
  "mm_model",
  "mm_store",
+ "mm_sync",
  "mm_ws",
  "rpassword",
  "tokio",
@@ -4625,6 +4628,23 @@ dependencies = [
  "mm_model",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "mm_sync"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "log",
+ "mm_api",
+ "mm_cache",
+ "mm_model",
+ "mm_store",
+ "mm_ws",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "wiremock",
 ]
 
 [[package]]

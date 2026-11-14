@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_channel::{Receiver, Sender};
@@ -64,6 +65,10 @@ pub enum WsOutput {
     /// The socket is open. `resuming`: the server was asked to continue an earlier connection;
     /// if it can't, a `hello` with a new connection id follows (after [`WsOutput::MissedEvents`]).
     Connected { resuming: bool },
+    /// The server confirmed this connection's session (a ping reply or an event), once per
+    /// connection. `resumed`: it continued the earlier connection with nothing lost (no
+    /// [`WsOutput::MissedEvents`]), so events since then are replayed and no resync is needed.
+    Confirmed { resumed: bool },
     /// The server could not resume: events since the last connection were lost. Run a full
     /// resync (WebApp.md §7.4). Sent before the new connection's `hello`.
     MissedEvents,
@@ -137,6 +142,7 @@ enum Command {
 #[derive(Clone, Debug)]
 pub struct WsHandle {
     commands: Sender<Command>,
+    resume: Arc<Mutex<ResumeState>>,
 }
 
 impl WsHandle {
@@ -156,16 +162,27 @@ impl WsHandle {
     pub fn close(&self) {
         let _ = self.commands.try_send(Command::Close);
     }
+
+    /// Where the event stream stands: save it (on shutdown and now and then) and pass it as
+    /// [`WsConfig::resume`] after a restart to get the missed events replayed.
+    pub fn resume_state(&self) -> ResumeState {
+        self.resume
+            .lock()
+            .map(|state| state.clone())
+            .unwrap_or_default()
+    }
 }
 
 /// Starts the connection task on the current Tokio runtime.
 pub fn connect(config: WsConfig) -> (WsHandle, Receiver<WsOutput>) {
     let (command_tx, command_rx) = async_channel::unbounded();
     let (output_tx, output_rx) = async_channel::unbounded();
-    tokio::spawn(run(config, command_rx, output_tx));
+    let resume = Arc::new(Mutex::new(config.resume.clone().unwrap_or_default()));
+    tokio::spawn(run(config, command_rx, output_tx, resume.clone()));
     (
         WsHandle {
             commands: command_tx,
+            resume,
         },
         output_rx,
     )
@@ -178,7 +195,12 @@ enum Ended {
     Disconnected(DisconnectReason),
 }
 
-async fn run(config: WsConfig, commands: Receiver<Command>, output: Sender<WsOutput>) {
+async fn run(
+    config: WsConfig,
+    commands: Receiver<Command>,
+    output: Sender<WsOutput>,
+    resume: Arc<Mutex<ResumeState>>,
+) {
     let mut session = Session::new(config.resume.clone());
     let mut fail_count = 0;
     let mut last_close_code = None;
@@ -194,7 +216,11 @@ async fn run(config: WsConfig, commands: Receiver<Command>, output: Sender<WsOut
                 let ended = drive(
                     &config,
                     socket,
-                    &mut session,
+                    Stream {
+                        session: &mut session,
+                        resuming,
+                        resume: &resume,
+                    },
                     &commands,
                     &output,
                     &mut session_confirmed,
@@ -312,14 +338,29 @@ impl Requests {
     }
 }
 
+/// The event stream state `drive` updates.
+struct Stream<'a> {
+    session: &'a mut Session,
+    /// This connection asked to resume an earlier one.
+    resuming: bool,
+    /// Shared with [`WsHandle::resume_state`].
+    resume: &'a Mutex<ResumeState>,
+}
+
 async fn drive(
     config: &WsConfig,
     socket: Socket,
-    session: &mut Session,
+    events: Stream<'_>,
     commands: &Receiver<Command>,
     output: &Sender<WsOutput>,
     session_confirmed: &mut bool,
 ) -> Ended {
+    let Stream {
+        session,
+        resuming,
+        resume,
+    } = events;
+    let mut missed = false;
     let (mut sink, mut stream) = socket.split();
     let mut requests = Requests { next_seq: 1 };
 
@@ -389,7 +430,13 @@ async fn drive(
                         if pending_ping == Some(response.seq_reply) {
                             log::debug!("ping reply: {} {:?}", response.status, response.error);
                             pending_ping = None;
-                            *session_confirmed |= response.is_ok();
+                            if response.is_ok() && !*session_confirmed {
+                                *session_confirmed = true;
+                                let resumed = resuming && !missed;
+                                if output.send(WsOutput::Confirmed { resumed }).await.is_err() {
+                                    return Ended::OutputDropped;
+                                }
+                            }
                             continue;
                         }
                         if response.seq_reply == auth_seq {
@@ -406,9 +453,21 @@ async fn drive(
                             return Ended::Disconnected(DisconnectReason::SequenceGap { expected, got });
                         }
                         Check::Accepted { missed_events } => {
-                            *session_confirmed = true;
-                            if missed_events && output.send(WsOutput::MissedEvents).await.is_err() {
-                                return Ended::OutputDropped;
+                            if let Ok(mut state) = resume.lock() {
+                                *state = session.state().clone();
+                            }
+                            if missed_events {
+                                missed = true;
+                                if output.send(WsOutput::MissedEvents).await.is_err() {
+                                    return Ended::OutputDropped;
+                                }
+                            }
+                            if !*session_confirmed {
+                                *session_confirmed = true;
+                                let resumed = resuming && !missed;
+                                if output.send(WsOutput::Confirmed { resumed }).await.is_err() {
+                                    return Ended::OutputDropped;
+                                }
                             }
                             match WsEvent::decode(&frame) {
                                 Ok(event) => WsOutput::Event {

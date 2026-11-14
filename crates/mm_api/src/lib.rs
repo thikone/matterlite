@@ -12,7 +12,8 @@ mod error;
 mod server_url;
 
 pub use client::{
-    Client, ClientOptions, LoginRequest, LoginResponse, PostsQuery, default_user_agent,
+    Client, ClientOptions, LoginRequest, LoginResponse, NewPost, PostsQuery, ThreadsQuery,
+    default_user_agent,
 };
 pub use error::ApiError;
 pub use server_url::{ServerUrl, ServerUrlError};
