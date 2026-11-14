@@ -12,7 +12,7 @@ jobs:
   provenance:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: bash script/provenance
 
   build:
@@ -24,7 +24,7 @@ jobs:
     steps:
       # Only this repository is checked out, so a hidden dependency on the Warp reference
       # checkout fails here.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
@@ -34,6 +34,9 @@ jobs:
       - name: Install toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      # Compiler and clippy messages become annotations on the run and the diff.
+      - run: echo "::add-matcher::.github/matchers/rust.json"
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      # --keep-going: one failing crate doesn't hide the errors in the others.
+      - run: cargo clippy --workspace --all-targets --keep-going -- -D warnings
+      - run: cargo test --workspace --no-fail-fast
