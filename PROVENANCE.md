@@ -24,7 +24,7 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | crates/warpui_extras/ | crates/warpui_extras/ | 5bb7bcc6a | adapted | AGPL-3.0 | removed registry, UserDefaults and localStorage preference stores; TOML and JSON-file stores always built; wasm branch removed; preference errors show their cause |
 | crates/warp_features/ | crates/warp_features/ | 5bb7bcc6a | adapted | AGPL-3.0 | flags cut to the four MatterLite code checks; no release-channel flag lists, changelog descriptions, per-user flag preferences or integration_tests feature |
 | crates/settings/ | crates/settings/ | 5bb7bcc6a | adapted | AGPL-3.0 | no integration_tests feature (new_with_defaults is test-only); no cloud sync (`SyncToCloud`, sync-only callbacks and manager queries); no GUI/TUI surfaces (`SettingsMode`, `SettingSurfaces`, the `surface` attribute) |
-| crates/warp_core/ | crates/warp_core/ | 5bb7bcc6a | adapted | AGPL-3.0 | Tier B: kept app_id, assertions, async, features, platform, safe_log, ui (appearance, theme, icons, color, builder), user_preferences; removed channels, context flags, telemetry, execution mode, sync queue, semantic selection and the other Warp product modules; safe_log full output in debug builds |
+| crates/warp_core/ | crates/warp_core/ | 5bb7bcc6a | adapted | AGPL-3.0 | Tier B: kept app_id, assertions, async, features, platform, safe_log, ui (appearance, theme, icons, color, builder), user_preferences; removed channels, context flags, telemetry, execution mode, sync queue, semantic selection and the other Warp product modules; safe_log full output in debug builds; Icon enum cut to the icons MatterLite uses; no external product (integration logo) icons |
 | crates/warp_core/src/paths.rs | crates/warp_core/src/paths.rs | 5bb7bcc6a | rewritten | AGPL-3.0 | MatterLite storage layout (§9); portable data/ detection kept |
 | crates/ui_components/ | crates/ui_components/ | 5bb7bcc6a | adapted | AGPL-3.0 | library example embeds the repository assets/ |
 | crates/vim/ | crates/vim/ | 5bb7bcc6a | verbatim | AGPL-3.0 | |
@@ -51,7 +51,7 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | assets/async/jpg/ | app/assets/async/jpg/ | 5bb7bcc6a | verbatim | AGPL-3.0 | background images of the built-in themes (10 files) |
 | assets/bundled/fonts/password.ttf | app/assets/bundled/fonts/password.ttf | 5bb7bcc6a | verbatim | AGPL-3.0 | password dots font |
 | assets/bundled/fonts/hack/ | app/assets/bundled/fonts/hack/ | 5bb7bcc6a | verbatim | MIT | Hack font with its LICENSE.md; monospace font |
-| assets/bundled/svg/ | app/assets/bundled/svg/ | 5bb7bcc6a | verbatim | AGPL-3.0 | only the icons referenced by imported code (341 of 383) |
+| assets/bundled/svg/ | app/assets/bundled/svg/ | 5bb7bcc6a | verbatim | AGPL-3.0 | only the icons MatterLite code references (32 files), plus file_type/ (10 file-type icons kept for the Files explorer) |
 | assets/bundled/fonts/roboto/ | app/assets/bundled/fonts/roboto/ | 5bb7bcc6a | verbatim | Apache-2.0 | font files; LICENSE.txt included |
 
 Rows with status `verbatim` differ from the reference only by the provenance header.
