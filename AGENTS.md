@@ -4,12 +4,14 @@ MatterLite is a native Rust desktop client for Mattermost servers (Windows x64, 
 macOS arm64), built on WarpUI, the UI framework from the Warp terminal. The design document
 is `docs/MatterLite.md`; the Mattermost webapp/protocol reference is `docs/WebApp.md` (written
 from the Mattermost server/webapp checkout at `C:\Projects\Libs\mattermost`). Milestone
-progress is tracked in `docs/M0.md` (and later milestone files).
+progress is tracked in `docs/M0.md`, `docs/M1.md` (and later milestone files).
 
 ## Commands
 
 - `cargo run -p matterlite` - run the app
 - `cargo run -p warpui --example list` - WarpUI smoke test (window + scrolling list)
+- `cargo run -p mm_cli -- <server-url> <ping|bootstrap|events> [--login <user>]` - protocol
+  harness against a real server (`MM_TOKEN` or a password login; never prints the token)
 - `cargo test --workspace` - tests
 - `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings` - must pass
 - `script/provenance` - checks provenance headers, `PROVENANCE.md` and that nothing depends on

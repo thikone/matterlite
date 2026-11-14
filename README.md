@@ -4,7 +4,7 @@ A native Rust desktop client for [Mattermost](https://mattermost.com) servers, f
 Windows x64, Linux x64 and macOS arm64. The UI is built on WarpUI, the GPU-rendered UI
 framework from the [Warp](https://github.com/warpdotdev/warp) terminal.
 
-Status: **M0 (skeleton)**. Nothing usable yet.
+Status: **M1 (protocol)** in progress. Nothing usable yet.
 
 ## Building
 
@@ -13,6 +13,7 @@ Requires the Rust toolchain pinned in `rust-toolchain.toml` (installed automatic
 ```sh
 cargo run -p matterlite
 cargo run -p warpui --example list   # WarpUI smoke test
+cargo run -p mm_cli -- https://chat.example.com bootstrap --login alice   # protocol harness
 ```
 
 Platform prerequisites:

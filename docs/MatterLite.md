@@ -492,7 +492,8 @@ Protocol details: `WebApp §3–§7`.
 - `tokio-tungstenite` (rustls). URL from `WebsocketURL` or site URL; query
   `connection_id`, `sequence_number` (WebApp §7.1).
 - Send `authentication_challenge` right after connect (also set the Bearer header on the
-  upgrade request).
+  upgrade request: the server only resumes connections authenticated that way, and an invalid
+  token still gets a `101` followed by a dropped socket; WebApp §7.2).
 - Track `expected_seq`; on mismatch close with 4001 and reconnect; on a new
   `connection_id` in `hello` emit `MissedEvents` → engine runs a **full resync**
   (WebApp §7.4).

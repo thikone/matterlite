@@ -497,6 +497,20 @@ opens, send:
 Reply: `{"status": "OK", "seq_reply": 1}`, followed by the `hello` event. An
 unauthenticated socket is closed after ~5 s.
 
+Details that matter for a native client (`server/channels/api4/websocket.go`,
+`server/channels/app/platform/websocket_router.go`, `web_hub.go`):
+
+- **Resuming needs the header.** `connection_id`/`sequence_number` are only honoured when the
+  upgrade request itself is authenticated; a socket authenticated by the challenge always
+  gets a fresh connection id.
+- A challenge on a socket that the header already authenticated is ignored (no reply).
+- **An invalid token does not fail the upgrade.** The server answers `101`, and closes the
+  socket when the challenge fails, without a close frame. A client can't tell this from a
+  network drop; a connection that never gets a ping reply or event is "unconfirmed", and
+  repeated ones are a reason to check the token with a REST call.
+- `hello` is sent on fresh connections and when a resume fails (new connection id), **not**
+  on a successful resume: the replayed or new events simply continue the old sequence.
+
 ### 7.3 Framing
 
 All frames are JSON text (binary msgpack frames are also accepted after auth; ignore).
