@@ -7,7 +7,9 @@ reuses the UI framework and selected crates from the Warp terminal fork at
 This document records the **design decisions**, the **Warp reuse plan**, the
 **architecture**, and **how to build and package** the app on all three platforms. Protocol
 and behaviour details (REST, WebSocket, unreads, rendering rules) are in
-[`WebApp.md`](WebApp.md) — this document refers to its sections as `WebApp §N`.
+[`WebApp.md`](WebApp.md) — this document refers to its sections as `WebApp §N`. Features
+that go beyond the webapp have their own design documents:
+[`MatterLite-Collaborate.md`](MatterLite-Collaborate.md) (collaborative drafts).
 
 > Planned home: a new repository at `C:\Projects\Libs\matterlite`. This file lives next to
 > `WebApp.md` until that repository exists, then moves there.
@@ -1447,24 +1449,52 @@ The `matterlite` crate converts `MessageDoc` into WarpUI elements
 
 ## 13. Composer (Warp editor)
 
-- Copy `crates/editor` (package `warp_editor`, Tier A, §4.2) and embed its editor view in the
-  `Composer` view. Its dependency closure is `warp_core` (trimmed), `vim`, `asset_cache`,
-  `markdown_parser`, `ipynb_parser`, `mermaid_to_svg`, `sum_tree`, `string-offset`.
-- Behaviour to implement around it (WebApp §15, §17):
-  - Enter sends, Shift+Enter newline (respect the `advanced_settings/send_on_ctrl_enter`
-    preference and code-block handling).
+- The `Composer` view embeds `ml_editor::EditorView`: Warp's terminal-input editor
+  (`app/src/editor`), extracted into `crates/ml_editor/src/EditorView.rs`. Its features,
+  public API and size are in [`EditorView.md`](EditorView.md). Create it with
+  `EditorView::new` (multi-line, `autogrow`, `soft_wrap`, UI font). The thread composer in
+  the right panel uses the same setup.
+- `warp_editor` (Warp's `crates/editor`) is a different editor: the one behind Warp's code
+  and notebook editors. It stays in the workspace for the file viewers (§14) and is not used
+  by the composer.
+- Behaviour to implement around it (WebApp §15, §17), and the `EditorView` features that
+  carry it:
+  - Enter sends, Shift+Enter newline: `EnterSettings` (Enter emits `Event::Enter`, the others
+    insert a newline). For the `advanced_settings/send_on_ctrl_enter` preference, Enter
+    inserts a newline and `CtrlEnter` / `CmdEnter` send. Code-block handling (Enter inside an
+    open ``` block inserts a newline) is decided by the composer before sending.
   - Autocomplete popovers: `@` → `GET /users/autocomplete?in_team&in_channel&name`;
     `~` → channels; `:` → emoji (local index + custom emoji search); `/` → commands
     (`/teams/{tid}/commands/autocomplete_suggestions`). Use `fuzzy_match` for local ranking.
+    The trigger comes from the text before the cursor (`chars_preceding_selections`). The
+    popover is anchored at the cached cursor position (`position_id_for_cursor`). A keymap
+    flag from `keymap_context_modifier` routes Up/Down/Enter/Tab to the popover. The choice is
+    inserted with `select_and_replace` or `replace_last_n_characters`, so it can be undone.
   - Typing indicator: send WS `user_typing` at most every
-    `TimeBetweenUserTypingUpdatesMilliseconds` (default 5000).
-  - Drafts: save per `(channel_id, root_id)` to SQLite on change (debounced) and restore on
-    channel switch. Server-synced drafts later.
-  - ↑ in an empty composer edits the last own post.
-  - Max length: `MaxPostSize` from client config.
+    `TimeBetweenUserTypingUpdatesMilliseconds` (default 5000), on `Event::Edited` when
+    `EditOrigin::is_user()`.
+  - Drafts: save per `(channel_id, root_id)` to SQLite on `Event::Edited` (debounced) and
+    restore on channel switch with `system_reset_buffer_text`, which also clears the undo
+    stack. Server-synced drafts later.
+  - ↑ in an empty composer edits the last own post: `propagate_and_no_op_vertical_navigation_keys:
+    AtBoundary` delivers `Event::Navigate(Up)` on the first row; act on it when the editor
+    `is_empty`.
+  - Max length: `MaxPostSize` from client config, as `max_buffer_len`.
+  - Pasting files and images: `delegate_paste_handling` hands every paste to the composer,
+    which uploads files (§14.2) and inserts text itself. Dropped files already reach the
+    composer, because the editor doesn't handle drops.
+  - Read-only or archived channels: `set_interaction_state(InteractionState::Disabled)`.
 - Keep the editor in **plain Markdown source mode** for the MVP (what you type is what is
-  sent). WYSIWYG formatting can come later.
-- Vim mode comes for free via the `vim` crate — expose it as a setting.
+  sent). WYSIWYG formatting can come later. Highlighting `@mentions`, `~channels` and Markdown
+  syntax in the source is possible without changing the text (`update_buffer_styles`).
+- Vim mode was removed from `ml_editor` during the extraction. Bringing it back means porting
+  Warp's `VimHandler` implementation for `EditorView` and the vim parts of the editor model
+  (`app/src/editor/view/mod.rs`, `view/model/mod.rs`, in import commit `79a4f9f`) on top of
+  the `vim` crate, which is already in the workspace. Then expose it as a setting.
+- **Collaborative drafts** (optional, M9): the user invites channel members to see and edit an
+  unsent message together; the owner sends the result as a normal post. Needs a small server
+  plugin as a relay, since Mattermost clients can't exchange custom data. Design, protocol and
+  the parts of Warp's editor to restore: [`MatterLite-Collaborate.md`](MatterLite-Collaborate.md).
 
 ---
 
@@ -1687,6 +1717,7 @@ Mirror the Warp fork's portable scheme (`script/windows/build-portable.ps1`,
 | M6 Notifications + search | OS notifications (WarpUI), mention highlighting/keys, tray + dock/taskbar badges, **Search** tab (server-wide messages/files with modifiers), slash commands, interactive buttons/dialogs |
 | M7 Auth + multi-server | Personal access tokens, SSO via system browser + custom URL scheme, multiple servers (store already keyed by `ServerId`) |
 | M8 Polish | **Split panes** in chat tabs (pane groups), vertical tabs option, tab groups, settings (notify props, display), theme creator, export/upload themes to Mattermost, i18n, drafts sync, LaTeX, accessibility |
+| M9 Collaborative drafts (optional) | Restore Warp's collaborative editing in `ml_editor` (remote edits, remote cursors, CRDT tests); `matterlite-collab` server plugin (session store, relay over plugin WebSocket events); `ml_collab` session layer; "Write together" in the composer, shared draft in the right panel, owner-only send — see [`MatterLite-Collaborate.md`](MatterLite-Collaborate.md) |
 
 ---
 
