@@ -4,7 +4,8 @@ A native Rust desktop client for [Mattermost](https://mattermost.com) servers, f
 Windows x64, Linux x64 and macOS arm64. The UI is built on WarpUI, the GPU-rendered UI
 framework from the [Warp](https://github.com/warpdotdev/warp) terminal.
 
-Status: **M2 (store + cache)** done; next is M3, the first UI. Nothing usable yet.
+Status: **M3 (the first UI)** in progress: login, logout and stored accounts work; the chat
+views come next.
 
 ## Building
 

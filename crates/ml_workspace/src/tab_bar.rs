@@ -4,14 +4,17 @@
 
 //! The chat tab bar across the top of the window (MatterLite.md §10.7).
 
+use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::icons::Icon;
 use warp_core::ui::theme::color::internal_colors;
 use warpui::Element;
 use warpui::elements::{
-    Border, ConstrainedBox, Container, CrossAxisAlignment, Empty, Fill, Flex, Hoverable,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Shrinkable, Text,
+    Align, Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
+    Fill, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning,
+    ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Shrinkable, Stack, Text,
 };
+use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
 use warpui::ui_components::components::UiComponent;
 
@@ -42,10 +45,30 @@ impl ChatTab {
     }
 }
 
+/// The signed-in account, shown at the right end of the tab bar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccountBadge {
+    /// One or two letters (the user's initials).
+    pub initials: String,
+    pub tooltip: String,
+    pub status: ConnectionStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectionStatus {
+    Online,
+    Connecting,
+    Offline,
+}
+
+const ACCOUNT_BUTTON_SIZE: f32 = 22.;
+const STATUS_DOT_SIZE: f32 = 8.;
+
 pub(crate) fn render_tab_bar(
     tabs: &[ChatTab],
     active: usize,
     new_tab_mouse_state: &MouseStateHandle,
+    account: Option<(&AccountBadge, &MouseStateHandle)>,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
@@ -76,12 +99,19 @@ pub(crate) fn render_tab_bar(
     .with_cursor(Cursor::PointingHand)
     .finish();
 
-    let bar = Flex::row()
+    let mut bar = Flex::row()
         .with_main_axis_size(MainAxisSize::Max)
         .with_cross_axis_alignment(CrossAxisAlignment::Center)
         .with_child(Shrinkable::new(1., row.finish()).finish())
-        .with_child(Container::new(new_tab_button).with_margin_left(4.).finish())
-        .finish();
+        .with_child(Container::new(new_tab_button).with_margin_left(4.).finish());
+    if let Some((badge, mouse_state)) = account {
+        bar.add_child(
+            Container::new(render_account_button(badge, mouse_state, appearance))
+                .with_margin_left(8.)
+                .finish(),
+        );
+    }
+    let bar = bar.finish();
 
     Container::new(
         ConstrainedBox::new(bar)
@@ -180,6 +210,81 @@ fn render_tab(
         .finish()
     })
     .on_click(move |ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::ActivateTab(index)))
+    .with_cursor(Cursor::PointingHand)
+    .finish()
+}
+
+/// A round button with the user's initials and a connection dot; opens the account menu.
+fn render_account_button(
+    badge: &AccountBadge,
+    mouse_state: &MouseStateHandle,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let theme = appearance.theme().clone();
+    let font = appearance.ui_font_family();
+    let initials = badge.initials.clone();
+    let tooltip = badge.tooltip.clone();
+    let dot_color = match badge.status {
+        ConnectionStatus::Online => theme.terminal_colors().normal.green,
+        ConnectionStatus::Connecting => theme.terminal_colors().normal.yellow,
+        ConnectionStatus::Offline => theme.terminal_colors().normal.red,
+    };
+    let tooltip_element = appearance.ui_builder().tool_tip(tooltip).build().finish();
+    let mut tooltip_element = Some(tooltip_element);
+    Hoverable::new(mouse_state.clone(), move |state| {
+        let accent = theme.accent();
+        let circle = Container::new(
+            Align::new(
+                Text::new_inline(initials.clone(), font, 10.)
+                    .with_color(theme.main_text_color(accent).into_solid())
+                    .with_style(Properties::default().weight(Weight::Semibold))
+                    .finish(),
+            )
+            .finish(),
+        )
+        .with_background(accent)
+        .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
+        .finish();
+        let dot = Container::new(Empty::new().finish())
+            .with_background_color(dot_color.into())
+            .with_border(Border::all(1.5).with_border_fill(theme.background()))
+            .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
+            .finish();
+        let mut stack = Stack::new()
+            .with_child(
+                ConstrainedBox::new(circle)
+                    .with_width(ACCOUNT_BUTTON_SIZE)
+                    .with_height(ACCOUNT_BUTTON_SIZE)
+                    .finish(),
+            )
+            .with_positioned_child(
+                ConstrainedBox::new(dot)
+                    .with_width(STATUS_DOT_SIZE)
+                    .with_height(STATUS_DOT_SIZE)
+                    .finish(),
+                OffsetPositioning::offset_from_parent(
+                    vec2f(1., 1.),
+                    ParentOffsetBounds::Unbounded,
+                    ParentAnchor::BottomRight,
+                    ChildAnchor::BottomRight,
+                ),
+            );
+        if state.is_hovered()
+            && let Some(tooltip) = tooltip_element.take()
+        {
+            stack.add_positioned_overlay_child(
+                tooltip,
+                OffsetPositioning::offset_from_parent(
+                    vec2f(0., 6.),
+                    ParentOffsetBounds::WindowByPosition,
+                    ParentAnchor::BottomRight,
+                    ChildAnchor::TopRight,
+                ),
+            );
+        }
+        stack.finish()
+    })
+    .on_click(|ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::OpenAccountMenu))
     .with_cursor(Cursor::PointingHand)
     .finish()
 }

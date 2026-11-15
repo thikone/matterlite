@@ -21,7 +21,7 @@ use warpui::{
 };
 
 use crate::right_panel::RightPanel;
-use crate::tab_bar::{ChatTab, render_tab_bar};
+use crate::tab_bar::{AccountBadge, ChatTab, render_tab_bar};
 use crate::tool_panel::{ToolPanel, ToolPanelEvent, ToolPanelTab};
 
 /// Keymap context set while the right panel is open (Esc closes it).
@@ -53,6 +53,14 @@ pub enum WorkspaceAction {
     CloseActiveTab,
     /// Opens the theme chooser as a panel left of the tool panel, or closes it.
     ToggleThemeChooser,
+    /// The account button in the tab bar was clicked.
+    OpenAccountMenu,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorkspaceEvent {
+    /// The account button was clicked; the owner shows the account menu.
+    AccountMenu,
 }
 
 /// Registers the workspace keybindings (MatterLite.md §10.5).
@@ -110,6 +118,10 @@ pub struct Workspace {
     right_panel_open: bool,
     theme_chooser: ViewHandle<ThemeChooser>,
     theme_chooser_open: bool,
+    account: Option<AccountBadge>,
+    account_mouse_state: MouseStateHandle,
+    /// Lines shown in a chat tab until tabs hold chats.
+    placeholder: Vec<String>,
 }
 
 impl Workspace {
@@ -145,6 +157,25 @@ impl Workspace {
             right_panel_open: false,
             theme_chooser,
             theme_chooser_open: false,
+            account: None,
+            account_mouse_state: MouseStateHandle::default(),
+            placeholder: vec!["The timeline and composer of this chat will be here.".to_owned()],
+        }
+    }
+
+    /// The account button at the right end of the tab bar.
+    pub fn set_account(&mut self, account: Option<AccountBadge>, ctx: &mut ViewContext<Self>) {
+        if self.account != account {
+            self.account = account;
+            ctx.notify();
+        }
+    }
+
+    /// The text of the placeholder chat content.
+    pub fn set_placeholder(&mut self, lines: Vec<String>, ctx: &mut ViewContext<Self>) {
+        if self.placeholder != lines {
+            self.placeholder = lines;
+            ctx.notify();
         }
     }
 
@@ -253,11 +284,13 @@ impl Workspace {
                     size + 8.,
                     theme.main_text_color(theme.background()).into_solid(),
                 ))
-                .with_child(line(
-                    "The timeline and composer of this chat will be here.".to_string(),
-                    size,
-                    theme.sub_text_color(theme.background()).into_solid(),
-                ))
+                .with_children(self.placeholder.iter().map(|text| {
+                    line(
+                        text.clone(),
+                        size,
+                        theme.sub_text_color(theme.background()).into_solid(),
+                    )
+                }))
                 .with_child(line(
                     "Alt+1…6 tool panel · Ctrl+T new tab · Ctrl+W close · Ctrl+Tab next · \
                      Ctrl+Alt+Shift+T themes"
@@ -272,7 +305,7 @@ impl Workspace {
 }
 
 impl Entity for Workspace {
-    type Event = ();
+    type Event = WorkspaceEvent;
 }
 
 impl View for Workspace {
@@ -331,6 +364,9 @@ impl View for Workspace {
                 &self.tabs,
                 self.active_tab,
                 &self.new_tab_mouse_state,
+                self.account
+                    .as_ref()
+                    .map(|account| (account, &self.account_mouse_state)),
                 appearance,
             ))
             .with_child(Shrinkable::new(1., body.finish()).finish())
@@ -380,6 +416,7 @@ impl TypedActionView for Workspace {
             }
             WorkspaceAction::CloseTab(index) => self.close_tab(index, ctx),
             WorkspaceAction::CloseActiveTab => self.close_tab(self.active_tab, ctx),
+            WorkspaceAction::OpenAccountMenu => ctx.emit(WorkspaceEvent::AccountMenu),
         }
     }
 }

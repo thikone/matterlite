@@ -12,6 +12,7 @@ anyhow.workspace = true
 dunce.workspace = true
 env_logger.workspace = true
 log.workspace = true
+ml_chat.workspace = true
 ml_editor.workspace = true
 ml_logging.workspace = true
 ml_themes.workspace = true
@@ -21,7 +22,7 @@ rust-embed.workspace = true
 settings.workspace = true
 warp_core.workspace = true
 warpui.workspace = true
-warpui_extras.workspace = true
+warpui_extras = { workspace = true, features = ["secure_storage"] }
 watcher.workspace = true
 
 [dev-dependencies]

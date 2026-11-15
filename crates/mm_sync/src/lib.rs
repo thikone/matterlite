@@ -13,6 +13,7 @@
 //! [`Store::apply`] into the cache, and a lost event stream (`MissedEvents`) triggers the same
 //! bootstrap and catch-up.
 
+pub mod auth;
 mod bootstrap;
 mod engine;
 mod limiter;
@@ -28,6 +29,7 @@ use mm_api::ServerUrl;
 use mm_model::{ChannelId, PostId, SessionToken, UserId};
 use mm_store::{Store, StoreDelta};
 
+pub use auth::{Auth, AuthError, ServerInfo, SignInOptions};
 pub use bootstrap::{SINCE_CAP, SINCE_MARGIN};
 pub use limiter::{Limiter, Rate};
 pub use scheduler::Priority;

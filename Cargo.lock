@@ -4306,6 +4306,7 @@ dependencies = [
  "dunce",
  "env_logger",
  "log",
+ "ml_chat",
  "ml_editor",
  "ml_logging",
  "ml_themes",
@@ -4452,6 +4453,28 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ml_chat"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "ml_editor",
+ "ml_workspace",
+ "mm_api",
+ "mm_cache",
+ "mm_model",
+ "mm_store",
+ "mm_sync",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "ui_components",
+ "warp_core",
+ "warpui",
+ "warpui_extras",
+ "wiremock",
 ]
 
 [[package]]

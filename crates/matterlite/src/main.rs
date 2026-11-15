@@ -30,6 +30,14 @@ fn main() -> anyhow::Result<()> {
                 manager.refresh_theme_state(ctx);
             });
         })),
+        // Saves the WebSocket resume state and flushes the cache.
+        on_will_terminate: Some(Box::new(ml_chat::shutdown)),
+        // One window: closing it quits (on macOS too, until there is a way to reopen it).
+        on_window_will_close: Some(Box::new(|_, ctx| {
+            if ctx.window_ids().next().is_none() {
+                ctx.terminate_app(platform::TerminationMode::Cancellable, None);
+            }
+        })),
         ..Default::default()
     };
     let app = platform::AppBuilder::new(callbacks, Box::new(assets::Assets), None);
@@ -41,16 +49,37 @@ fn main() -> anyhow::Result<()> {
             return;
         }
         config_watcher::init(ctx);
+        register_secure_storage(ctx);
         ml_editor::init(ctx);
         ml_themes::theme_chooser::init(ctx);
         ml_workspace::init(ctx);
+        ml_chat::init(ctx);
         ctx.add_window(
             AddWindowOptions {
                 title: Some("MatterLite".to_string()),
                 ..Default::default()
             },
-            ml_workspace::Workspace::new,
+            ml_chat::RootView::new,
         );
+        ml_chat::restore_session(ctx);
     })?;
     Ok(())
 }
+
+/// Session tokens (MatterLite.md §9): the Keychain on macOS, the Secret Service on Linux (none
+/// running: log in on every start), DPAPI-encrypted files in `state/secure/` on Windows.
+fn register_secure_storage(ctx: &mut warpui::AppContext) {
+    #[cfg(windows)]
+    {
+        // The store writes its files without creating the directory.
+        let dir = warp_core::paths::secure_state_dir();
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            log::error!("Can't create {}: {err}", dir.display());
+        }
+        warpui_extras::secure_storage::register_with_dir(SECURE_STORAGE_SERVICE, dir, ctx);
+    }
+    #[cfg(not(windows))]
+    warpui_extras::secure_storage::register(SECURE_STORAGE_SERVICE, ctx);
+}
+
+const SECURE_STORAGE_SERVICE: &str = "MatterLite";

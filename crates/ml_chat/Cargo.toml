@@ -1,0 +1,28 @@
+[package]
+name = "ml_chat"
+version = "0.1.0"
+description = "MatterLite's chat models and views: session, login, chats, timeline, composer"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+log.workspace = true
+ml_editor.workspace = true
+ml_workspace.workspace = true
+mm_api.workspace = true
+mm_cache.workspace = true
+mm_model.workspace = true
+mm_store.workspace = true
+mm_sync.workspace = true
+ui_components.workspace = true
+warp_core.workspace = true
+warpui.workspace = true
+warpui_extras = { workspace = true, features = ["secure_storage"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+wiremock = "0.6"

@@ -396,6 +396,8 @@ matterlite/
                              extracted from app/src/{code,notebooks}, without LSP/AI
     ml_workspace/            Warp-style shell: tab bar, tool panel + toolbelt, right panel,
                              pane groups, SearchBarView (from session_history.rs), tree view
+    ml_chat/                 chat models and views: Session (owns the engine), login, window
+                             root, Chats tab, chat view, composer, History (M3)
     ml_logging/              small logger with rotation (rewritten from warp_logging)
     matterlite/              the binary: WarpUI app, views, keymaps, settings, platform glue
 
@@ -963,7 +965,7 @@ The config directory is watched while MatterLite runs: edits to `settings.toml` 
 custom themes.
 
 **Token**: `warpui_extras::secure_storage` with service name `MatterLite`, key
-`token:<server_id>`:
+`token-<account id>` (no `:`: on Windows the key is part of a file name):
 
 - macOS → Keychain (`security-framework`).
 - Linux → Secret Service (`secret-service`, D-Bus). If no Secret Service is running

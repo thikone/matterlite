@@ -8,6 +8,7 @@ members = [
   "crates/languages",
   "crates/markdown_parser",
   "crates/matterlite",
+  "crates/ml_chat",
   "crates/ml_editor",
   "crates/ml_file_views",
   "crates/ml_logging",
@@ -57,6 +58,7 @@ fuzzy_match = { path = "crates/fuzzy_match" }
 ipynb_parser = { path = "crates/ipynb_parser" }
 languages = { path = "crates/languages" }
 markdown_parser = { path = "crates/markdown_parser" }
+ml_chat = { path = "crates/ml_chat" }
 ml_editor = { path = "crates/ml_editor" }
 ml_file_views = { path = "crates/ml_file_views" }
 ml_logging = { path = "crates/ml_logging" }

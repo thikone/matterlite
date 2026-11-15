@@ -30,6 +30,10 @@ pub mod ids {
     pub const INVALID_CREDENTIALS_PREFIX: &str = "api.user.login.invalid_credentials";
     /// The account is deactivated.
     pub const USER_INACTIVE: &str = "api.user.login.inactive.app_error";
+    /// Too many failed logins (`MaximumLoginAttempts`): the account is locked until an
+    /// administrator resets it.
+    pub const TOO_MANY_LOGIN_ATTEMPTS: &str =
+        "api.user.check_user_login_attempts.too_many.app_error";
     /// `GET /users/me/channels` for a user in no channel (a 404, not an empty list).
     pub const CHANNELS_NOT_FOUND: &str = "app.channel.get_channels.not_found.app_error";
     /// No channel membership; also what `GET /users/{id}/channel_members` returns for a user in
