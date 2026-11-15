@@ -64,6 +64,9 @@ pub struct SyncSettings {
     pub people: bool,
     /// How often quiet channels are checked for edits and deletes (`since`).
     pub sweep_interval: Duration,
+    /// How long former chats (left, removed, archived) stay cached; `None` keeps them,
+    /// `Some(ZERO)` deletes them at once.
+    pub former_retention: Option<Duration>,
 }
 
 impl Default for SyncSettings {
@@ -74,8 +77,18 @@ impl Default for SyncSettings {
             history: History::Days(180),
             people: true,
             sweep_interval: Duration::from_secs(30 * 60),
+            former_retention: Some(Duration::from_secs(90 * 24 * 60 * 60)),
         }
     }
+}
+
+/// What to do with the cache of a server that was reset or reinstalled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServerChange {
+    /// Move the old data aside (`<dir>.archived-<unix seconds>`) and start an empty cache.
+    ArchiveAndStartFresh,
+    /// Merge into the old data (the server was restored from a backup, say).
+    KeepCache,
 }
 
 /// The history backfill window.
@@ -146,6 +159,13 @@ pub enum Command {
     ResumeSync,
     /// Plans the eager sync again now ("Sync now").
     SyncNow,
+    /// The answer to [`Event::ServerChanged`].
+    ResolveServerChange(ServerChange),
+    /// Logs out (`POST /users/logout`) and stops. The local data stays unless `delete_data`
+    /// (MatterLite.md §8.7); the token is the caller's to forget.
+    Logout {
+        delete_data: bool,
+    },
     /// Saves state, closes the WebSocket and the cache, and ends the engine.
     Shutdown,
 }
@@ -166,8 +186,12 @@ pub enum Event {
     /// catch-up ran again and the store is current.
     Resynced,
     /// The server's `DiagnosticId` differs from the cached one: it was reinstalled or reset
-    /// (MatterLite.md §8.7). The cache is kept until the user decides.
+    /// (MatterLite.md §8.7). The engine waits for [`Command::ResolveServerChange`] before it
+    /// syncs anything into the cache.
     ServerChanged,
+    /// The account's data directory (`<servers_dir>/<account_id>`), for reading its cache
+    /// (`mm_cache::open_reader`: search, former chats).
+    CacheOpened(PathBuf),
     Changed(Vec<StoreDelta>),
     /// `last_viewed_at` as it was when the channel was opened, for the "new messages" line.
     ChannelOpened {

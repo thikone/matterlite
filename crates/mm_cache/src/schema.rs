@@ -124,3 +124,24 @@ diesel::table! {
         priority -> Integer,
     }
 }
+
+diesel::table! {
+    outbox (pending_post_id) {
+        pending_post_id -> Text,
+        channel_id -> Text,
+        root_id -> Text,
+        message -> Text,
+        props_json -> Text,
+        file_ids -> Text,
+        first_attempt_at -> BigInt,
+        last_attempt_at -> BigInt,
+        state -> Text,
+    }
+}
+
+diesel::table! {
+    former_chats (channel_id) {
+        channel_id -> Text,
+        left_at -> BigInt,
+    }
+}

@@ -10,9 +10,11 @@
 //! aside and rebuilt by the next sync ([`OpenReport`]).
 
 mod account;
+mod accounts;
 mod db;
 mod error;
 mod hydrate;
+mod lifecycle;
 mod ops;
 mod schema;
 mod search;
@@ -25,8 +27,10 @@ use mm_model::ChannelId;
 use mm_store::Store;
 
 pub use account::account_id;
+pub use accounts::{StoredAccount, delete_account, delete_unused_accounts, stored_accounts};
 pub use db::{OpenReport, open_reader};
 pub use error::CacheError;
+pub use lifecycle::{FormerChat, OutboxEntry};
 pub use ops::{Op, Owner, kv, metadata_ops, ops_for, snapshot_ops};
 pub use search::{SearchHit, fts_query};
 pub use writer::{BATCH_OPS, BATCH_WINDOW, Writer};
@@ -67,6 +71,21 @@ impl Cache {
         search::search(&mut self.conn, query, channel, limit)
     }
 
+    /// Posts being sent when the app last stopped, oldest first.
+    pub fn outbox(&mut self) -> Result<Vec<OutboxEntry>, CacheError> {
+        lifecycle::outbox(&mut self.conn)
+    }
+
+    /// Chats I'm no longer a member of, most recently left first.
+    pub fn former_chats(&mut self) -> Result<Vec<FormerChat>, CacheError> {
+        lifecycle::former_chats(&mut self.conn)
+    }
+
+    /// Former chats left before `before` (ms), due for purging with [`Op::PurgeChannel`].
+    pub fn expired_former_chats(&mut self, before: i64) -> Result<Vec<ChannelId>, CacheError> {
+        lifecycle::expired_former_chats(&mut self.conn, before)
+    }
+
     /// Moves the connection to the writer thread.
     pub fn into_writer(self) -> Result<Writer, CacheError> {
         Writer::start(self.conn)
@@ -81,4 +100,18 @@ pub fn search(
     limit: i64,
 ) -> Result<Vec<SearchHit>, CacheError> {
     search::search(reader, query, channel, limit)
+}
+
+/// Former chats through a reader connection.
+pub fn former_chats(reader: &mut SqliteConnection) -> Result<Vec<FormerChat>, CacheError> {
+    lifecycle::former_chats(reader)
+}
+
+/// A former chat's posts, newest first, through a reader connection.
+pub fn former_posts(
+    reader: &mut SqliteConnection,
+    channel: &ChannelId,
+    limit: i64,
+) -> Result<Vec<mm_model::Post>, CacheError> {
+    lifecycle::former_posts(reader, channel, limit)
 }

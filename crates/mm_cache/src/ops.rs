@@ -12,6 +12,8 @@ use mm_model::{
 };
 use mm_store::{Range, Store, StoreDelta, Timeline};
 
+use crate::lifecycle::OutboxEntry;
+
 /// Which timeline a set of ranges belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Owner {
@@ -47,6 +49,8 @@ pub mod kv {
     pub const SYNCED_THROUGH: &str = "synced_through";
     /// When profiles were last refreshed (`POST /users/ids?since=`).
     pub const USERS_SYNCED_AT: &str = "users_synced_at";
+    /// When the account was last opened (ms), for the stored-accounts list.
+    pub const LAST_USED: &str = "last_used";
     pub const LAST_TEAM: &str = "last_team";
     pub const LAST_CHANNEL: &str = "last_channel";
 }
@@ -60,10 +64,15 @@ pub enum Op {
     DeleteTeamMember(TeamId),
     PutChannel(Channel),
     PutChannelMember(ChannelMember),
-    /// The channel and its posts stay (former chats); only the membership goes.
+    /// The channel and its posts stay as a former chat (§8.7); only the membership goes.
     DeleteChannelMember(ChannelId),
-    /// Memberships not in the list are deleted (after a full channel list).
+    /// Memberships not in the list are deleted (after a full channel list); those channels
+    /// become former chats.
     KeepChannelMembers(Vec<ChannelId>),
+    PutOutbox(OutboxEntry),
+    DeleteOutbox(String),
+    /// Removes a channel and everything cached for it (a former chat past its retention).
+    PurgeChannel(ChannelId),
     /// Team memberships not in the list are deleted.
     KeepTeams(Vec<TeamId>),
     /// Also updates the search index.

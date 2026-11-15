@@ -2,7 +2,9 @@
 
 //! `mm-cli <server> sync --data <dir>`: the sync engine, headless (docs/M2.md). Commands on
 //! stdin: `open|older|newer|show <channel>`, `close`, `send <channel> <text>`, `unread`,
-//! `search <words>`, `pause`/`resume`/`sync` (the eager sync), `quit`.
+//! `search <words>`, `pause`/`resume`/`sync` (the eager sync), `former` (former chats),
+//! `accounts` (stored accounts), `keep`/`fresh` (after a server reset), `logout`,
+//! `logout-delete`, `quit`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -12,7 +14,7 @@ use anyhow::{Context as _, Result};
 use mm_api::Client;
 use mm_model::{ChannelId, ChannelType, PostId};
 use mm_store::{ItemOptions, Store, StoreDelta, TimelineItem};
-use mm_sync::{Command, EngineConfig, Event};
+use mm_sync::{Command, EngineConfig, Event, ServerChange};
 
 pub(crate) async fn run(client: &Client, data: PathBuf) -> Result<()> {
     let me = client.me().await?;
@@ -43,6 +45,7 @@ pub(crate) async fn run(client: &Client, data: PathBuf) -> Result<()> {
         }
     });
     let mut opened_at: BTreeMap<ChannelId, i64> = BTreeMap::new();
+    let mut account_dir: Option<PathBuf> = None;
     let mut stdin_open = true;
     loop {
         tokio::select! {
@@ -68,6 +71,14 @@ pub(crate) async fn run(client: &Client, data: PathBuf) -> Result<()> {
                         opened_at.insert(channel.clone(), *last_viewed_at);
                         println!("{time} opened {}", name(&store, channel));
                     }
+                    Event::CacheOpened(dir) => {
+                        account_dir = Some(dir.clone());
+                        println!("{time} cache {}", dir.display());
+                    }
+                    Event::ServerChanged => println!(
+                        "{time} the server was reset or reinstalled: `fresh` archives the old \
+                         data and starts over, `keep` merges into it"
+                    ),
                     Event::Stopped => {
                         println!("{time} stopped");
                         break;
@@ -91,8 +102,10 @@ pub(crate) async fn run(client: &Client, data: PathBuf) -> Result<()> {
                     Ok(Action::Unread) => print_badges(&store),
                     Ok(Action::Search(words)) => {
                         drop(store);
-                        search(&engine, &servers_dir, &words);
+                        search(&engine, account_dir.as_deref(), &words);
                     }
+                    Ok(Action::Former) => print_former(account_dir.as_deref()),
+                    Ok(Action::Accounts) => print_accounts(&servers_dir),
                     Err(error) => println!("? {error}"),
                 }
             }
@@ -108,6 +121,8 @@ enum Action {
     Show(ChannelId),
     Unread,
     Search(String),
+    Former,
+    Accounts,
 }
 
 fn parse_command(store: &Store, line: &str) -> Result<Action> {
@@ -133,8 +148,16 @@ fn parse_command(store: &Store, line: &str) -> Result<Action> {
         "sync" => Action::Engine(Command::SyncNow),
         "unread" => Action::Unread,
         "search" => Action::Search(rest.to_owned()),
+        "former" => Action::Former,
+        "accounts" => Action::Accounts,
+        "keep" => Action::Engine(Command::ResolveServerChange(ServerChange::KeepCache)),
+        "fresh" => Action::Engine(Command::ResolveServerChange(
+            ServerChange::ArchiveAndStartFresh,
+        )),
+        "logout" => Action::Engine(Command::Logout { delete_data: false }),
+        "logout-delete" => Action::Engine(Command::Logout { delete_data: true }),
         _ => anyhow::bail!(
-            "commands: open|older|newer|show <channel>, close, send <channel> <text>, unread, search <words>, pause, resume, sync, quit"
+            "commands: open|older|newer|show <channel>, close, send <channel> <text>, unread, search <words>, pause, resume, sync, former, accounts, keep, fresh, logout, logout-delete, quit"
         ),
     })
 }
@@ -295,17 +318,13 @@ fn print_timeline(store: &Store, channel: &ChannelId, last_viewed_at: Option<i64
     }
 }
 
-fn search(engine: &mm_sync::EngineHandle, servers_dir: &std::path::Path, words: &str) {
-    let store = engine.store().read().expect("store lock");
-    let Some(account) = std::fs::read_dir(servers_dir)
-        .ok()
-        .and_then(|mut dirs| dirs.next())
-        .and_then(|dir| dir.ok())
-    else {
+fn search(engine: &mm_sync::EngineHandle, account_dir: Option<&std::path::Path>, words: &str) {
+    let Some(dir) = account_dir else {
         println!("? no cache yet");
         return;
     };
-    match mm_cache::open_reader(&account.path().join("cache.sqlite"))
+    let store = engine.store().read().expect("store lock");
+    match mm_cache::open_reader(&dir.join("cache.sqlite"))
         .map_err(anyhow::Error::from)
         .and_then(|mut reader| Ok(mm_cache::search(&mut reader, words, None, 10)?))
     {
@@ -317,15 +336,55 @@ fn search(engine: &mm_sync::EngineHandle, servers_dir: &std::path::Path, words: 
                     .get(&hit.post)
                     .map(|post| {
                         post.message
-                            .replace('\n', " ⏎ ")
+                            .replace('\n', " \u{23ce} ")
                             .chars()
                             .take(70)
                             .collect::<String>()
                     })
-                    .unwrap_or_else(|| "(not in memory)".to_owned());
+                    .unwrap_or_else(|| "(not in memory: a former chat)".to_owned());
                 println!("    {}: {message}", name(&store, &hit.channel));
             }
         }
         Err(error) => println!("? search: {error}"),
+    }
+}
+
+fn print_former(account_dir: Option<&std::path::Path>) {
+    let Some(dir) = account_dir else {
+        println!("? no cache yet");
+        return;
+    };
+    match mm_cache::open_reader(&dir.join("cache.sqlite"))
+        .map_err(anyhow::Error::from)
+        .and_then(|mut reader| Ok(mm_cache::former_chats(&mut reader)?))
+    {
+        Ok(chats) if chats.is_empty() => println!("  no former chats"),
+        Ok(chats) => {
+            println!("  former chats (read-only, kept until the retention runs out):");
+            for chat in chats {
+                println!(
+                    "    ~{} ({} posts, left at {})",
+                    chat.channel.name, chat.posts, chat.left_at
+                );
+            }
+        }
+        Err(error) => println!("? former chats: {error}"),
+    }
+}
+
+fn print_accounts(servers_dir: &std::path::Path) {
+    let accounts = mm_cache::stored_accounts(servers_dir);
+    println!("  {} stored account(s):", accounts.len());
+    for account in accounts {
+        println!(
+            "    @{} on {}: {} KB, last used {}, {} unsent",
+            account.user.username,
+            account.server_url.as_deref().unwrap_or("?"),
+            account.size / 1024,
+            account
+                .last_used
+                .map_or_else(|| "?".to_owned(), |at| at.to_string()),
+            account.unsent
+        );
     }
 }

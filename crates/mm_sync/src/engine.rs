@@ -3,11 +3,12 @@
 //! The engine loop: startup, then commands, WebSocket outputs and timers.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_channel::{Receiver, Sender};
-use mm_api::{ApiError, Client, ClientOptions, NewPost};
-use mm_cache::{Cache, Op, Writer, account_id, kv, metadata_ops, ops_for};
+use mm_api::{ApiError, Client, ClientOptions, NewPost, PostsQuery};
+use mm_cache::{Cache, Op, OutboxEntry, Writer, account_id, kv, metadata_ops, ops_for};
 use mm_model::ws::{Broadcast, WsEvent};
 use mm_model::{ChannelId, ChannelType, Post, ServerVersion, User, UserId};
 use mm_store::{PageRequest, StoreDelta, dm_partner};
@@ -18,7 +19,9 @@ use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, timeout};
 use crate::bootstrap::{self, PAGE};
 use crate::limiter::Limiter;
 use crate::scheduler::{self, Context, Job, Outcome, Priority, Queue, USER_BATCH};
-use crate::{Command, ConnectionState, EngineConfig, Event, History, SharedStore, SyncStatus};
+use crate::{
+    Command, ConnectionState, EngineConfig, Event, History, ServerChange, SharedStore, SyncStatus,
+};
 
 /// How long a resumed connection may take to be confirmed before the engine bootstraps anyway.
 const RESUME_WAIT: Duration = Duration::from_secs(10);
@@ -29,6 +32,9 @@ const UNCONFIRMED_BEFORE_CHECK: u32 = 3;
 const JOB_ATTEMPTS: u32 = 3;
 /// `Event::Sync` at most this often (and when the sync goes idle).
 const STATUS_EVERY: Duration = Duration::from_millis(500);
+/// The server recognises a resend by `pending_post_id` only this long
+/// (`pendingPostIDsCacheTTL` in `server/channels/app/post.go`).
+const PENDING_DEDUPE_MS: i64 = 30_000;
 
 /// Results of work done off the loop.
 enum Internal {
@@ -59,8 +65,12 @@ struct Engine {
     config_hash: Option<String>,
     /// DM/GM show preferences already sent this session.
     show_preferences_sent: HashSet<(String, String)>,
-    /// Pending posts kept for a retry.
-    unsent: std::collections::HashMap<String, NewPost>,
+    /// Posts being sent or failed, as in the cache's outbox.
+    unsent: HashMap<String, OutboxEntry>,
+    /// `<servers_dir>/<account_id>`, once the cache is open.
+    account_dir: Option<PathBuf>,
+    /// `Some(delete_data)` after a logout command.
+    logout: Option<bool>,
     /// The last saved `synced_through` (ms).
     last_saved_sync: i64,
     /// The `seq` of the last event the engine applied (or dropped as covered by a sync), so
@@ -122,7 +132,9 @@ pub(crate) async fn run(
         unconfirmed: 0,
         config_hash: None,
         show_preferences_sent: HashSet::new(),
-        unsent: Default::default(),
+        unsent: HashMap::new(),
+        account_dir: None,
+        logout: None,
         last_saved_sync: 0,
         applied_seq: None,
         limiter,
@@ -154,7 +166,13 @@ impl Engine {
             return;
         }
         if let Some(writer) = &self.writer {
-            let ops = ops_for(&self.store.read().expect("store lock"), &deltas);
+            let mut ops = ops_for(&self.store.read().expect("store lock"), &deltas);
+            if self.config.sync.former_retention == Some(Duration::ZERO) {
+                ops.extend(deltas.iter().filter_map(|delta| match delta {
+                    StoreDelta::ChannelRemoved(channel) => Some(Op::PurgeChannel(channel.clone())),
+                    _ => None,
+                }));
+            }
             if let Err(error) = writer.send(ops) {
                 log::error!("cache: {error}");
             }
@@ -202,13 +220,53 @@ impl Engine {
                 .flatten()
                 .and_then(|text| text.parse::<i64>().ok());
         }
+
+        // 3. A reset server: ask before syncing into the old data.
+        let mut cache_kept = true;
+        let diagnostic_id = match self.server_identity_changed(diagnostic_id.as_deref()).await {
+            Some(true) => match self.ask_server_change(commands).await? {
+                ServerChange::KeepCache => None,
+                ServerChange::ArchiveAndStartFresh => {
+                    drop(cache.take());
+                    self.archive_account().await;
+                    *self.store.write().expect("store lock") = mm_store::Store::new(me.clone());
+                    cache = self.open_cache(&me.id).await;
+                    cache_kept = false;
+                    None
+                }
+            },
+            _ => diagnostic_id,
+        };
+        if !cache_kept {
+            resume = None;
+            synced_through = None;
+        }
+
         self.last_saved_sync = synced_through.unwrap_or(0);
+        let mut outbox = Vec::new();
+        let mut expired = Vec::new();
+        if let Some(cache) = cache.as_mut() {
+            outbox = cache.outbox().unwrap_or_else(|error| {
+                log::error!("outbox: {error}");
+                Vec::new()
+            });
+            if let Some(retention) = self.config.sync.former_retention {
+                let before = now_ms() - retention.as_millis() as i64;
+                expired = cache.expired_former_chats(before).unwrap_or_default();
+            }
+        }
         if let Some(cache) = cache {
             match cache.into_writer() {
                 Ok(writer) => self.writer = Some(writer),
                 Err(error) => log::error!("cache writer: {error}"),
             }
         }
+        if let Some(writer) = &self.writer {
+            let mut ops: Vec<Op> = expired.into_iter().map(Op::PurgeChannel).collect();
+            ops.push(Op::Kv(kv::LAST_USED.into(), Some(now_ms().to_string())));
+            let _ = writer.send(ops);
+        }
+        self.restore_outbox(outbox).await;
 
         // 3. Resume the saved event stream, or bootstrap.
         let has_cache = !self.store.read().expect("store lock").channels.is_empty();
@@ -218,6 +276,7 @@ impl Engine {
             .await;
         let mut resumed = false;
         if has_cache
+            && cache_kept
             && self
                 .ws
                 .as_ref()
@@ -236,7 +295,158 @@ impl Engine {
             now_ms()
         };
         self.plan_eager();
+        self.resend_outbox().await;
         Some(output)
+    }
+
+    /// Compares the server's `DiagnosticId` with the cached one. `None` if either is unknown.
+    async fn server_identity_changed(&self, cached: Option<&str>) -> Option<bool> {
+        let cached = cached.filter(|id| !id.is_empty())?;
+        self.limiter.acquire().await;
+        let config = self.client.client_config().await.ok()?;
+        let current = config.get("DiagnosticId").filter(|id| !id.is_empty())?;
+        Some(current != cached)
+    }
+
+    /// Reports `ServerChanged` and waits for the answer (or a shutdown).
+    async fn ask_server_change(&mut self, commands: &Receiver<Command>) -> Option<ServerChange> {
+        self.emit(Event::ServerChanged).await;
+        loop {
+            match commands.recv().await {
+                Ok(Command::ResolveServerChange(answer)) => return Some(answer),
+                Ok(Command::Shutdown) | Err(_) => return None,
+                Ok(Command::Logout { delete_data }) => {
+                    self.logout = Some(delete_data);
+                    let _ = self.client.logout().await;
+                    self.emit(Event::LoggedOut).await;
+                    return None;
+                }
+                // Nothing else can run before the cache question is settled.
+                Ok(_) => {}
+            }
+        }
+    }
+
+    /// Moves the account directory aside as an archive.
+    async fn archive_account(&mut self) {
+        let Some(dir) = self.account_dir.take() else {
+            return;
+        };
+        let seconds = now_ms() / 1000;
+        let archive = PathBuf::from(format!("{}.archived-{seconds}", dir.display()));
+        match std::fs::rename(&dir, &archive) {
+            Ok(()) => log::info!("archived {} to {}", dir.display(), archive.display()),
+            Err(error) => {
+                log::error!("archiving {}: {error}", dir.display());
+                self.emit(Event::Error(format!(
+                    "could not archive the old data: {error}"
+                )))
+                .await;
+            }
+        }
+    }
+
+    /// Shows the posts that were being sent when the app stopped.
+    async fn restore_outbox(&mut self, entries: Vec<OutboxEntry>) {
+        let mut deltas = Vec::new();
+        for entry in entries {
+            let pending = pending_post(&entry, entry.first_attempt_at);
+            let mut store = self.store.write().expect("store lock");
+            deltas.extend(store.add_pending(pending));
+            if entry.failed {
+                deltas.extend(store.fail_pending(&entry.pending_post_id));
+            }
+            drop(store);
+            self.unsent.insert(entry.pending_post_id.clone(), entry);
+        }
+        // Only to the UI: the posts are in the outbox, not the cache.
+        if !deltas.is_empty() {
+            self.emit(Event::Changed(deltas)).await;
+        }
+    }
+
+    /// After a restart: a post tried less than 30 s ago is sent again with the same
+    /// `pending_post_id` (the server drops the duplicate); an older one is looked up first,
+    /// and if it isn't on the server it's shown as failed, never re-sent blindly (§8.7).
+    async fn resend_outbox(&mut self) {
+        let entries: Vec<OutboxEntry> = self
+            .unsent
+            .values()
+            .filter(|entry| !entry.failed)
+            .cloned()
+            .collect();
+        let now = now_ms();
+        for mut entry in entries {
+            if now - entry.last_attempt_at < PENDING_DEDUPE_MS {
+                entry.last_attempt_at = now;
+                self.save_outbox(&entry);
+                self.unsent
+                    .insert(entry.pending_post_id.clone(), entry.clone());
+                self.spawn_send(&entry);
+                continue;
+            }
+            match self.find_sent(&entry).await {
+                Ok(Some(mut post)) => {
+                    post.pending_post_id = entry.pending_post_id.clone();
+                    self.unsent.remove(&entry.pending_post_id);
+                    self.delete_outbox(&entry.pending_post_id);
+                    let deltas = self.store.write().expect("store lock").confirm_post(&post);
+                    self.emit_changes(deltas).await;
+                }
+                Ok(None) => self.mark_failed(entry).await,
+                Err(error) => {
+                    log::warn!("checking {}: {error}", entry.pending_post_id);
+                    self.mark_failed(entry).await;
+                }
+            }
+        }
+    }
+
+    /// The server's copy of an outbox post, matched by author, channel, thread and text.
+    async fn find_sent(&self, entry: &OutboxEntry) -> Result<Option<Post>, ApiError> {
+        let me = self.store.read().expect("store lock").me.clone();
+        self.limiter.acquire().await;
+        let list = self
+            .client
+            .channel_posts(
+                &entry.channel_id,
+                &PostsQuery {
+                    since: Some(entry.first_attempt_at - 60_000),
+                    ..PostsQuery::default()
+                },
+            )
+            .await?;
+        Ok(list.posts.into_values().find(|post| {
+            post.user_id == me
+                && post.root_id == entry.root_id
+                && post.message == entry.message
+                && post.file_ids == entry.file_ids
+                && !post.is_deleted()
+        }))
+    }
+
+    async fn mark_failed(&mut self, mut entry: OutboxEntry) {
+        entry.failed = true;
+        self.save_outbox(&entry);
+        let deltas = self
+            .store
+            .write()
+            .expect("store lock")
+            .fail_pending(&entry.pending_post_id);
+        self.unsent.insert(entry.pending_post_id.clone(), entry);
+        self.emit(Event::Changed(deltas)).await;
+    }
+
+    fn save_outbox(&self, entry: &OutboxEntry) {
+        if let Some(writer) = &self.writer {
+            let _ = writer.send(vec![Op::PutOutbox(entry.clone())]);
+        }
+    }
+
+    fn delete_outbox(&self, pending: &str) {
+        if let Some(writer) = &self.writer {
+            let _ = writer.send(vec![Op::DeleteOutbox(pending.to_owned())]);
+        }
     }
 
     async fn open_cache(&mut self, user: &UserId) -> Option<Cache> {
@@ -249,6 +459,10 @@ impl Engine {
             Ok((mut cache, report)) => {
                 if let Some(aside) = report.moved_aside {
                     self.emit(Event::CacheMovedAside(aside)).await;
+                }
+                if let Some(dir) = path.parent() {
+                    self.account_dir = Some(dir.to_owned());
+                    self.emit(Event::CacheOpened(dir.to_owned())).await;
                 }
                 match cache.hydrate() {
                     Ok(Some(hydrated)) if hydrated.me == *user => {
@@ -717,17 +931,25 @@ impl Engine {
             } => {
                 let me = self.store.read().expect("store lock").me.clone();
                 let now = now_ms();
-                let post = NewPost {
+                let entry = OutboxEntry {
+                    pending_post_id: format!("{me}:{now}"),
                     channel_id: channel,
                     root_id: root,
                     message,
-                    pending_post_id: format!("{me}:{now}"),
-                    ..NewPost::default()
+                    props: Default::default(),
+                    file_ids: Vec::new(),
+                    first_attempt_at: now,
+                    last_attempt_at: now,
+                    failed: false,
                 };
-                self.send_post(post, now).await;
+                self.send_post(entry).await;
             }
             Command::RetryPost(pending) => {
-                if let Some(post) = self.unsent.get(&pending).cloned() {
+                if let Some(mut entry) = self.unsent.get(&pending).cloned() {
+                    entry.failed = false;
+                    entry.last_attempt_at = now_ms();
+                    self.save_outbox(&entry);
+                    self.unsent.insert(pending.clone(), entry.clone());
                     if let Some(state) = self
                         .store
                         .write()
@@ -739,17 +961,28 @@ impl Engine {
                     }
                     self.emit_changes(vec![StoreDelta::PendingChanged(pending.clone())])
                         .await;
-                    self.spawn_send(post);
+                    self.spawn_send(&entry);
                 }
             }
             Command::DiscardPost(pending) => {
                 self.unsent.remove(&pending);
+                self.delete_outbox(&pending);
                 let deltas = self
                     .store
                     .write()
                     .expect("store lock")
                     .discard_pending(&pending);
                 self.emit_changes(deltas).await;
+            }
+            Command::ResolveServerChange(_) => {}
+            Command::Logout { delete_data } => {
+                self.limiter.acquire().await;
+                if let Err(error) = self.client.logout().await {
+                    log::warn!("logout: {error}");
+                }
+                self.logout = Some(delete_data);
+                self.emit(Event::LoggedOut).await;
+                self.stopping = true;
             }
             Command::Shutdown => self.stopping = true,
         }
@@ -1182,27 +1415,31 @@ impl Engine {
         .await;
     }
 
-    async fn send_post(&mut self, post: NewPost, now: i64) {
-        let pending: Post = serde_json::from_value(json!({
-            "channel_id": post.channel_id,
-            "root_id": post.root_id,
-            "message": post.message,
-            "pending_post_id": post.pending_post_id,
-            "create_at": now,
-            "update_at": now,
-        }))
-        .expect("a post from known fields");
+    async fn send_post(&mut self, entry: OutboxEntry) {
+        let pending = pending_post(&entry, entry.first_attempt_at);
         let deltas = self.store.write().expect("store lock").add_pending(pending);
         self.emit_changes(deltas).await;
+        // Saved before the request, so a crash in between can't lose the post.
+        self.save_outbox(&entry);
         self.unsent
-            .insert(post.pending_post_id.clone(), post.clone());
-        self.spawn_send(post);
+            .insert(entry.pending_post_id.clone(), entry.clone());
+        self.spawn_send(&entry);
     }
 
-    fn spawn_send(&self, post: NewPost) {
+    fn spawn_send(&self, entry: &OutboxEntry) {
         let client = self.client.clone();
+        let limiter = self.limiter.clone();
         let internal = self.internal_tx.clone();
+        let post = NewPost {
+            channel_id: entry.channel_id.clone(),
+            root_id: entry.root_id.clone(),
+            message: entry.message.clone(),
+            pending_post_id: entry.pending_post_id.clone(),
+            file_ids: entry.file_ids.clone(),
+            props: entry.props.clone(),
+        };
         tokio::spawn(async move {
+            limiter.acquire().await;
             let result = client.create_post(&post).await.map(Box::new);
             let _ = internal
                 .send(Internal::PostSent {
@@ -1223,11 +1460,17 @@ impl Engine {
             Internal::PostSent { pending, result } => match result {
                 Ok(post) => {
                     self.unsent.remove(&pending);
+                    self.delete_outbox(&pending);
                     let deltas = self.store.write().expect("store lock").confirm_post(&post);
                     self.emit_changes(deltas).await;
                 }
                 Err(error) => {
                     log::warn!("sending {pending}: {error}");
+                    if let Some(entry) = self.unsent.get_mut(&pending) {
+                        entry.failed = true;
+                        let entry = entry.clone();
+                        self.save_outbox(&entry);
+                    }
                     let deltas = self
                         .store
                         .write()
@@ -1424,6 +1667,19 @@ impl Engine {
         {
             log::error!("closing the cache: {error}");
         }
+        if self.logout == Some(true)
+            && let Some(dir) = self.account_dir.take()
+        {
+            match mm_cache::delete_account(&dir) {
+                Ok(()) => log::info!("deleted the local data in {}", dir.display()),
+                Err(error) => {
+                    self.emit(Event::Error(format!(
+                        "could not delete the local data: {error}"
+                    )))
+                    .await;
+                }
+            }
+        }
     }
 }
 
@@ -1433,4 +1689,19 @@ fn parse_resume(text: &str) -> Option<ResumeState> {
         connection_id: value.get("connection_id")?.as_str()?.to_owned(),
         sequence_number: value.get("sequence_number")?.as_i64()?,
     })
+}
+
+/// The pending post shown for an outbox entry.
+fn pending_post(entry: &OutboxEntry, at: i64) -> Post {
+    serde_json::from_value(json!({
+        "channel_id": entry.channel_id,
+        "root_id": entry.root_id,
+        "message": entry.message,
+        "props": entry.props,
+        "file_ids": entry.file_ids,
+        "pending_post_id": entry.pending_post_id,
+        "create_at": at,
+        "update_at": at,
+    }))
+    .expect("a post from known fields")
 }

@@ -13,8 +13,15 @@ use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use mm_model::Post;
 
 use crate::error::CacheError;
+use crate::lifecycle;
 use crate::ops::Op;
 use crate::schema;
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as i64)
+}
 
 pub(crate) const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
@@ -210,17 +217,33 @@ fn apply_one(conn: &mut SqliteConnection, op: &Op) -> QueryResult<()> {
                     channel_members::json.eq(json(member)),
                 ))
                 .execute(conn)?;
+            // A member again: no longer a former chat.
+            diesel::delete(former_chats::table.find(member.channel_id.as_str())).execute(conn)?;
         }
         Op::DeleteChannelMember(channel) => {
-            diesel::delete(channel_members::table.find(channel.as_str())).execute(conn)?;
+            let removed =
+                diesel::delete(channel_members::table.find(channel.as_str())).execute(conn)?;
+            if removed > 0 {
+                lifecycle::mark_former(conn, &[channel.to_string()], now_ms())?;
+            }
         }
         Op::KeepChannelMembers(keep) => {
             let keep: Vec<&str> = keep.iter().map(|id| id.as_str()).collect();
+            let gone: Vec<String> = channel_members::table
+                .filter(channel_members::channel_id.ne_all(&keep))
+                .select(channel_members::channel_id)
+                .load(conn)?;
+            lifecycle::mark_former(conn, &gone, now_ms())?;
             diesel::delete(
                 channel_members::table.filter(channel_members::channel_id.ne_all(&keep)),
             )
             .execute(conn)?;
         }
+        Op::PutOutbox(entry) => lifecycle::put_outbox(conn, entry)?,
+        Op::DeleteOutbox(pending) => {
+            diesel::delete(outbox::table.find(pending)).execute(conn)?;
+        }
+        Op::PurgeChannel(channel) => lifecycle::purge_channel(conn, channel)?,
         Op::PutPost(post) => put_post(conn, post)?,
         Op::DeletePost(id) => {
             diesel::sql_query(
