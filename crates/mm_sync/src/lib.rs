@@ -15,6 +15,8 @@
 
 mod bootstrap;
 mod engine;
+mod limiter;
+mod scheduler;
 
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -27,6 +29,8 @@ use mm_model::{ChannelId, PostId, SessionToken, UserId};
 use mm_store::{Store, StoreDelta};
 
 pub use bootstrap::{SINCE_CAP, SINCE_MARGIN};
+pub use limiter::{Limiter, Rate};
+pub use scheduler::Priority;
 
 /// The state the UI reads. The engine holds the write lock only while applying one change.
 pub type SharedStore = Arc<RwLock<Store>>;
@@ -45,6 +49,54 @@ pub struct EngineConfig {
     pub status_interval: Duration,
     /// How often the WebSocket resume state and the sync time are saved.
     pub save_interval: Duration,
+    pub sync: SyncSettings,
+}
+
+/// The eager sync (MatterLite.md §8.5, Settings → Offline & sync).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SyncSettings {
+    pub rate: Rate,
+    /// Requests running at once.
+    pub concurrency: usize,
+    /// How far back history is fetched (and kept, §8.3).
+    pub history: History,
+    /// Profiles of everyone I share a channel with, and all custom emoji (P1).
+    pub people: bool,
+    /// How often quiet channels are checked for edits and deletes (`since`).
+    pub sweep_interval: Duration,
+}
+
+impl Default for SyncSettings {
+    fn default() -> Self {
+        Self {
+            rate: Rate::NORMAL,
+            concurrency: 4,
+            history: History::Days(180),
+            people: true,
+            sweep_interval: Duration::from_secs(30 * 60),
+        }
+    }
+}
+
+/// The history backfill window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum History {
+    /// The newest page of each channel only.
+    Off,
+    Days(u32),
+    All,
+}
+
+/// Progress of the eager sync, for the status indicator.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SyncStatus {
+    pub queued: usize,
+    pub running: usize,
+    /// Jobs finished this session.
+    pub done: usize,
+    /// Channels whose history doesn't cover the window yet.
+    pub backfilling: usize,
+    pub paused: bool,
 }
 
 impl EngineConfig {
@@ -57,6 +109,7 @@ impl EngineConfig {
             user_agent: mm_api::default_user_agent(),
             status_interval: Duration::from_secs(60),
             save_interval: Duration::from_secs(30),
+            sync: SyncSettings::default(),
         }
     }
 }
@@ -88,6 +141,11 @@ pub enum Command {
     /// Sends a failed post again with the same `pending_post_id`.
     RetryPost(String),
     DiscardPost(String),
+    /// Pauses the eager sync (user actions still run).
+    PauseSync,
+    ResumeSync,
+    /// Plans the eager sync again now ("Sync now").
+    SyncNow,
     /// Saves state, closes the WebSocket and the cache, and ends the engine.
     Shutdown,
 }
@@ -117,6 +175,8 @@ pub enum Event {
         last_viewed_at: i64,
     },
     Connection(ConnectionState),
+    /// The eager sync's progress (at most every half second, and when it goes idle).
+    Sync(SyncStatus),
     /// The session expired or was revoked: log in again. The data stays.
     LoggedOut,
     /// A command or a request failed.

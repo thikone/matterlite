@@ -45,6 +45,8 @@ pub mod kv {
     /// The last time (ms) the cache was known to be in sync with the server: resyncs fetch
     /// changes since then.
     pub const SYNCED_THROUGH: &str = "synced_through";
+    /// When profiles were last refreshed (`POST /users/ids?since=`).
+    pub const USERS_SYNCED_AT: &str = "users_synced_at";
     pub const LAST_TEAM: &str = "last_team";
     pub const LAST_CHANNEL: &str = "last_channel";
 }

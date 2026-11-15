@@ -2,11 +2,11 @@
 
 //! The engine loop: startup, then commands, WebSocket outputs and timers.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_channel::{Receiver, Sender};
-use mm_api::{ApiError, Client, ClientOptions, NewPost, PostsQuery};
+use mm_api::{ApiError, Client, ClientOptions, NewPost};
 use mm_cache::{Cache, Op, Writer, account_id, kv, metadata_ops, ops_for};
 use mm_model::ws::{Broadcast, WsEvent};
 use mm_model::{ChannelId, ChannelType, Post, ServerVersion, User, UserId};
@@ -16,21 +16,30 @@ use serde_json::json;
 use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, timeout};
 
 use crate::bootstrap::{self, PAGE};
-use crate::{Command, ConnectionState, EngineConfig, Event, SharedStore};
+use crate::limiter::Limiter;
+use crate::scheduler::{self, Context, Job, Outcome, Priority, Queue, USER_BATCH};
+use crate::{Command, ConnectionState, EngineConfig, Event, History, SharedStore, SyncStatus};
 
 /// How long a resumed connection may take to be confirmed before the engine bootstraps anyway.
 const RESUME_WAIT: Duration = Duration::from_secs(10);
 /// Unconfirmed WebSocket connections in a row before the token is checked over REST (the
 /// server accepts any token on the upgrade and drops the socket later, WebApp.md §7.2).
 const UNCONFIRMED_BEFORE_CHECK: u32 = 3;
-/// Unread window when opening a channel (`limit_before`/`limit_after`).
-const UNREAD_WINDOW: u32 = 30;
+/// A failing job is tried this often before it's dropped.
+const JOB_ATTEMPTS: u32 = 3;
+/// `Event::Sync` at most this often (and when the sync goes idle).
+const STATUS_EVERY: Duration = Duration::from_millis(500);
 
 /// Results of work done off the loop.
 enum Internal {
     PostSent {
         pending: String,
-        result: Result<Post, ApiError>,
+        result: Result<Box<Post>, ApiError>,
+    },
+    JobDone {
+        priority: Priority,
+        job: Job,
+        result: Result<Outcome, ApiError>,
     },
 }
 
@@ -57,6 +66,18 @@ struct Engine {
     /// The `seq` of the last event the engine applied (or dropped as covered by a sync), so
     /// the saved resume state never skips an event that was received but not yet applied.
     applied_seq: Option<i64>,
+    // The eager sync.
+    limiter: Limiter,
+    queue: Queue,
+    running: usize,
+    jobs_done: usize,
+    job_attempts: HashMap<String, u32>,
+    sync_paused: bool,
+    last_status: Instant,
+    /// When the last `since` sweep (or the catch-up) ran.
+    last_sweep: i64,
+    /// When profiles were last refreshed (`POST /users/ids?since=`).
+    users_synced_at: Option<i64>,
     stopping: bool,
 }
 
@@ -86,6 +107,7 @@ pub(crate) async fn run(
         }
     };
     let (internal_tx, internal_rx) = async_channel::unbounded();
+    let limiter = Limiter::new(config.sync.rate);
     let mut engine = Engine {
         config,
         client,
@@ -103,6 +125,15 @@ pub(crate) async fn run(
         unsent: Default::default(),
         last_saved_sync: 0,
         applied_seq: None,
+        limiter,
+        queue: Queue::default(),
+        running: 0,
+        jobs_done: 0,
+        job_attempts: HashMap::new(),
+        sync_paused: false,
+        last_status: Instant::now(),
+        last_sweep: now_ms(),
+        users_synced_at: None,
         stopping: false,
     };
     let Some(ws_output) = engine.start(&commands).await else {
@@ -165,6 +196,11 @@ impl Engine {
                 .flatten()
                 .and_then(|text| text.parse::<i64>().ok());
             diagnostic_id = cache.get_kv(kv::DIAGNOSTIC_ID).ok().flatten();
+            self.users_synced_at = cache
+                .get_kv(kv::USERS_SYNCED_AT)
+                .ok()
+                .flatten()
+                .and_then(|text| text.parse::<i64>().ok());
         }
         self.last_saved_sync = synced_through.unwrap_or(0);
         if let Some(cache) = cache {
@@ -194,6 +230,12 @@ impl Engine {
             self.check_server_identity(diagnostic_id).await;
         }
         self.emit(Event::Ready { resumed }).await;
+        self.last_sweep = if resumed {
+            self.last_saved_sync
+        } else {
+            now_ms()
+        };
+        self.plan_eager();
         Some(output)
     }
 
@@ -317,7 +359,7 @@ impl Engine {
     ) -> Option<()> {
         let started = now_ms();
         loop {
-            match bootstrap::bootstrap(&self.client, &self.store).await {
+            match bootstrap::bootstrap(&self.client, &self.limiter, &self.store).await {
                 Ok(()) => break,
                 Err(error) if error.is_session_expired() => {
                     self.emit(Event::LoggedOut).await;
@@ -339,7 +381,7 @@ impl Engine {
             }
         }
         let since = synced_through.unwrap_or(started);
-        match bootstrap::catch_up(&self.client, &self.store, since).await {
+        match bootstrap::catch_up(&self.client, &self.limiter, &self.store, since).await {
             Ok(deltas) => self.emit_changes(deltas).await,
             Err(error) => log::warn!("catch-up failed: {error}"),
         }
@@ -347,7 +389,9 @@ impl Engine {
         if dropped > 0 {
             log::info!("dropped {dropped} events received during the sync");
             // Posts among them: covered by a second, short catch-up.
-            if let Ok(deltas) = bootstrap::catch_up(&self.client, &self.store, started).await {
+            if let Ok(deltas) =
+                bootstrap::catch_up(&self.client, &self.limiter, &self.store, started).await
+            {
                 self.emit_changes(deltas).await;
             }
         }
@@ -393,6 +437,11 @@ impl Engine {
             self.config.save_interval,
         );
         save.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut sweep = interval_at(
+            Instant::now() + self.config.sync.sweep_interval,
+            self.config.sync.sweep_interval,
+        );
+        sweep.set_missed_tick_behavior(MissedTickBehavior::Delay);
         while !self.stopping {
             tokio::select! {
                 command = commands.recv() => match command {
@@ -417,6 +466,10 @@ impl Engine {
                             break;
                         }
                         self.emit(Event::Resynced).await;
+                        // Edits in quiet channels during the outage, and anything the eager
+                        // sync still lacks.
+                        self.plan_sweep();
+                        self.plan_eager();
                     }
                     Ok(other) => {
                         if !self.on_connection_output(other).await {
@@ -433,6 +486,11 @@ impl Engine {
                 _ = save.tick() => {
                     if self.online {
                         self.save_sync_time(now_ms());
+                    }
+                }
+                _ = sweep.tick() => {
+                    if !self.sync_paused {
+                        self.plan_sweep();
                     }
                 }
             }
@@ -578,7 +636,7 @@ impl Engine {
                 | mm_store::Fetch::Roles => {
                     // Rare: a full bootstrap brings teams, channels, categories and roles
                     // consistently.
-                    bootstrap::bootstrap(&self.client, &self.store).await?;
+                    bootstrap::bootstrap(&self.client, &self.limiter, &self.store).await?;
                     let mut deltas = vec![StoreDelta::RolesChanged, StoreDelta::PreferencesChanged];
                     let store = self.store.read().expect("store lock");
                     deltas.extend(store.teams.keys().cloned().map(StoreDelta::TeamChanged));
@@ -606,8 +664,10 @@ impl Engine {
                     deltas
                 }
                 mm_store::Fetch::Users(ids) => {
-                    let users = self.client.users_by_ids(&ids).await?;
-                    self.store.write().expect("store lock").add_users(users)
+                    for batch in ids.chunks(USER_BATCH) {
+                        self.enqueue(Priority::Interactive, Job::Users(batch.to_vec()));
+                    }
+                    Vec::new()
                 }
             })
         }
@@ -633,19 +693,23 @@ impl Engine {
                     self.mark_viewed(&channel).await;
                 }
             }
-            Command::LoadOlder(channel) => self.load_older(channel).await,
-            Command::LoadNewer(channel) => self.load_newer(channel).await,
-            Command::OpenThread(root) => match self.client.post_thread(&root).await {
-                Ok(list) => {
-                    let deltas = self
-                        .store
-                        .write()
-                        .expect("store lock")
-                        .add_thread(&root, &list);
-                    self.emit_changes(deltas).await;
-                }
-                Err(error) => self.emit(Event::Error(format!("thread: {error}"))).await,
-            },
+            Command::LoadOlder(channel) => self.load_older(channel),
+            Command::LoadNewer(channel) => self.load_newer(channel),
+            Command::OpenThread(root) => self.enqueue(Priority::Interactive, Job::Thread(root)),
+            Command::PauseSync => {
+                self.sync_paused = true;
+                self.emit_sync_status(true).await;
+            }
+            Command::ResumeSync => {
+                self.sync_paused = false;
+                self.pump();
+                self.emit_sync_status(true).await;
+            }
+            Command::SyncNow => {
+                self.plan_sweep();
+                self.plan_eager();
+                self.emit_sync_status(true).await;
+            }
             Command::SendPost {
                 channel,
                 root,
@@ -720,44 +784,13 @@ impl Engine {
         })
         .await;
         if needs_posts {
-            let (me, crt) = {
-                let store = self.store.read().expect("store lock");
-                (store.me.clone(), store.crt_enabled())
-            };
-            let result = if unread {
-                self.client
-                    .posts_around_first_unread(&me, &channel, UNREAD_WINDOW, UNREAD_WINDOW, crt)
-                    .await
-                    .map(|list| (list, PageRequest::AroundUnread))
-            } else {
-                self.client
-                    .channel_posts(
-                        &channel,
-                        &PostsQuery {
-                            per_page: Some(PAGE),
-                            collapsed_threads: crt,
-                            collapsed_threads_extended: crt,
-                            ..PostsQuery::default()
-                        },
-                    )
-                    .await
-                    .map(|list| (list, PageRequest::Newest))
-            };
-            match result {
-                Ok((list, request)) => {
-                    let deltas = self
-                        .store
-                        .write()
-                        .expect("store lock")
-                        .add_posts(&channel, &list, request);
-                    self.emit_changes(deltas).await;
-                    self.fetch_missing_authors(&list).await;
-                }
-                Err(error) => {
-                    self.emit(Event::Error(format!("loading the channel: {error}")))
-                        .await
-                }
-            }
+            self.enqueue(
+                Priority::Interactive,
+                Job::Open {
+                    channel: channel.clone(),
+                    unread,
+                },
+            );
         }
         if self.focused {
             self.mark_viewed(&channel).await;
@@ -785,99 +818,44 @@ impl Engine {
 
     fn view_on_server(&self, channel: ChannelId) {
         let client = self.client.clone();
+        let limiter = self.limiter.clone();
         tokio::spawn(async move {
+            limiter.acquire().await;
             if let Err(error) = client.view_channel(&channel, None).await {
                 log::warn!("marking {channel} read: {error}");
             }
         });
     }
 
-    async fn load_older(&mut self, channel: ChannelId) {
-        let (anchor, crt) = {
-            let store = self.store.read().expect("store lock");
-            let anchor = store
-                .timelines
-                .get(&channel)
-                .and_then(|timeline| timeline.oldest_of_recent().cloned());
-            (anchor, store.crt_enabled())
-        };
-        let Some((_, anchor)) = anchor else {
-            return;
-        };
-        match self
-            .client
-            .channel_posts(
-                &channel,
-                &PostsQuery {
-                    before: Some(anchor.clone()),
-                    per_page: Some(PAGE),
-                    collapsed_threads: crt,
-                    collapsed_threads_extended: crt,
-                    ..PostsQuery::default()
-                },
-            )
-            .await
-        {
-            Ok(list) => {
-                let deltas = self.store.write().expect("store lock").add_posts(
-                    &channel,
-                    &list,
-                    PageRequest::Before(anchor),
-                );
-                self.emit_changes(deltas).await;
-                self.fetch_missing_authors(&list).await;
-            }
-            Err(error) => {
-                self.emit(Event::Error(format!("loading older posts: {error}")))
-                    .await
-            }
+    fn load_older(&mut self, channel: ChannelId) {
+        let anchor = self
+            .store
+            .read()
+            .expect("store lock")
+            .timelines
+            .get(&channel)
+            .and_then(|timeline| timeline.oldest_of_recent().cloned());
+        if let Some((_, anchor)) = anchor {
+            self.enqueue(Priority::Interactive, Job::Older { channel, anchor });
         }
     }
 
-    async fn load_newer(&mut self, channel: ChannelId) {
-        let (anchor, crt) = {
-            let store = self.store.read().expect("store lock");
-            let anchor = store
-                .timelines
-                .get(&channel)
-                .filter(|timeline| !timeline.has_recent())
-                .and_then(|timeline| timeline.ranges().last().map(|range| range.newest.clone()));
-            (anchor, store.crt_enabled())
-        };
-        let Some((_, anchor)) = anchor else {
-            return;
-        };
-        match self
-            .client
-            .channel_posts(
-                &channel,
-                &PostsQuery {
-                    after: Some(anchor.clone()),
-                    per_page: Some(PAGE),
-                    collapsed_threads: crt,
-                    collapsed_threads_extended: crt,
-                    ..PostsQuery::default()
-                },
-            )
-            .await
-        {
-            Ok(list) => {
-                let deltas = self.store.write().expect("store lock").add_posts(
-                    &channel,
-                    &list,
-                    PageRequest::After(anchor),
-                );
-                self.emit_changes(deltas).await;
-                self.fetch_missing_authors(&list).await;
-            }
-            Err(error) => {
-                self.emit(Event::Error(format!("loading newer posts: {error}")))
-                    .await
-            }
+    fn load_newer(&mut self, channel: ChannelId) {
+        let anchor = self
+            .store
+            .read()
+            .expect("store lock")
+            .timelines
+            .get(&channel)
+            .filter(|timeline| !timeline.has_recent())
+            .and_then(|timeline| timeline.ranges().last().map(|range| range.newest.clone()));
+        if let Some((_, anchor)) = anchor {
+            self.enqueue(Priority::Interactive, Job::Newer { channel, anchor });
         }
     }
 
-    async fn fetch_missing_authors(&mut self, list: &mm_model::PostList) {
+    /// Profiles of a page's authors that aren't loaded yet.
+    fn fetch_missing_authors(&mut self, list: &mm_model::PostList, priority: Priority) {
         let missing: Vec<UserId> = {
             let store = self.store.read().expect("store lock");
             list.posts
@@ -888,9 +866,320 @@ impl Engine {
                 .into_iter()
                 .collect()
         };
-        if !missing.is_empty() {
-            self.fetch(mm_store::Fetch::Users(missing)).await;
+        for batch in missing.chunks(USER_BATCH) {
+            self.enqueue(priority.min(Priority::People), Job::Users(batch.to_vec()));
         }
+    }
+
+    // ---- the eager sync (MatterLite.md §8.5) ----
+
+    fn enqueue(&mut self, priority: Priority, job: Job) {
+        self.queue.push(priority, job);
+        self.pump();
+    }
+
+    /// Starts queued jobs up to the concurrency limit; while paused, only interactive ones.
+    fn pump(&mut self) {
+        while self.running < self.config.sync.concurrency.max(1) {
+            let next = if self.sync_paused {
+                self.queue.pop_interactive()
+            } else {
+                self.queue.pop()
+            };
+            let Some((priority, job)) = next else {
+                break;
+            };
+            self.running += 1;
+            let context = {
+                let store = self.store.read().expect("store lock");
+                Context {
+                    client: self.client.clone(),
+                    limiter: self.limiter.clone(),
+                    me: store.me.clone(),
+                    crt: store.crt_enabled(),
+                }
+            };
+            let internal = self.internal_tx.clone();
+            tokio::spawn(async move {
+                let result = scheduler::run(context, job.clone()).await;
+                let _ = internal
+                    .send(Internal::JobDone {
+                        priority,
+                        job,
+                        result,
+                    })
+                    .await;
+            });
+        }
+    }
+
+    /// Queues everything the eager sync does from the current state: P1 people and emoji,
+    /// P2 newest pages, P3 followed threads, P5 backfill. Progress is in the store's
+    /// timelines (cached), so after a restart this continues where it stopped.
+    fn plan_eager(&mut self) {
+        let now = now_ms();
+        let settings = self.config.sync.clone();
+        let (recent, backfill, teams, crt) = {
+            let store = self.store.read().expect("store lock");
+            (
+                scheduler::plan_recent(&store),
+                scheduler::plan_backfill(&store, settings.history, now),
+                store.team_members.keys().cloned().collect::<Vec<_>>(),
+                store.crt_enabled(),
+            )
+        };
+        if settings.people {
+            self.queue.push(Priority::People, Job::KnownUsers);
+            if let Some(since) = self.users_synced_at {
+                self.queue.push(
+                    Priority::People,
+                    Job::ModifiedUsers {
+                        since: since - bootstrap::SINCE_MARGIN,
+                    },
+                );
+            }
+            self.queue.push(Priority::People, Job::Emoji { page: 0 });
+        }
+        for channel in recent {
+            self.queue.push(Priority::Recent, Job::Newest(channel));
+        }
+        if crt && settings.history != History::Off {
+            for team in teams {
+                self.queue
+                    .push(Priority::Threads, Job::Threads { team, before: None });
+            }
+        }
+        for (channel, anchor) in backfill {
+            self.queue
+                .push(Priority::Backfill, Job::Backfill { channel, anchor });
+        }
+        self.pump();
+    }
+
+    /// Queues a `since` request for every loaded channel: edits, deletes and reactions in
+    /// quiet channels don't move `last_post_at`, so the catch-up after a resync misses them.
+    fn plan_sweep(&mut self) {
+        let since = self.last_sweep - bootstrap::SINCE_MARGIN;
+        self.last_sweep = now_ms();
+        let channels: Vec<ChannelId> = {
+            let store = self.store.read().expect("store lock");
+            scheduler::channel_order(&store)
+                .into_iter()
+                .filter(|channel| {
+                    store
+                        .timelines
+                        .get(channel)
+                        .is_some_and(|timeline| timeline.has_recent())
+                })
+                .collect()
+        };
+        for channel in channels {
+            self.queue
+                .push(Priority::Sweep, Job::Sweep { channel, since });
+        }
+        self.pump();
+    }
+
+    async fn on_job_done(
+        &mut self,
+        priority: Priority,
+        job: Job,
+        result: Result<Outcome, ApiError>,
+    ) {
+        self.running -= 1;
+        self.queue.finished(&job);
+        match result {
+            Ok(outcome) => {
+                self.jobs_done += 1;
+                self.job_attempts.remove(&format!("{job:?}"));
+                if matches!(job, Job::KnownUsers | Job::ModifiedUsers { .. }) {
+                    let now = now_ms();
+                    self.users_synced_at = Some(now);
+                    if let Some(writer) = &self.writer {
+                        let _ = writer.send(vec![Op::Kv(
+                            kv::USERS_SYNCED_AT.into(),
+                            Some(now.to_string()),
+                        )]);
+                    }
+                }
+                self.apply_outcome(priority, &job, outcome).await;
+            }
+            Err(ApiError::RateLimited { retry_after }) => {
+                log::warn!("rate limited; pausing requests for {retry_after:?}");
+                self.limiter.pause(retry_after).await;
+                self.queue.retry(priority, job);
+            }
+            Err(error) if error.is_session_expired() => {
+                self.emit(Event::LoggedOut).await;
+                self.stopping = true;
+            }
+            Err(error) => {
+                let status = match &error {
+                    ApiError::App(app) => Some(app.status_code),
+                    ApiError::Status { status, .. } => Some(*status),
+                    _ => None,
+                };
+                // 4xx: the request itself is wrong for this channel (no permission, gone);
+                // anything else (network, 5xx): try again later, a few times.
+                let permanent = status.is_some_and(|status| (400..500).contains(&status));
+                let key = format!("{job:?}");
+                let attempts = self.job_attempts.entry(key.clone()).or_default();
+                *attempts += 1;
+                if permanent || *attempts >= JOB_ATTEMPTS {
+                    self.job_attempts.remove(&key);
+                    log::warn!("giving up on {job:?}: {error}");
+                    if priority == Priority::Interactive {
+                        self.emit(Event::Error(format!("loading failed: {error}")))
+                            .await;
+                    }
+                } else {
+                    log::info!("{job:?} failed ({error}); queued again");
+                    self.queue.push(priority, job);
+                }
+            }
+        }
+        self.pump();
+        let idle = self.running == 0 && self.queue.len() == 0;
+        self.emit_sync_status(idle).await;
+    }
+
+    async fn apply_outcome(&mut self, priority: Priority, job: &Job, outcome: Outcome) {
+        let now = now_ms();
+        let history = self.config.sync.history;
+        match outcome {
+            Outcome::Page {
+                channel,
+                list,
+                request,
+            } => {
+                let member = self
+                    .store
+                    .read()
+                    .expect("store lock")
+                    .channel_members
+                    .contains_key(&channel);
+                if !member {
+                    return; // Left the channel meanwhile.
+                }
+                let since_incomplete = matches!(request, PageRequest::Since { complete: false });
+                let deltas = self
+                    .store
+                    .write()
+                    .expect("store lock")
+                    .add_posts(&channel, &list, request);
+                self.emit_changes(deltas).await;
+                self.fetch_missing_authors(&list, priority);
+                if since_incomplete {
+                    self.enqueue(Priority::Recent, Job::Newest(channel.clone()));
+                }
+                // After the newest page, and after each backfill page: the next backfill
+                // page, queued at the back so channels take turns.
+                if matches!(
+                    job,
+                    Job::Newest(_) | Job::Open { .. } | Job::Backfill { .. }
+                ) {
+                    let anchor = scheduler::backfill_anchor(
+                        &self.store.read().expect("store lock"),
+                        &channel,
+                        history,
+                        now,
+                    );
+                    if let Some(anchor) = anchor {
+                        self.queue
+                            .push(Priority::Backfill, Job::Backfill { channel, anchor });
+                    }
+                }
+            }
+            Outcome::Thread { root, list } => {
+                let deltas = self
+                    .store
+                    .write()
+                    .expect("store lock")
+                    .add_thread(&root, &list);
+                self.emit_changes(deltas).await;
+                self.fetch_missing_authors(&list, priority);
+            }
+            Outcome::Threads { team, list } => {
+                let to_load = scheduler::threads_to_load(
+                    &self.store.read().expect("store lock"),
+                    &list,
+                    history,
+                    now,
+                );
+                let next = (list.threads.len() as u32 >= scheduler::THREAD_PAGE)
+                    .then(|| list.threads.last().map(|thread| thread.id.clone()))
+                    .flatten();
+                let deltas = self
+                    .store
+                    .write()
+                    .expect("store lock")
+                    .set_threads(&team, list);
+                self.emit_changes(deltas).await;
+                for root in to_load {
+                    self.queue.push(Priority::Threads, Job::Thread(root));
+                }
+                if let Some(before) = next {
+                    self.queue.push(
+                        Priority::Threads,
+                        Job::Threads {
+                            team,
+                            before: Some(before),
+                        },
+                    );
+                }
+            }
+            Outcome::KnownUsers(ids) => {
+                let missing: Vec<UserId> = {
+                    let store = self.store.read().expect("store lock");
+                    ids.into_iter()
+                        .filter(|id| !store.users.contains_key(id))
+                        .collect()
+                };
+                for batch in missing.chunks(USER_BATCH) {
+                    self.queue
+                        .push(Priority::People, Job::Users(batch.to_vec()));
+                }
+            }
+            Outcome::Users(users) => {
+                let deltas = self.store.write().expect("store lock").add_users(users);
+                self.emit_changes(deltas).await;
+            }
+            Outcome::Emoji { page, list } => {
+                let full = list.len() as u32 >= scheduler::EMOJI_PAGE;
+                self.store.write().expect("store lock").add_emoji(list);
+                self.emit_changes(vec![StoreDelta::EmojiChanged]).await;
+                if full {
+                    self.queue
+                        .push(Priority::People, Job::Emoji { page: page + 1 });
+                }
+            }
+        }
+    }
+
+    async fn emit_sync_status(&mut self, force: bool) {
+        if !force && self.last_status.elapsed() < STATUS_EVERY {
+            return;
+        }
+        self.last_status = Instant::now();
+        let backfilling = {
+            let store = self.store.read().expect("store lock");
+            let now = now_ms();
+            scheduler::channel_order(&store)
+                .iter()
+                .filter(|channel| {
+                    scheduler::backfill_anchor(&store, channel, self.config.sync.history, now)
+                        .is_some()
+                })
+                .count()
+        };
+        self.emit(Event::Sync(SyncStatus {
+            queued: self.queue.len(),
+            running: self.running,
+            done: self.jobs_done,
+            backfilling,
+            paused: self.sync_paused,
+        }))
+        .await;
     }
 
     async fn send_post(&mut self, post: NewPost, now: i64) {
@@ -914,7 +1203,7 @@ impl Engine {
         let client = self.client.clone();
         let internal = self.internal_tx.clone();
         tokio::spawn(async move {
-            let result = client.create_post(&post).await;
+            let result = client.create_post(&post).await.map(Box::new);
             let _ = internal
                 .send(Internal::PostSent {
                     pending: post.pending_post_id,
@@ -926,6 +1215,11 @@ impl Engine {
 
     async fn on_internal(&mut self, message: Internal) {
         match message {
+            Internal::JobDone {
+                priority,
+                job,
+                result,
+            } => self.on_job_done(priority, job, result).await,
             Internal::PostSent { pending, result } => match result {
                 Ok(post) => {
                     self.unsent.remove(&pending);

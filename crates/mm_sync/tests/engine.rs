@@ -97,6 +97,12 @@ async fn server() -> MockServer {
         .respond_with(json_body(captured!("dev_posts.json")))
         .mount(&server)
         .await;
+    // `#dev` answers every page request with the captured page; other channels are empty.
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v4/channels/{dev}/posts")))
+        .respond_with(json_body(captured!("dev_posts.json")))
+        .mount(&server)
+        .await;
     Mock::given(method("GET"))
         .and(path_regex(r"^/api/v4/channels/[a-z0-9]+/posts$"))
         .respond_with(json_body(
@@ -153,6 +159,19 @@ async fn until(engine: &EngineHandle, matches: impl Fn(&Event) -> bool) -> Vec<E
         if done {
             return seen;
         }
+    }
+}
+
+/// Waits for changes until the store satisfies `done`.
+async fn until_store(engine: &EngineHandle, done: impl Fn(&mm_store::Store) -> bool) {
+    loop {
+        if done(&engine.store().read().unwrap()) {
+            return;
+        }
+        tokio::time::timeout(WAIT, engine.events().recv())
+            .await
+            .expect("timed out waiting for the store")
+            .unwrap();
     }
 }
 
@@ -235,14 +254,18 @@ async fn opening_a_channel_loads_the_unread_window_and_marks_it_read() {
 
     engine.send(Command::OpenChannel(dev.clone()));
     let events = until(&engine, |event| {
-        matches!(event, Event::Changed(deltas) if deltas.iter().any(|d|
-            matches!(d, mm_store::StoreDelta::MarkedRead { .. })))
+        matches!(event, Event::ChannelOpened { .. })
     })
     .await;
     assert!(events.iter().any(
         |event| matches!(event, Event::ChannelOpened { channel, last_viewed_at }
                 if *channel == dev && *last_viewed_at > 0)
     ));
+    // The page arrives from a job, after the read mark.
+    until_store(&engine, |store| {
+        store.timeline_posts(&dev).iter().flatten().count() == 16
+    })
+    .await;
     {
         let store = engine.store().read().unwrap();
         assert_eq!(store.timeline_posts(&dev).iter().flatten().count(), 16);
@@ -337,4 +360,48 @@ async fn an_expired_token_logs_out_and_keeps_the_cache() {
             .any(|event| matches!(event, Event::Ready { .. }))
     );
     until(&engine, |event| *event == Event::Stopped).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_429_pauses_the_sync_and_the_job_is_retried() {
+    let server = server().await;
+    let dev = dev_channel();
+    // The first request for #dev's posts is rate limited.
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v4/channels/{dev}/posts")))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("Retry-After", "1")
+                .set_body_string("rate limit exceeded"),
+        )
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = start(&server, dir.path(), false);
+    until(&engine, |event| matches!(event, Event::Ready { .. })).await;
+    let ready = std::time::Instant::now();
+    let dev_id = ChannelId::new(dev.clone());
+    until_store(&engine, |store| {
+        store
+            .timelines
+            .get(&dev_id)
+            .is_some_and(|timeline| !timeline.is_empty())
+    })
+    .await;
+    assert!(
+        ready.elapsed() >= Duration::from_millis(900),
+        "waited {:?}",
+        ready.elapsed()
+    );
+    let dev_requests = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|request| request.url.path() == format!("/api/v4/channels/{dev}/posts"))
+        .count();
+    assert_eq!(dev_requests, 2, "the 429 and the retry");
+    engine.shutdown();
 }

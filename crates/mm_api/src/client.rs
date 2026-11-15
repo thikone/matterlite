@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use mm_model::error::ids;
 use mm_model::{
-    AppError, Channel, ChannelId, ChannelMember, ClientConfig, OrderedSidebarCategories, Post,
-    PostId, PostList, Preference, Role, ServerVersion, SessionToken, Status, Team, TeamId,
+    AppError, Channel, ChannelId, ChannelMember, ClientConfig, Emoji, OrderedSidebarCategories,
+    Post, PostId, PostList, Preference, Role, ServerVersion, SessionToken, Status, Team, TeamId,
     TeamMember, TeamUnread, ThreadList, User, UserId,
 };
 use reqwest::header::{HeaderMap, RETRY_AFTER};
@@ -455,6 +455,36 @@ impl Client {
     pub async fn statuses_by_ids(&self, user_ids: &[UserId]) -> Result<Vec<Status>, ApiError> {
         self.json(self.post(&["users", "status", "ids"]).json(user_ids))
             .await
+    }
+
+    /// `POST /users/ids?since=<ms>`: only the users changed since then (the webapp's
+    /// `checkForModifiedUsers`).
+    pub async fn users_by_ids_since(
+        &self,
+        user_ids: &[UserId],
+        since: i64,
+    ) -> Result<Vec<User>, ApiError> {
+        self.json(
+            self.post(&["users", "ids"])
+                .query(&[("since", since)])
+                .json(user_ids),
+        )
+        .await
+    }
+
+    /// `GET /users/known`: the ids of everyone I share a channel with.
+    pub async fn known_users(&self) -> Result<Vec<UserId>, ApiError> {
+        self.json(self.get(&["users", "known"])).await
+    }
+
+    /// `GET /emoji`: custom emoji by name, one page (at most 200).
+    pub async fn custom_emoji(&self, page: u32, per_page: u32) -> Result<Vec<Emoji>, ApiError> {
+        self.json(self.get(&["emoji"]).query(&[
+            ("page", page.to_string()),
+            ("per_page", per_page.to_string()),
+            ("sort", "name".to_owned()),
+        ]))
+        .await
     }
 
     // Single entities, for events that name something the client doesn't have yet.

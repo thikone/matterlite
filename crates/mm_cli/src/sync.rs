@@ -2,7 +2,7 @@
 
 //! `mm-cli <server> sync --data <dir>`: the sync engine, headless (docs/M2.md). Commands on
 //! stdin: `open|older|newer|show <channel>`, `close`, `send <channel> <text>`, `unread`,
-//! `search <words>`, `quit`.
+//! `search <words>`, `pause`/`resume`/`sync` (the eager sync), `quit`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -128,10 +128,13 @@ fn parse_command(store: &Store, line: &str) -> Result<Action> {
         }
         "show" => Action::Show(channel(rest)?),
         "close" => Action::Engine(Command::CloseChannel),
+        "pause" => Action::Engine(Command::PauseSync),
+        "resume" => Action::Engine(Command::ResumeSync),
+        "sync" => Action::Engine(Command::SyncNow),
         "unread" => Action::Unread,
         "search" => Action::Search(rest.to_owned()),
         _ => anyhow::bail!(
-            "commands: open|older|newer|show <channel>, close, send <channel> <text>, unread,              search <words>, quit"
+            "commands: open|older|newer|show <channel>, close, send <channel> <text>, unread, search <words>, pause, resume, sync, quit"
         ),
     })
 }

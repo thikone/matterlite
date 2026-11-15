@@ -10,6 +10,7 @@ use mm_model::{ChannelId, ChannelType, UserId};
 use mm_store::{PageRequest, StoreDelta, dm_partner};
 
 use crate::SharedStore;
+use crate::limiter::Limiter;
 
 /// The server returns at most this many posts per `since` request (`GetPostsSince` in
 /// `post_store.go`); a full reply means there may be more, so the posts can't be assumed
@@ -22,7 +23,15 @@ pub(crate) const PAGE: u32 = 60;
 
 /// Fetches everything P0 needs and loads it into the store, keeping the cached posts and
 /// timelines of channels that are still mine.
-pub(crate) async fn bootstrap(client: &Client, store: &SharedStore) -> Result<(), ApiError> {
+pub(crate) async fn bootstrap(
+    client: &Client,
+    limiter: &Limiter,
+    store: &SharedStore,
+) -> Result<(), ApiError> {
+    // About a dozen requests, within the burst; the bucket keeps repeated bootstraps polite.
+    for _ in 0..4 {
+        limiter.acquire().await;
+    }
     let (config, license) = tokio::try_join!(client.client_config(), client.client_license())?;
     let (me, preferences, teams, team_members) = tokio::try_join!(
         client.me(),
@@ -44,6 +53,7 @@ pub(crate) async fn bootstrap(client: &Client, store: &SharedStore) -> Result<()
     )?;
     let mut categories = Vec::new();
     for team in &teams {
+        limiter.acquire().await;
         categories.push((
             team.id.clone(),
             client.sidebar_categories(&me.id, &team.id).await?,
@@ -97,6 +107,7 @@ pub(crate) async fn bootstrap(client: &Client, store: &SharedStore) -> Result<()
 /// A reply at the cap loads the newest page instead, which leaves a hole for backfill.
 pub(crate) async fn catch_up(
     client: &Client,
+    limiter: &Limiter,
     store: &SharedStore,
     synced_through: i64,
 ) -> Result<Vec<StoreDelta>, ApiError> {
@@ -115,6 +126,7 @@ pub(crate) async fn catch_up(
     };
     let mut deltas = Vec::new();
     for channel in channels {
+        limiter.acquire().await;
         let list = client
             .channel_posts(
                 &channel,
@@ -133,6 +145,7 @@ pub(crate) async fn catch_up(
             PageRequest::Since { complete },
         ));
         if !complete {
+            limiter.acquire().await;
             let newest = client
                 .channel_posts(
                     &channel,
