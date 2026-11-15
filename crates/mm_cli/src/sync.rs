@@ -302,10 +302,10 @@ fn print_timeline(store: &Store, channel: &ChannelId, last_viewed_at: Option<i64
                     .user_name(&post.user_id)
                     .unwrap_or_else(|| post.user_id.to_string());
                 let message: String = post.message.replace('\n', " ⏎ ").chars().take(70).collect();
-                let pending = if store.pending.contains_key(post.id.as_str()) {
-                    " (sending)"
-                } else {
-                    ""
+                let pending = match store.pending.get(post.id.as_str()) {
+                    Some(pending) if pending.failed => " (failed)",
+                    Some(_) => " (sending)",
+                    None => "",
                 };
                 if *consecutive {
                     format!("    {message}{pending}")

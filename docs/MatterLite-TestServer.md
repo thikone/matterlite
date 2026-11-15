@@ -391,6 +391,7 @@ From the MatterLite repository on Windows:
 | Seed (no-op if already seeded) | `ssh andrew@ubuntu 'bash -s' < script/test-server/seed.sh` |
 | Wipe the DB, files and plugins (config kept) | `ssh andrew@ubuntu 'bash -s' < script/test-server/reset.sh` |
 | Credentials | `ssh andrew@ubuntu cat mm-test-server/credentials.env` |
+| M2 acceptance: the sync engine end to end (about 2 minutes; `RESET=1` resets and seeds first) | `script/test-server/m2-acceptance.sh` |
 | Status, restart | `ssh andrew@ubuntu systemctl status mattermost-dev`, `sudo systemctl restart mattermost-dev` |
 | Follow the log | `ssh andrew@ubuntu journalctl -u mattermost-dev -f`, or `tail -f ~/Projects/mattermost/server/mattermost.log` |
 | nginx | `ssh andrew@ubuntu sudo nginx -t`, `sudo systemctl reload nginx`, `sudo tail -f /var/log/nginx/error.log` |
