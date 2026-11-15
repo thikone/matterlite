@@ -17,6 +17,11 @@ use warpui::{
     ViewHandle,
 };
 
+use ml_workspace::{ToolPanelTab, ViewPane};
+use mm_sync::Command;
+
+use crate::account_theme::AccountThemeFollower;
+use crate::chats_view::{ChatsEvent, ChatsView};
 use crate::format::format_size;
 use crate::login_view::LoginView;
 use crate::session::{Active, Session, SessionEvent, SessionState};
@@ -27,19 +32,39 @@ const DIALOG_OPEN: &str = "Root_DialogOpen";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RootAction {
+    /// Alt+↑/↓ (`delta` ±1), Alt+Shift+↑/↓ with `unread_only`.
+    StepChat {
+        delta: isize,
+        unread_only: bool,
+    },
     CloseDialog,
-    LogOut { delete_data: bool },
+    LogOut {
+        delete_data: bool,
+    },
     ResolveServerChange(ServerChange),
     DismissNotice,
 }
 
 pub(crate) fn init(app: &mut AppContext) {
     use warpui::keymap::macros::*;
-    app.register_fixed_bindings([FixedBinding::new(
-        "escape",
-        RootAction::CloseDialog,
-        id!("RootView") & id!(DIALOG_OPEN),
-    )]);
+    let step = |keys: &str, delta: isize, unread_only: bool| {
+        FixedBinding::new(
+            keys,
+            RootAction::StepChat { delta, unread_only },
+            id!("RootView") & !id!(DIALOG_OPEN),
+        )
+    };
+    app.register_fixed_bindings([
+        FixedBinding::new(
+            "escape",
+            RootAction::CloseDialog,
+            id!("RootView") & id!(DIALOG_OPEN),
+        ),
+        step("alt-up", -1, false),
+        step("alt-down", 1, false),
+        step("alt-shift-up", -1, true),
+        step("alt-shift-down", 1, true),
+    ]);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +86,7 @@ struct Buttons {
 pub struct RootView {
     login: ViewHandle<LoginView>,
     workspace: Option<ViewHandle<Workspace>>,
+    chats: Option<ViewHandle<ChatsView>>,
     dialog: Option<Dialog>,
     buttons: Buttons,
 }
@@ -77,6 +103,7 @@ impl RootView {
         let mut root = Self {
             login,
             workspace: None,
+            chats: None,
             dialog: None,
             buttons: Buttons::default(),
         };
@@ -95,14 +122,44 @@ impl RootView {
                     ctx.notify();
                 }
             });
+            let chats = ctx.add_typed_action_view(ChatsView::new);
+            ctx.subscribe_to_view(&chats, |me, _, event, ctx| me.on_chats_event(event, ctx));
+            let pane = ViewPane(chats.clone());
+            workspace.update(ctx, |workspace, ctx| {
+                workspace.set_tool_pane(ToolPanelTab::Chats, Some(Box::new(pane)), ctx)
+            });
+            let team = chats.as_ref(ctx).team().cloned();
+            AccountThemeFollower::handle(ctx)
+                .update(ctx, |follower, ctx| follower.set_team(team, ctx));
             ctx.focus(&workspace);
             self.workspace = Some(workspace);
+            self.chats = Some(chats);
             self.on_status_changed(ctx);
         } else {
             self.workspace = None;
+            self.chats = None;
             ctx.focus(&self.login);
         }
         ctx.notify();
+    }
+
+    fn on_chats_event(&mut self, event: &ChatsEvent, ctx: &mut ViewContext<Self>) {
+        match event {
+            ChatsEvent::Open(channel) => {
+                Session::as_ref(ctx).send(Command::OpenChannel(channel.clone()));
+                self.on_status_changed(ctx);
+            }
+            ChatsEvent::TeamChanged(team) => {
+                let team = team.clone();
+                AccountThemeFollower::handle(ctx)
+                    .update(ctx, |follower, ctx| follower.set_team(team, ctx));
+            }
+            ChatsEvent::Dismissed => {
+                if let Some(workspace) = &self.workspace {
+                    ctx.focus(workspace);
+                }
+            }
+        }
     }
 
     fn on_status_changed(&mut self, ctx: &mut ViewContext<Self>) {
@@ -115,7 +172,11 @@ impl RootView {
             return;
         };
         let badge = account_badge(active);
-        let lines = status_lines(active, session);
+        let current = self
+            .chats
+            .as_ref()
+            .and_then(|chats| chats.as_ref(ctx).current().cloned());
+        let lines = status_lines(active, session, current.as_ref());
         workspace.update(ctx, |workspace, ctx| {
             workspace.set_account(Some(badge), ctx);
             workspace.set_placeholder(lines, ctx);
@@ -357,7 +418,11 @@ fn connection_text(active: &Active) -> String {
 }
 
 /// What the placeholder chat area shows until the chat views exist (M3 steps 3–6).
-fn status_lines(active: &Active, session: &Session) -> Vec<String> {
+fn status_lines(
+    active: &Active,
+    session: &Session,
+    current: Option<&mm_model::ChannelId>,
+) -> Vec<String> {
     let mut lines = vec![format!(
         "@{} on {} · {}",
         active.user.username,
@@ -367,6 +432,9 @@ fn status_lines(active: &Active, session: &Session) -> Vec<String> {
     if let Some(store) = session.store()
         && let Ok(store) = store.read()
     {
+        if let Some(channel) = current.and_then(|channel| store.channel_name(channel)) {
+            lines.insert(0, format!("Open chat: {channel}"));
+        }
         lines.push(format!(
             "{} · {} · {} cached",
             count(store.teams.len(), "team"),
@@ -436,6 +504,11 @@ impl TypedActionView for RootView {
 
     fn handle_action(&mut self, action: &RootAction, ctx: &mut ViewContext<Self>) {
         match *action {
+            RootAction::StepChat { delta, unread_only } => {
+                if let Some(chats) = &self.chats {
+                    chats.update(ctx, |chats, ctx| chats.step(delta, unread_only, ctx));
+                }
+            }
             RootAction::CloseDialog => {
                 if Session::as_ref(ctx)
                     .active()

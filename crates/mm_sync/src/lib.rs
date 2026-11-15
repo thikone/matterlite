@@ -26,7 +26,9 @@ use std::time::Duration;
 
 use async_channel::{Receiver, Sender};
 use mm_api::ServerUrl;
-use mm_model::{ChannelId, PostId, SessionToken, UserId};
+use mm_model::{CategoryId, ChannelId, PostId, SessionToken, TeamId, UserId};
+
+pub use mm_cache::UI_STATE_PREFIX;
 use mm_store::{Store, StoreDelta};
 
 pub use auth::{Auth, AuthError, ServerInfo, SignInOptions};
@@ -163,6 +165,19 @@ pub enum Command {
     SyncNow,
     /// The answer to [`Event::ServerChanged`].
     ResolveServerChange(ServerChange),
+    /// Collapses or expands a sidebar category; saved to the server as the webapp does, so
+    /// other devices follow.
+    SetCategoryCollapsed {
+        team: TeamId,
+        category: CategoryId,
+        collapsed: bool,
+    },
+    /// Saves a piece of UI state in the account's cache (`kv`, key prefixed with
+    /// [`UI_STATE_PREFIX`]); read back with [`mm_cache::ui_state`].
+    SetUiState {
+        key: String,
+        value: Option<String>,
+    },
     /// Logs out (`POST /users/logout`) and stops. The local data stays unless `delete_data`
     /// (MatterLite.md §8.7); the token is the caller's to forget.
     Logout {

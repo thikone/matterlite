@@ -58,6 +58,14 @@ pub struct Active {
     /// saved).
     pub notices: Vec<String>,
     pub last_error: Option<String>,
+    /// UI state saved in the account's cache (last team, collapsed groups, …).
+    ui_state: std::collections::HashMap<String, String>,
+}
+
+impl Active {
+    pub fn ui_state(&self, key: &str) -> Option<&str> {
+        self.ui_state.get(key).map(String::as_str)
+    }
 }
 
 pub enum SessionState {
@@ -128,6 +136,23 @@ impl Session {
     pub fn send(&self, command: Command) {
         if let Some(active) = self.active() {
             active.engine.send(command);
+        }
+    }
+
+    /// Saves a piece of UI state in the account's cache (`None` removes it).
+    pub fn set_ui_state(&mut self, key: &str, value: Option<String>) {
+        if let Some(active) = self.active_mut() {
+            if active.ui_state.get(key) == value.as_ref() {
+                return;
+            }
+            match &value {
+                Some(value) => active.ui_state.insert(key.to_owned(), value.clone()),
+                None => active.ui_state.remove(key),
+            };
+            active.engine.send(Command::SetUiState {
+                key: key.to_owned(),
+                value,
+            });
         }
     }
 
@@ -290,7 +315,9 @@ impl Session {
     ) {
         self.stop_engine();
         let mut config = EngineConfig::new(server.clone(), token, self.servers_dir.clone());
-        if self.servers_dir.join(&account_id).is_dir() {
+        let account_dir = self.servers_dir.join(&account_id);
+        let ui_state = mm_cache::ui_state(&account_dir);
+        if account_dir.is_dir() {
             config.user_id = Some(user.id.clone());
         }
         let engine = mm_sync::start(config);
@@ -314,6 +341,7 @@ impl Session {
             logging_out: false,
             notices,
             last_error: None,
+            ui_state,
         }));
         ctx.emit(SessionEvent::StateChanged);
     }

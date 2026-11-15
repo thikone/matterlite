@@ -17,6 +17,7 @@ mm_cache.workspace = true
 mm_model.workspace = true
 mm_store.workspace = true
 mm_sync.workspace = true
+pathfinder_geometry.workspace = true
 ui_components.workspace = true
 warp_core.workspace = true
 warpui.workspace = true

@@ -7,8 +7,8 @@ use std::time::Duration;
 use mm_model::error::ids;
 use mm_model::{
     AppError, Channel, ChannelId, ChannelMember, ClientConfig, Emoji, OrderedSidebarCategories,
-    Post, PostId, PostList, Preference, Role, ServerVersion, SessionToken, Status, Team, TeamId,
-    TeamMember, TeamUnread, ThreadList, User, UserId,
+    Post, PostId, PostList, Preference, Role, ServerVersion, SessionToken, SidebarCategory, Status,
+    Team, TeamId, TeamMember, TeamUnread, ThreadList, User, UserId,
 };
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{Method, RequestBuilder, Response, StatusCode};
@@ -204,6 +204,10 @@ impl Client {
         self.request(Method::POST, segments)
     }
 
+    fn put(&self, segments: &[&str]) -> RequestBuilder {
+        self.request(Method::PUT, segments)
+    }
+
     async fn send(&self, builder: RequestBuilder) -> Result<Response, ApiError> {
         let response = builder.send().await?;
         if let Some(version) = response
@@ -380,6 +384,28 @@ impl Client {
             "channels",
             "categories",
         ]))
+        .await
+    }
+
+    /// `PUT /users/{user_id}/teams/{team_id}/channels/categories/{category_id}`: saves a
+    /// category as given (the webapp's `updateCategory`, e.g. for collapsing it). The server
+    /// answers with the saved category and sends `sidebar_category_updated`.
+    pub async fn update_sidebar_category(
+        &self,
+        category: &SidebarCategory,
+    ) -> Result<SidebarCategory, ApiError> {
+        self.json(
+            self.put(&[
+                "users",
+                category.user_id.as_str(),
+                "teams",
+                category.team_id.as_str(),
+                "channels",
+                "categories",
+                category.id.as_str(),
+            ])
+            .json(category),
+        )
         .await
     }
 

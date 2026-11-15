@@ -10,7 +10,7 @@ use async_channel::{Receiver, Sender};
 use mm_api::{ApiError, Client, ClientOptions, NewPost, PostsQuery};
 use mm_cache::{Cache, Op, OutboxEntry, Writer, account_id, kv, metadata_ops, ops_for};
 use mm_model::ws::{Broadcast, WsEvent};
-use mm_model::{ChannelId, ChannelType, Post, ServerVersion, User, UserId};
+use mm_model::{CategoryId, ChannelId, ChannelType, Post, ServerVersion, TeamId, User, UserId};
 use mm_store::{PageRequest, StoreDelta, dm_partner};
 use mm_ws::{ResumeState, WsConfig, WsHandle, WsOutput};
 use serde_json::json;
@@ -21,6 +21,7 @@ use crate::limiter::Limiter;
 use crate::scheduler::{self, Context, Job, Outcome, Priority, Queue, USER_BATCH};
 use crate::{
     Command, ConnectionState, EngineConfig, Event, History, ServerChange, SharedStore, SyncStatus,
+    UI_STATE_PREFIX,
 };
 
 /// How long a resumed connection may take to be confirmed before the engine bootstraps anyway.
@@ -641,10 +642,8 @@ impl Engine {
         output: &Receiver<WsOutput>,
         internal: &Receiver<Internal>,
     ) {
-        let mut statuses = interval_at(
-            Instant::now() + self.config.status_interval,
-            self.config.status_interval,
-        );
+        // The first poll right away: statuses aren't cached, and a resumed session brings none.
+        let mut statuses = interval_at(Instant::now(), self.config.status_interval);
         statuses.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut save = interval_at(
             Instant::now() + self.config.save_interval,
@@ -975,6 +974,19 @@ impl Engine {
                 self.emit_changes(deltas).await;
             }
             Command::ResolveServerChange(_) => {}
+            Command::SetCategoryCollapsed {
+                team,
+                category,
+                collapsed,
+            } => self.set_category_collapsed(team, category, collapsed).await,
+            Command::SetUiState { key, value } => {
+                if let Some(writer) = &self.writer
+                    && let Err(error) =
+                        writer.send(vec![Op::Kv(format!("{UI_STATE_PREFIX}{key}"), value)])
+                {
+                    log::error!("cache: {error}");
+                }
+            }
             Command::Logout { delete_data } => {
                 self.limiter.acquire().await;
                 if let Err(error) = self.client.logout().await {
@@ -985,6 +997,55 @@ impl Engine {
                 self.stopping = true;
             }
             Command::Shutdown => self.stopping = true,
+        }
+    }
+
+    /// Collapses or expands a category at once, then saves it. If the server refuses, its
+    /// categories are fetched again so the sidebar shows what it has.
+    async fn set_category_collapsed(
+        &mut self,
+        team: TeamId,
+        category: CategoryId,
+        collapsed: bool,
+    ) {
+        let updated = {
+            let mut store = self.store.write().expect("store lock");
+            let Some(entry) = store
+                .categories
+                .get_mut(&team)
+                .and_then(|categories| categories.iter_mut().find(|c| c.id == category))
+            else {
+                return;
+            };
+            if entry.collapsed == collapsed {
+                return;
+            }
+            entry.collapsed = collapsed;
+            entry.clone()
+        };
+        self.emit_changes(vec![StoreDelta::CategoriesChanged(team.clone())])
+            .await;
+        self.limiter.acquire().await;
+        if let Err(error) = self.client.update_sidebar_category(&updated).await {
+            log::warn!("saving category {category}: {error}");
+            self.emit(Event::Error(format!(
+                "The category couldn't be saved on the server: {}",
+                crate::auth::describe(&error)
+            )))
+            .await;
+            let me = self.store.read().expect("store lock").me.clone();
+            self.limiter.acquire().await;
+            match self.client.sidebar_categories(&me, &team).await {
+                Ok(categories) => {
+                    self.store
+                        .write()
+                        .expect("store lock")
+                        .set_categories(team.clone(), categories);
+                    self.emit_changes(vec![StoreDelta::CategoriesChanged(team)])
+                        .await;
+                }
+                Err(error) => log::warn!("categories of {team}: {error}"),
+            }
         }
     }
 

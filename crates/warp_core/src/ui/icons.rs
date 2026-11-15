@@ -35,6 +35,12 @@ pub enum Icon {
     ExpandUpAndDown,
     History,
     MessageChatSquare,
+    // MatterLite: chats.
+    ChevronDown,
+    Hash,
+    Lock,
+    Archive,
+    Users,
 }
 
 impl From<Icon> for &'static str {
@@ -62,6 +68,12 @@ impl From<Icon> for &'static str {
             Icon::ExpandUpAndDown => "bundled/svg/expand-up-and-down.svg",
             Icon::History => "bundled/svg/history.svg",
             Icon::MessageChatSquare => "bundled/svg/message-chat-square.svg",
+            Icon::ChevronDown => "bundled/svg/chevron-down.svg",
+            Icon::Hash => "bundled/svg/hash-02.svg",
+            Icon::Users => "bundled/svg/users-02.svg",
+            // Drawn for MatterLite (Warp has no lock or archive icon).
+            Icon::Lock => "matterlite/svg/lock.svg",
+            Icon::Archive => "matterlite/svg/archive.svg",
         }
     }
 }

@@ -163,6 +163,36 @@ impl ToolPanelTab {
     }
 }
 
+/// The content of a tool panel tab, supplied by the app; it replaces the tab's placeholder
+/// (and brings its own search bar, if any).
+pub trait ToolPane {
+    fn render(&self) -> Box<dyn Element>;
+    /// Moves the focus into the pane (Alt+N, clicking the toolbelt).
+    fn focus(&self, ctx: &mut ViewContext<ToolPanel>);
+    fn has_focus(&self, app: &AppContext) -> bool;
+}
+
+/// A view as a tool pane; focusing it focuses the view, which moves the focus on in
+/// `on_focus` if it wants.
+pub struct ViewPane<V: View>(pub ViewHandle<V>);
+
+impl<V: View> ToolPane for ViewPane<V> {
+    fn render(&self) -> Box<dyn Element> {
+        ChildView::new(&self.0).finish()
+    }
+
+    fn focus(&self, ctx: &mut ViewContext<ToolPanel>) {
+        ctx.focus(&self.0);
+    }
+
+    fn has_focus(&self, app: &AppContext) -> bool {
+        let window = self.0.window_id(app);
+        app.focused_view_id(window).is_some_and(|focused| {
+            focused == self.0.id() || app.check_view_or_child_focused(window, &self.0.id())
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum ToolPanelEvent {
     /// The user is done with the panel (Esc in an empty search field): focus the chat.
@@ -171,6 +201,7 @@ pub enum ToolPanelEvent {
 
 pub struct ToolPanel {
     active_tab: ToolPanelTab,
+    panes: Vec<(ToolPanelTab, Box<dyn ToolPane>)>,
     search_bars: Vec<(ToolPanelTab, ViewHandle<SearchBarView>)>,
     button_mouse_states: Vec<(ToolPanelTab, MouseStateHandle)>,
     close_mouse_state: MouseStateHandle,
@@ -195,6 +226,7 @@ impl ToolPanel {
             .collect();
         Self {
             active_tab: ToolPanelTab::Chats,
+            panes: Vec::new(),
             search_bars,
             button_mouse_states: all::<ToolPanelTab>()
                 .map(|tab| (tab, MouseStateHandle::default()))
@@ -216,6 +248,27 @@ impl ToolPanel {
         }
     }
 
+    /// Shows `pane` in `tab` instead of the placeholder; `None` brings the placeholder back.
+    pub fn set_pane(
+        &mut self,
+        tab: ToolPanelTab,
+        pane: Option<Box<dyn ToolPane>>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.panes.retain(|(pane_tab, _)| *pane_tab != tab);
+        if let Some(pane) = pane {
+            self.panes.push((tab, pane));
+        }
+        ctx.notify();
+    }
+
+    fn pane(&self, tab: ToolPanelTab) -> Option<&dyn ToolPane> {
+        self.panes
+            .iter()
+            .find(|(pane_tab, _)| *pane_tab == tab)
+            .map(|(_, pane)| pane.as_ref())
+    }
+
     fn search_bar(&self, tab: ToolPanelTab) -> Option<&ViewHandle<SearchBarView>> {
         self.search_bars
             .iter()
@@ -225,6 +278,10 @@ impl ToolPanel {
 
     /// Focuses the active tab's search field. Returns `false` if the tab has none.
     pub fn focus_search(&self, ctx: &mut ViewContext<Self>) -> bool {
+        if let Some(pane) = self.pane(self.active_tab) {
+            pane.focus(ctx);
+            return true;
+        }
         let Some(bar) = self.search_bar(self.active_tab).cloned() else {
             return false;
         };
@@ -237,6 +294,7 @@ impl ToolPanel {
         self.search_bars
             .iter()
             .any(|(_, bar)| bar.as_ref(ctx).is_focused(ctx))
+            || self.panes.iter().any(|(_, pane)| pane.has_focus(ctx))
     }
 
     fn render_toolbelt_button(
@@ -447,9 +505,12 @@ impl View for ToolPanel {
             .with_child(
                 Shrinkable::new(
                     1.,
-                    Align::new(self.render_placeholder(appearance, app))
-                        .top_left()
-                        .finish(),
+                    match self.pane(self.active_tab) {
+                        Some(pane) => pane.render(),
+                        None => Align::new(self.render_placeholder(appearance, app))
+                            .top_left()
+                            .finish(),
+                    },
                 )
                 .finish(),
             )

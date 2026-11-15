@@ -27,7 +27,10 @@ use mm_model::ChannelId;
 use mm_store::Store;
 
 pub use account::account_id;
-pub use accounts::{StoredAccount, delete_account, delete_unused_accounts, stored_accounts};
+pub use accounts::{
+    StoredAccount, UI_STATE_PREFIX, delete_account, delete_unused_accounts, stored_accounts,
+    ui_state,
+};
 pub use db::{OpenReport, open_reader};
 pub use error::CacheError;
 pub use lifecycle::{FormerChat, OutboxEntry};

@@ -4,11 +4,14 @@
 //! shell (`ml_workspace`): the signed-in [`Session`], the login screen and the window root.
 
 pub mod account_theme;
+pub mod chats;
+mod chats_view;
 mod format;
 mod login_view;
 mod root_view;
 pub mod session;
 
+pub use chats_view::{ChatsAction, ChatsEvent, ChatsView};
 pub use login_view::{LoginAction, LoginView};
 pub use root_view::{RootAction, RootView};
 pub use session::{Session, SessionEvent, SessionState};
@@ -31,4 +34,10 @@ pub fn restore_session(app: &mut warpui::AppContext) {
 pub fn shutdown(app: &mut warpui::AppContext) {
     use warpui::SingletonEntity as _;
     Session::handle(app).update(app, |session, _| session.shutdown());
+}
+
+/// The window became active or inactive: chats are marked read only while it is active.
+pub fn set_window_active(app: &mut warpui::AppContext, active: bool) {
+    use warpui::SingletonEntity as _;
+    Session::as_ref(app).send(mm_sync::Command::SetFocused(active));
 }

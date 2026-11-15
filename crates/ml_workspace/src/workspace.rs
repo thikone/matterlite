@@ -171,6 +171,17 @@ impl Workspace {
         }
     }
 
+    /// Shows `pane` in a tool panel tab instead of its placeholder.
+    pub fn set_tool_pane(
+        &mut self,
+        tab: ToolPanelTab,
+        pane: Option<Box<dyn crate::ToolPane>>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.tool_panel
+            .update(ctx, |panel, ctx| panel.set_pane(tab, pane, ctx));
+    }
+
     /// The text of the placeholder chat content.
     pub fn set_placeholder(&mut self, lines: Vec<String>, ctx: &mut ViewContext<Self>) {
         if self.placeholder != lines {

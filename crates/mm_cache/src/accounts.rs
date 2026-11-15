@@ -111,3 +111,32 @@ pub fn delete_unused_accounts(servers_dir: &Path, days: u32, now: i64) -> Vec<Pa
         })
         .collect()
 }
+
+/// Prefix of the `kv` keys that hold UI state (open tabs, last team, …).
+pub const UI_STATE_PREFIX: &str = "ui.";
+
+/// The UI state saved in an account's cache, keys without [`UI_STATE_PREFIX`]. Empty when the
+/// account has no cache yet or it can't be read (logged).
+pub fn ui_state(account_dir: &Path) -> std::collections::HashMap<String, String> {
+    let path = account_dir.join("cache.sqlite");
+    if !path.is_file() {
+        return Default::default();
+    }
+    let read = || -> Result<Vec<(String, String)>, CacheError> {
+        let mut conn = crate::db::open_reader(&path)?;
+        Ok(schema::kv::table
+            .filter(schema::kv::key.like(format!("{UI_STATE_PREFIX}%")))
+            .select((schema::kv::key, schema::kv::value))
+            .load::<(String, String)>(&mut conn)?)
+    };
+    match read() {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|(key, value)| (key[UI_STATE_PREFIX.len()..].to_owned(), value))
+            .collect(),
+        Err(error) => {
+            log::warn!("UI state in {}: {error}", path.display());
+            Default::default()
+        }
+    }
+}

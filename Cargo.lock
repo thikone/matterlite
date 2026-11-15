@@ -4468,6 +4468,7 @@ dependencies = [
  "mm_model",
  "mm_store",
  "mm_sync",
+ "pathfinder_geometry",
  "serde_json",
  "tempfile",
  "tokio",

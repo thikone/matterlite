@@ -209,3 +209,22 @@ fn stored_accounts_are_listed_and_deleted() {
     assert!(!account.exists());
     assert!(mm_cache::stored_accounts(servers.path()).is_empty());
 }
+
+#[test]
+fn ui_state_is_read_back_without_its_prefix() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(mm_cache::ui_state(dir.path()).is_empty(), "no cache yet");
+    let (mut cache, _) = Cache::open(&dir.path().join("cache.sqlite")).unwrap();
+    cache.apply(&snapshot_ops(&store())).unwrap();
+    cache
+        .apply(&[
+            Op::Kv("ui.last_team".into(), Some("t".into())),
+            Op::Kv("ui.collapsed".into(), Some("[]".into())),
+            Op::Kv("ui.gone".into(), None),
+        ])
+        .unwrap();
+    drop(cache);
+    let state = mm_cache::ui_state(dir.path());
+    assert_eq!(state.len(), 2, "{state:?}");
+    assert_eq!(state["last_team"], "t");
+}

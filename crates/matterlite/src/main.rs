@@ -30,6 +30,8 @@ fn main() -> anyhow::Result<()> {
                 manager.refresh_theme_state(ctx);
             });
         })),
+        on_become_active: Some(Box::new(|ctx| ml_chat::set_window_active(ctx, true))),
+        on_resigned_active: Some(Box::new(|ctx| ml_chat::set_window_active(ctx, false))),
         // Saves the WebSocket resume state and flushes the cache.
         on_will_terminate: Some(Box::new(ml_chat::shutdown)),
         // One window: closing it quits (on macOS too, until there is a way to reopen it).
