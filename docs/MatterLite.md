@@ -1448,7 +1448,8 @@ post.message ──comrak (GFM: tables, strikethrough, autolink, tasklist; unsaf
   └─ walk text nodes (not code) → split into inline tokens:
        @mention (users, @here/@channel/@all, groups) · ~channel (props.channel_mentions)
        :emoji: and emoticons · #hashtag · email · highlight own mention keys
-  └─ fenced code → syntax_tree highlight spans (language from info string)
+  └─ fenced code → tree-sitter highlight classes via arborium's grammars and queries
+       (the ones Warp's editor uses; mm_render stays headless, so not through syntax_tree)
   └─ $latex$ / ```latex → MVP: show as code; later: render via external engine
   ──► MessageDoc { blocks: Vec<Block> }   (UI-independent)
          Block = Paragraph(Vec<Span>) | Heading | Quote | List | CodeBlock | Table | Rule | Image
@@ -1465,10 +1466,12 @@ The `matterlite` crate converts `MessageDoc` into WarpUI elements
 - Unknown `custom_*` types → render `message` + attachments.
 - Comrak options mirror the webapp: `sanitize` → do **not** render raw HTML; autolink only
   allowed schemes; image size syntax `![alt](url =WxH)` needs a small custom pre-pass.
-- **Emoji (`mm_emoji`)**: generate an index at build time from `emoji-datasource` JSON
-  (short names, aliases, unified code points, categories, skin tones) — the same data the
-  webapp uses (`webapp/channels/src/utils/emoji.json`). Embed the PNG set with `rust-embed`
-  (64px, ≈ 3–6 MB) and load through `asset_cache`. Custom emoji: fetch metadata via
+- **Emoji (`mm_emoji`)**: the webapp's own index (`webapp/channels/src/utils/emoji.json`,
+  generated from `emoji-datasource` 6.1.1: short names, aliases, unified code points,
+  categories, skin tones), trimmed and committed with `crates/mm_emoji/examples/generate.rs`.
+  Images: Google's Noto Emoji from `emoji-datasource-google` 6.1.1 (Apache-2.0) at 32 px
+  (6.4 MB) in `assets/emoji/`, embedded with the other assets and loaded through
+  `asset_cache`. Custom emoji: fetch metadata via
   `POST /emoji/names` for unknown names (negative-cache misses), images from
   `/emoji/{id}/image`, cached on disk in `cache/emoji/`.
 - Avatars: `/users/{id}/image?_=<last_picture_update>`, disk cache keyed by user id +

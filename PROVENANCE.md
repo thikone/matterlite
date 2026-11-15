@@ -55,3 +55,15 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | assets/bundled/fonts/roboto/ | app/assets/bundled/fonts/roboto/ | 5bb7bcc6a | verbatim | Apache-2.0 | font files; LICENSE.txt included |
 
 Rows with status `verbatim` differ from the reference only by the provenance header.
+
+## Other third-party material
+
+Not from Warp; kept under its own licence (texts in `LICENSE-APACHE` and
+`crates/mm_emoji/data/LICENSE-emoji-datasource`).
+
+| MatterLite path | Source | Version | License | Notes |
+|---|---|---|---|---|
+| assets/emoji/ | `emoji-datasource-google` (npm), `img/google/64/`: Google's Noto Emoji | 6.1.1 | Apache-2.0 | 3,300 images scaled to 32 px by `crates/mm_emoji/examples/generate.rs` |
+| crates/mm_emoji/data/emoji.json | Mattermost webapp `webapp/channels/src/utils/emoji.json` (generated from `emoji-datasource` 6.1.1, MIT, with Mattermost's extra short names) | mattermost `5b9537164d` | Apache-2.0 (webapp), MIT (emoji-datasource) | trimmed to short names, code points, category and skin tone |
+| crates/mm_emoji/src/lib.rs | Mattermost webapp `webapp/channels/src/utils/emoticons.tsx` (`emoticonPatterns`) | mattermost `5b9537164d` | Apache-2.0 | the emoticon table only, as data |
+| crates/mm_render/src/system.rs | Mattermost webapp `webapp/channels/src/components/post_markdown/system_message_helpers.tsx` | mattermost `5b9537164d` | Apache-2.0 | the English system message wording only |

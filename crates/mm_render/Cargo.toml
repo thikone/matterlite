@@ -1,0 +1,20 @@
+[package]
+name = "mm_render"
+version = "0.1.0"
+description = "Mattermost message rendering: Markdown and Mattermost syntax to a UI-independent document"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+arborium.workspace = true
+comrak = { workspace = true }
+mm_emoji.workspace = true
+mm_model.workspace = true
+regex.workspace = true
+serde_json.workspace = true
+streaming-iterator.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

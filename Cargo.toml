@@ -17,7 +17,9 @@ members = [
   "crates/mm_api",
   "crates/mm_cache",
   "crates/mm_cli",
+  "crates/mm_emoji",
   "crates/mm_model",
+  "crates/mm_render",
   "crates/mm_store",
   "crates/mm_sync",
   "crates/mm_ws",
@@ -66,7 +68,9 @@ ml_themes = { path = "crates/ml_themes" }
 ml_workspace = { path = "crates/ml_workspace" }
 mm_api = { path = "crates/mm_api" }
 mm_cache = { path = "crates/mm_cache" }
+mm_emoji = { path = "crates/mm_emoji" }
 mm_model = { path = "crates/mm_model" }
+mm_render = { path = "crates/mm_render" }
 mm_store = { path = "crates/mm_store" }
 mm_sync = { path = "crates/mm_sync" }
 mm_ws = { path = "crates/mm_ws" }
@@ -146,6 +150,7 @@ bytemuck = { version = "1.13.1" }
 bytes = { version = "1.11.1", features = ["serde"] }
 cfg-if = "1.0.0"
 cfg_aliases = "0.2.1"
+comrak = { version = "0.59.0", default-features = false }
 chrono = { version = "0.4.38", features = ["serde"] }
 chrono-tz = "0.10"
 diesel = { version = "2.3.10", default-features = false }

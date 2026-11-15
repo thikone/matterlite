@@ -28,4 +28,6 @@ Platform prerequisites:
 
 MatterLite is licensed under the GNU Affero General Public License v3.0 only (`LICENSE`).
 Code derived from Warp's `warpui` and `warpui_core` crates remains under the MIT license
-(`LICENSE-MIT`). `PROVENANCE.md` lists every piece of code derived from Warp.
+(`LICENSE-MIT`). `PROVENANCE.md` lists every piece of code derived from Warp. The emoji images (Google's Noto Emoji)
+and the emoji and emoticon data from the Mattermost webapp are under the Apache License 2.0
+(`LICENSE-APACHE`); see `PROVENANCE.md`, "Other third-party material".
