@@ -21,7 +21,7 @@ use warpui::{
 };
 
 use crate::right_panel::RightPanel;
-use crate::tab_bar::{AccountBadge, ChatTab, render_tab_bar};
+use crate::tab_bar::{AccountBadge, ChatTab, TabMenu, TabMenuItem, TabSpec, render_tab_bar};
 use crate::tool_panel::{ToolPanel, ToolPanelEvent, ToolPanelTab};
 
 /// Keymap context set while the right panel is open (Esc closes it).
@@ -51,16 +51,32 @@ pub enum WorkspaceAction {
     ActivatePrevTab,
     CloseTab(usize),
     CloseActiveTab,
+    ReopenClosedTab,
+    OpenTabMenu(usize),
+    CloseTabMenu,
+    TabMenu {
+        index: usize,
+        item: TabMenuItem,
+    },
     /// Opens the theme chooser as a panel left of the tool panel, or closes it.
     ToggleThemeChooser,
     /// The account button in the tab bar was clicked.
     OpenAccountMenu,
 }
 
+/// What the user did with the tabs or the account button; the owner (which holds the tabs'
+/// chats) acts and calls [`Workspace::set_tabs`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceEvent {
     /// The account button was clicked; the owner shows the account menu.
     AccountMenu,
+    ActivateTab(usize),
+    CloseTab(usize),
+    CloseOtherTabs(usize),
+    TogglePinTab(usize),
+    ReopenClosedTab,
+    /// Ctrl/Cmd+T or the + button: open a chat.
+    NewTab,
 }
 
 /// Registers the workspace keybindings (MatterLite.md §10.5).
@@ -93,6 +109,11 @@ pub fn init(app: &mut AppContext) {
         FixedBinding::new("cmdorctrl-t", WorkspaceAction::NewTab, workspace()),
         FixedBinding::new("cmdorctrl-w", WorkspaceAction::CloseActiveTab, workspace()),
         FixedBinding::new(
+            "cmdorctrl-shift-T",
+            WorkspaceAction::ReopenClosedTab,
+            workspace(),
+        ),
+        FixedBinding::new(
             THEME_CHOOSER_KEY,
             WorkspaceAction::ToggleThemeChooser,
             workspace(),
@@ -108,9 +129,8 @@ pub fn init(app: &mut AppContext) {
 
 pub struct Workspace {
     tabs: Vec<ChatTab>,
-    active_tab: usize,
-    /// Counter for placeholder tab titles until tabs hold real chats.
-    tabs_created: usize,
+    active_tab: Option<usize>,
+    tab_menu: Option<TabMenu>,
     new_tab_mouse_state: MouseStateHandle,
     tool_panel: ViewHandle<ToolPanel>,
     tool_panel_open: bool,
@@ -147,9 +167,9 @@ impl Workspace {
         });
         ctx.focus_self();
         Self {
-            tabs: vec![ChatTab::new("Welcome")],
-            active_tab: 0,
-            tabs_created: 1,
+            tabs: Vec::new(),
+            active_tab: None,
+            tab_menu: None,
             new_tab_mouse_state: MouseStateHandle::default(),
             tool_panel,
             tool_panel_open: true,
@@ -159,7 +179,7 @@ impl Workspace {
             theme_chooser_open: false,
             account: None,
             account_mouse_state: MouseStateHandle::default(),
-            placeholder: vec!["The timeline and composer of this chat will be here.".to_owned()],
+            placeholder: Vec::new(),
         }
     }
 
@@ -180,6 +200,41 @@ impl Workspace {
     ) {
         self.tool_panel
             .update(ctx, |panel, ctx| panel.set_pane(tab, pane, ctx));
+    }
+
+    /// The tabs to show (the owner keeps their chats) and the active one.
+    pub fn set_tabs(
+        &mut self,
+        specs: Vec<TabSpec>,
+        active: Option<usize>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let unchanged = active == self.active_tab
+            && specs.len() == self.tabs.len()
+            && specs
+                .iter()
+                .zip(&self.tabs)
+                .all(|(spec, tab)| *spec == tab.spec);
+        if unchanged {
+            return;
+        }
+        // Mouse states stay with their position, so hovering survives relabelling.
+        self.tabs.truncate(specs.len());
+        for (index, spec) in specs.into_iter().enumerate() {
+            match self.tabs.get_mut(index) {
+                Some(tab) => tab.spec = spec,
+                None => self.tabs.push(ChatTab::new(spec)),
+            }
+        }
+        self.active_tab = active.filter(|index| *index < self.tabs.len());
+        if self
+            .tab_menu
+            .as_ref()
+            .is_some_and(|menu| menu.index >= self.tabs.len())
+        {
+            self.tab_menu = None;
+        }
+        ctx.notify();
     }
 
     /// The text of the placeholder chat content.
@@ -244,40 +299,33 @@ impl Workspace {
     }
 
     fn activate_tab(&mut self, index: usize, ctx: &mut ViewContext<Self>) {
-        if index < self.tabs.len() && index != self.active_tab {
-            self.active_tab = index;
-            ctx.notify();
+        if index < self.tabs.len() {
+            ctx.emit(WorkspaceEvent::ActivateTab(index));
         }
     }
 
-    fn close_tab(&mut self, index: usize, ctx: &mut ViewContext<Self>) {
-        if index >= self.tabs.len() {
+    fn step_tab(&mut self, forward: bool, ctx: &mut ViewContext<Self>) {
+        let len = self.tabs.len();
+        if len == 0 {
             return;
         }
-        self.tabs.remove(index);
-        if self.tabs.is_empty() {
-            self.new_tab(ctx);
-            return;
-        }
-        if self.active_tab > index || self.active_tab >= self.tabs.len() {
-            self.active_tab = self.active_tab.saturating_sub(1);
-        }
-        ctx.notify();
-    }
-
-    fn new_tab(&mut self, ctx: &mut ViewContext<Self>) {
-        self.tabs_created += 1;
-        self.tabs
-            .push(ChatTab::new(format!("Chat {}", self.tabs_created)));
-        self.active_tab = self.tabs.len() - 1;
-        ctx.notify();
+        let index = match (self.active_tab, forward) {
+            (Some(active), true) => (active + 1) % len,
+            (Some(active), false) => (active + len - 1) % len,
+            (None, true) => 0,
+            (None, false) => len - 1,
+        };
+        self.activate_tab(index, ctx);
     }
 
     fn render_tab_content(&self, appearance: &Appearance) -> Box<dyn Element> {
         let theme = appearance.theme();
         let font = appearance.ui_font_family();
         let size = appearance.ui_font_size();
-        let title = &self.tabs[self.active_tab].title;
+        let title = self
+            .active_tab
+            .and_then(|index| self.tabs.get(index))
+            .map_or_else(|| "No chat open".to_owned(), |tab| tab.spec.title.clone());
         let line = |text: String, size: f32, color| {
             Container::new(
                 Text::new_inline(text, font, size)
@@ -291,7 +339,7 @@ impl Workspace {
             Flex::column()
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_child(line(
-                    title.clone(),
+                    title,
                     size + 8.,
                     theme.main_text_color(theme.background()).into_solid(),
                 ))
@@ -303,8 +351,8 @@ impl Workspace {
                     )
                 }))
                 .with_child(line(
-                    "Alt+1…6 tool panel · Ctrl+T new tab · Ctrl+W close · Ctrl+Tab next · \
-                     Ctrl+Alt+Shift+T themes"
+                    "Ctrl+K open a chat · Alt+↑/↓ next chat · Ctrl+W close · \
+                     Ctrl+Shift+T reopen · Ctrl+Tab next tab · Alt+1…6 tool panel"
                         .to_string(),
                     size - 1.,
                     theme.hint_text_color(theme.background()).into_solid(),
@@ -374,6 +422,7 @@ impl View for Workspace {
             .with_child(render_tab_bar(
                 &self.tabs,
                 self.active_tab,
+                self.tab_menu.as_ref(),
                 &self.new_tab_mouse_state,
                 self.account
                     .as_ref()
@@ -408,25 +457,48 @@ impl TypedActionView for Workspace {
                 self.right_panel_open = false;
                 ctx.notify();
             }
-            WorkspaceAction::NewTab => self.new_tab(ctx),
+            WorkspaceAction::NewTab => ctx.emit(WorkspaceEvent::NewTab),
             WorkspaceAction::ActivateTab(index) => self.activate_tab(index, ctx),
             WorkspaceAction::ActivateTabByNumber(number) => {
-                let index = if number >= 9 {
-                    self.tabs.len() - 1
-                } else {
-                    number - 1
-                };
-                self.activate_tab(index, ctx);
+                if let Some(last) = self.tabs.len().checked_sub(1) {
+                    let index = if number >= 9 { last } else { number - 1 };
+                    self.activate_tab(index, ctx);
+                }
             }
-            WorkspaceAction::ActivateNextTab => {
-                self.activate_tab((self.active_tab + 1) % self.tabs.len(), ctx);
+            WorkspaceAction::ActivateNextTab => self.step_tab(true, ctx),
+            WorkspaceAction::ActivatePrevTab => self.step_tab(false, ctx),
+            WorkspaceAction::CloseTab(index) => {
+                if index < self.tabs.len() {
+                    ctx.emit(WorkspaceEvent::CloseTab(index));
+                }
             }
-            WorkspaceAction::ActivatePrevTab => {
-                let len = self.tabs.len();
-                self.activate_tab((self.active_tab + len - 1) % len, ctx);
+            WorkspaceAction::CloseActiveTab => {
+                if let Some(active) = self.active_tab {
+                    ctx.emit(WorkspaceEvent::CloseTab(active));
+                }
             }
-            WorkspaceAction::CloseTab(index) => self.close_tab(index, ctx),
-            WorkspaceAction::CloseActiveTab => self.close_tab(self.active_tab, ctx),
+            WorkspaceAction::ReopenClosedTab => ctx.emit(WorkspaceEvent::ReopenClosedTab),
+            WorkspaceAction::OpenTabMenu(index) => {
+                self.tab_menu = Some(TabMenu {
+                    index,
+                    ..TabMenu::default()
+                });
+                ctx.notify();
+            }
+            WorkspaceAction::CloseTabMenu => {
+                self.tab_menu = None;
+                ctx.notify();
+            }
+            WorkspaceAction::TabMenu { index, item } => {
+                self.tab_menu = None;
+                ctx.notify();
+                ctx.emit(match item {
+                    TabMenuItem::TogglePin => WorkspaceEvent::TogglePinTab(index),
+                    TabMenuItem::Close => WorkspaceEvent::CloseTab(index),
+                    TabMenuItem::CloseOthers => WorkspaceEvent::CloseOtherTabs(index),
+                    TabMenuItem::Reopen => WorkspaceEvent::ReopenClosedTab,
+                });
+            }
             WorkspaceAction::OpenAccountMenu => ctx.emit(WorkspaceEvent::AccountMenu),
         }
     }

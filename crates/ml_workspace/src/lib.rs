@@ -11,7 +11,7 @@ mod tool_panel;
 mod workspace;
 
 pub use search_bar::{SearchBarEvent, SearchBarOptions, SearchBarView};
-pub use tab_bar::{AccountBadge, ConnectionStatus};
+pub use tab_bar::{AccountBadge, ConnectionStatus, TabBadge, TabLeading, TabMenuItem, TabSpec};
 pub use tool_panel::{ToolPane, ToolPanel, ToolPanelTab, ViewPane};
 pub use workspace::{Workspace, WorkspaceAction, WorkspaceEvent, init};
 

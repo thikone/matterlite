@@ -4459,6 +4459,9 @@ dependencies = [
 name = "ml_chat"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "concat-idents",
+ "fuzzy_match",
  "log",
  "ml_editor",
  "ml_themes",
@@ -4469,7 +4472,11 @@ dependencies = [
  "mm_store",
  "mm_sync",
  "pathfinder_geometry",
+ "schemars",
+ "serde",
  "serde_json",
+ "settings",
+ "settings_value",
  "tempfile",
  "tokio",
  "ui_components",

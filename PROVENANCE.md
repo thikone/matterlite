@@ -51,7 +51,7 @@ remain), `snippet` (a few functions copied into new code). See AGENTS.md for the
 | assets/async/jpg/ | app/assets/async/jpg/ | 5bb7bcc6a | verbatim | AGPL-3.0 | background images of the built-in themes (10 files) |
 | assets/bundled/fonts/password.ttf | app/assets/bundled/fonts/password.ttf | 5bb7bcc6a | verbatim | AGPL-3.0 | password dots font |
 | assets/bundled/fonts/hack/ | app/assets/bundled/fonts/hack/ | 5bb7bcc6a | verbatim | MIT | Hack font with its LICENSE.md; monospace font |
-| assets/bundled/svg/ | app/assets/bundled/svg/ | 5bb7bcc6a | verbatim | AGPL-3.0 | only the icons MatterLite code references (35 files), plus file_type/ (10 file-type icons kept for the Files explorer) |
+| assets/bundled/svg/ | app/assets/bundled/svg/ | 5bb7bcc6a | verbatim | AGPL-3.0 | only the icons MatterLite code references (36 files), plus file_type/ (10 file-type icons kept for the Files explorer) |
 | assets/bundled/fonts/roboto/ | app/assets/bundled/fonts/roboto/ | 5bb7bcc6a | verbatim | Apache-2.0 | font files; LICENSE.txt included |
 
 Rows with status `verbatim` differ from the reference only by the provenance header.

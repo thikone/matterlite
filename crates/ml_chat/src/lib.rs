@@ -10,6 +10,9 @@ mod format;
 mod login_view;
 mod root_view;
 pub mod session;
+pub mod settings;
+mod switcher_view;
+pub mod tabs;
 
 pub use chats_view::{ChatsAction, ChatsEvent, ChatsView};
 pub use login_view::{LoginAction, LoginView};
@@ -18,6 +21,7 @@ pub use session::{Session, SessionEvent, SessionState};
 
 /// Registers the session model and the keybindings. Secure storage must be registered first.
 pub fn init(app: &mut warpui::AppContext) {
+    settings::ChatSettings::register(app);
     app.add_singleton_model(|_| Session::new(warp_core::paths::servers_dir()));
     app.add_singleton_model(account_theme::AccountThemeFollower::new);
     root_view::init(app);

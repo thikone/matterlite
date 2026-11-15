@@ -20,13 +20,27 @@ use warpui::{
 use ml_workspace::{ToolPanelTab, ViewPane};
 use mm_sync::Command;
 
+use ml_workspace::{TabBadge, TabLeading, TabSpec};
+use mm_model::ChannelId;
+use mm_store::{Store, StoreDelta};
+use settings::Setting as _;
+use warp_core::ui::icons::Icon;
+
 use crate::account_theme::AccountThemeFollower;
+use crate::chats::{ChannelIcon, Presence};
 use crate::chats_view::{ChatsEvent, ChatsView};
 use crate::format::format_size;
 use crate::login_view::LoginView;
 use crate::session::{Active, Session, SessionEvent, SessionState};
+use crate::settings::ChatSettings;
+use crate::switcher_view::{SwitcherEvent, SwitcherView};
+use crate::tabs::{ChatTabs, DEFAULT_MAX_TABS, Tab};
 
 const DIALOG_WIDTH: f32 = 460.;
+/// The switcher's distance from the top of the window.
+const SWITCHER_TOP: f32 = 80.;
+/// UI state key of the open tabs.
+const TABS_KEY: &str = "tabs";
 /// Keymap context while a dialog is open (Esc closes it).
 const DIALOG_OPEN: &str = "Root_DialogOpen";
 
@@ -37,6 +51,8 @@ pub enum RootAction {
         delta: isize,
         unread_only: bool,
     },
+    /// Ctrl/Cmd+K.
+    OpenSwitcher,
     CloseDialog,
     LogOut {
         delete_data: bool,
@@ -59,6 +75,11 @@ pub(crate) fn init(app: &mut AppContext) {
             "escape",
             RootAction::CloseDialog,
             id!("RootView") & id!(DIALOG_OPEN),
+        ),
+        FixedBinding::new(
+            "cmdorctrl-k",
+            RootAction::OpenSwitcher,
+            id!("RootView") & !id!(DIALOG_OPEN),
         ),
         step("alt-up", -1, false),
         step("alt-down", 1, false),
@@ -87,6 +108,13 @@ pub struct RootView {
     login: ViewHandle<LoginView>,
     workspace: Option<ViewHandle<Workspace>>,
     chats: Option<ViewHandle<ChatsView>>,
+    switcher: Option<ViewHandle<SwitcherView>>,
+    switcher_open: bool,
+    tabs: ChatTabs,
+    /// The saved tabs are restored once the store holds the account's chats.
+    tabs_restored: bool,
+    /// The chat the engine was last told to open.
+    open_channel: Option<ChannelId>,
     dialog: Option<Dialog>,
     buttons: Buttons,
 }
@@ -96,7 +124,26 @@ impl RootView {
         ctx.subscribe_to_model(&Appearance::handle(ctx), |_, _, _, ctx| ctx.notify());
         ctx.subscribe_to_model(&Session::handle(ctx), |me, _, event, ctx| match event {
             SessionEvent::StateChanged => me.on_state_changed(ctx),
-            SessionEvent::StatusChanged => me.on_status_changed(ctx),
+            SessionEvent::StatusChanged => {
+                me.restore_tabs(ctx);
+                me.on_status_changed(ctx);
+            }
+            SessionEvent::Reloaded => {
+                me.restore_tabs(ctx);
+                me.drop_gone_tabs(ctx);
+                me.sync_tabs(ctx);
+            }
+            SessionEvent::Changed(deltas) => {
+                if deltas
+                    .iter()
+                    .any(|delta| matches!(delta, StoreDelta::ChannelRemoved(_)))
+                {
+                    me.drop_gone_tabs(ctx);
+                }
+                if deltas.iter().any(affects_tabs) {
+                    me.sync_tabs(ctx);
+                }
+            }
             _ => {}
         });
         let login = ctx.add_typed_action_view(LoginView::new);
@@ -104,6 +151,11 @@ impl RootView {
             login,
             workspace: None,
             chats: None,
+            switcher: None,
+            switcher_open: false,
+            tabs: ChatTabs::new(DEFAULT_MAX_TABS),
+            tabs_restored: false,
+            open_channel: None,
             dialog: None,
             buttons: Buttons::default(),
         };
@@ -113,15 +165,25 @@ impl RootView {
 
     fn on_state_changed(&mut self, ctx: &mut ViewContext<Self>) {
         self.dialog = None;
+        self.switcher_open = false;
+        self.tabs = ChatTabs::new(max_tabs(ctx));
+        self.tabs_restored = false;
+        self.open_channel = None;
         if Session::as_ref(ctx).active().is_some() {
             // A fresh workspace per sign-in: nothing of another account stays on screen.
             let workspace = ctx.add_typed_action_view(Workspace::new);
-            ctx.subscribe_to_view(&workspace, |me, _, event, ctx| match event {
-                WorkspaceEvent::AccountMenu => {
-                    me.dialog = Some(Dialog::Account);
-                    ctx.notify();
-                }
+            ctx.subscribe_to_view(&workspace, |me, _, event, ctx| {
+                me.on_workspace_event(event, ctx)
             });
+            let switcher = ctx.add_typed_action_view(SwitcherView::new);
+            ctx.subscribe_to_view(&switcher, |me, _, event, ctx| match event {
+                SwitcherEvent::Chosen(channel) => {
+                    me.close_switcher(ctx);
+                    me.open_chat(channel.clone(), ctx);
+                }
+                SwitcherEvent::Dismissed => me.close_switcher(ctx),
+            });
+            self.switcher = Some(switcher);
             let chats = ctx.add_typed_action_view(ChatsView::new);
             ctx.subscribe_to_view(&chats, |me, _, event, ctx| me.on_chats_event(event, ctx));
             let pane = ViewPane(chats.clone());
@@ -134,10 +196,12 @@ impl RootView {
             ctx.focus(&workspace);
             self.workspace = Some(workspace);
             self.chats = Some(chats);
+            self.restore_tabs(ctx);
             self.on_status_changed(ctx);
         } else {
             self.workspace = None;
             self.chats = None;
+            self.switcher = None;
             ctx.focus(&self.login);
         }
         ctx.notify();
@@ -145,10 +209,7 @@ impl RootView {
 
     fn on_chats_event(&mut self, event: &ChatsEvent, ctx: &mut ViewContext<Self>) {
         match event {
-            ChatsEvent::Open(channel) => {
-                Session::as_ref(ctx).send(Command::OpenChannel(channel.clone()));
-                self.on_status_changed(ctx);
-            }
+            ChatsEvent::Open(channel) => self.open_chat(channel.clone(), ctx),
             ChatsEvent::TeamChanged(team) => {
                 let team = team.clone();
                 AccountThemeFollower::handle(ctx)
@@ -162,6 +223,156 @@ impl RootView {
         }
     }
 
+    fn on_workspace_event(&mut self, event: &WorkspaceEvent, ctx: &mut ViewContext<Self>) {
+        match *event {
+            WorkspaceEvent::AccountMenu => {
+                self.dialog = Some(Dialog::Account);
+                ctx.notify();
+            }
+            WorkspaceEvent::NewTab => self.open_switcher(ctx),
+            WorkspaceEvent::ActivateTab(index) => {
+                self.tabs.activate(index);
+                self.after_tabs_change(ctx);
+            }
+            WorkspaceEvent::CloseTab(index) => {
+                self.tabs.close(index);
+                self.after_tabs_change(ctx);
+            }
+            WorkspaceEvent::CloseOtherTabs(index) => {
+                self.tabs.close_others(index);
+                self.after_tabs_change(ctx);
+            }
+            WorkspaceEvent::TogglePinTab(index) => {
+                self.tabs.toggle_pin(index);
+                self.after_tabs_change(ctx);
+            }
+            WorkspaceEvent::ReopenClosedTab => {
+                self.tabs.reopen();
+                self.after_tabs_change(ctx);
+            }
+        }
+    }
+
+    /// Focuses the chat's tab, or opens one (MatterLite.md §10.7).
+    fn open_chat(&mut self, channel: ChannelId, ctx: &mut ViewContext<Self>) {
+        self.tabs.set_cap(max_tabs(ctx));
+        self.tabs.open(channel);
+        self.after_tabs_change(ctx);
+    }
+
+    /// After any change to the tabs: tell the engine which chat is open, show it in the Chats
+    /// tab, save the tabs and redraw them.
+    fn after_tabs_change(&mut self, ctx: &mut ViewContext<Self>) {
+        let active = self.tabs.active_channel().cloned();
+        if active != self.open_channel {
+            Session::as_ref(ctx).send(match &active {
+                Some(channel) => Command::OpenChannel(channel.clone()),
+                None => Command::CloseChannel,
+            });
+            self.open_channel = active.clone();
+        }
+        if let Some(chats) = &self.chats {
+            chats.update(ctx, |chats, ctx| chats.show_channel(active.as_ref(), ctx));
+        }
+        if self.tabs_restored {
+            let json = self.tabs.to_json();
+            Session::handle(ctx)
+                .update(ctx, |session, _| session.set_ui_state(TABS_KEY, Some(json)));
+        }
+        self.sync_tabs(ctx);
+        self.on_status_changed(ctx);
+    }
+
+    /// Restores the saved tabs once the account's chats are loaded.
+    fn restore_tabs(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.tabs_restored || self.workspace.is_none() {
+            return;
+        }
+        let session = Session::as_ref(ctx);
+        let Some(active) = session.active().filter(|active| active.hydrated) else {
+            return;
+        };
+        let saved = active.ui_state(TABS_KEY).map(str::to_owned);
+        let Some(store) = session.store().and_then(|store| store.read().ok()) else {
+            return;
+        };
+        if store.channels.is_empty() {
+            return;
+        }
+        let tabs = saved.map(|json| {
+            ChatTabs::from_json(&json, max_tabs(ctx), |channel| {
+                store.channel_members.contains_key(channel)
+            })
+        });
+        drop(store);
+        self.tabs_restored = true;
+        if let Some(tabs) = tabs {
+            self.tabs = tabs;
+        }
+        self.after_tabs_change(ctx);
+    }
+
+    /// Closes the tabs of chats I'm no longer in.
+    fn drop_gone_tabs(&mut self, ctx: &mut ViewContext<Self>) {
+        let removed = match Session::as_ref(ctx)
+            .store()
+            .and_then(|store| store.read().ok())
+        {
+            Some(store) => self
+                .tabs
+                .retain(|channel| store.channel_members.contains_key(channel)),
+            None => return,
+        };
+        if !removed.is_empty() {
+            self.after_tabs_change(ctx);
+        }
+    }
+
+    /// Relabels the tabs from the store (names, icons, unread counts).
+    fn sync_tabs(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(workspace) = self.workspace.clone() else {
+            return;
+        };
+        let theme = Appearance::as_ref(ctx).theme();
+        let palette = theme.chat();
+        let offline = theme.sub_text_color(theme.background()).into_solid();
+        let active = self.tabs.active();
+        let specs: Vec<TabSpec> = match Session::as_ref(ctx)
+            .store()
+            .and_then(|store| store.read().ok())
+        {
+            Some(store) => self
+                .tabs
+                .tabs()
+                .iter()
+                .enumerate()
+                .map(|(index, tab)| tab_spec(&store, tab, Some(index) == active, &palette, offline))
+                .collect(),
+            None => Vec::new(),
+        };
+        workspace.update(ctx, |workspace, ctx| workspace.set_tabs(specs, active, ctx));
+    }
+
+    fn open_switcher(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(switcher) = self.switcher.clone() else {
+            return;
+        };
+        self.switcher_open = true;
+        switcher.update(ctx, |switcher, ctx| switcher.reset(ctx));
+        ctx.focus(&switcher);
+        ctx.notify();
+    }
+
+    fn close_switcher(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.switcher_open {
+            self.switcher_open = false;
+            if let Some(workspace) = &self.workspace {
+                ctx.focus(workspace);
+            }
+            ctx.notify();
+        }
+    }
+
     fn on_status_changed(&mut self, ctx: &mut ViewContext<Self>) {
         let Some(workspace) = self.workspace.clone() else {
             ctx.notify();
@@ -172,11 +383,7 @@ impl RootView {
             return;
         };
         let badge = account_badge(active);
-        let current = self
-            .chats
-            .as_ref()
-            .and_then(|chats| chats.as_ref(ctx).current().cloned());
-        let lines = status_lines(active, session, current.as_ref());
+        let lines = status_lines(active, session);
         workspace.update(ctx, |workspace, ctx| {
             workspace.set_account(Some(badge), ctx);
             workspace.set_placeholder(lines, ctx);
@@ -418,11 +625,7 @@ fn connection_text(active: &Active) -> String {
 }
 
 /// What the placeholder chat area shows until the chat views exist (M3 steps 3–6).
-fn status_lines(
-    active: &Active,
-    session: &Session,
-    current: Option<&mm_model::ChannelId>,
-) -> Vec<String> {
+fn status_lines(active: &Active, session: &Session) -> Vec<String> {
     let mut lines = vec![format!(
         "@{} on {} · {}",
         active.user.username,
@@ -432,9 +635,6 @@ fn status_lines(
     if let Some(store) = session.store()
         && let Ok(store) = store.read()
     {
-        if let Some(channel) = current.and_then(|channel| store.channel_name(channel)) {
-            lines.insert(0, format!("Open chat: {channel}"));
-        }
         lines.push(format!(
             "{} · {} · {} cached",
             count(store.teams.len(), "team"),
@@ -454,6 +654,78 @@ fn status_lines(
         lines.push("Everything is synced.".to_owned());
     }
     lines
+}
+
+fn max_tabs(app: &AppContext) -> usize {
+    *ChatSettings::as_ref(app).max_open_tabs.value()
+}
+
+fn affects_tabs(delta: &StoreDelta) -> bool {
+    matches!(
+        delta,
+        StoreDelta::ChannelChanged(_)
+            | StoreDelta::MemberChanged(_)
+            | StoreDelta::MarkedRead { .. }
+            | StoreDelta::StatusChanged(_)
+            | StoreDelta::UserChanged(_)
+            | StoreDelta::NamesChanged
+            | StoreDelta::PreferencesChanged
+            | StoreDelta::CrtChanged
+    )
+}
+
+/// What a chat's tab shows: icon, name, and a mention count or unread dot (not on the active
+/// tab, which is being read).
+fn tab_spec(
+    store: &Store,
+    tab: &Tab,
+    active: bool,
+    palette: &ml_themes::ChatColors,
+    offline: warpui::color::ColorU,
+) -> TabSpec {
+    let leading = match crate::chats::channel_icon(store, &tab.channel) {
+        ChannelIcon::Public => TabLeading::Icon(Icon::Hash),
+        ChannelIcon::Private => TabLeading::Icon(Icon::Lock),
+        ChannelIcon::Archived => TabLeading::Icon(Icon::Archive),
+        ChannelIcon::Group(members) => TabLeading::Count(members),
+        ChannelIcon::Direct(presence) => match presence {
+            Presence::Online => TabLeading::Status {
+                color: palette.online,
+                filled: true,
+            },
+            Presence::Away => TabLeading::Status {
+                color: palette.away,
+                filled: true,
+            },
+            Presence::Dnd => TabLeading::Status {
+                color: palette.dnd,
+                filled: true,
+            },
+            Presence::Offline => TabLeading::Status {
+                color: offline,
+                filled: false,
+            },
+        },
+    };
+    let unread = store.channel_unread(&tab.channel).unwrap_or_default();
+    let badge = if active {
+        TabBadge::None
+    } else if unread.mentions > 0 {
+        TabBadge::Mentions(unread.mentions)
+    } else if unread.is_unread() {
+        TabBadge::Dot
+    } else {
+        TabBadge::None
+    };
+    TabSpec {
+        title: store
+            .channel_name(&tab.channel)
+            .unwrap_or_else(|| tab.channel.to_string()),
+        leading,
+        badge,
+        unread: !active && unread.is_unread(),
+        pinned: tab.pinned,
+    }
 }
 
 fn count(n: usize, noun: &str) -> String {
@@ -488,6 +760,19 @@ impl View for RootView {
             return ChildView::new(&self.login).finish();
         };
         let mut stack = Stack::new().with_child(ChildView::new(workspace).finish());
+        if self.switcher_open
+            && let Some(switcher) = &self.switcher
+        {
+            stack.add_child(
+                Container::new(
+                    Align::new(ChildView::new(switcher).finish())
+                        .top_center()
+                        .finish(),
+                )
+                .with_padding_top(SWITCHER_TOP)
+                .finish(),
+            );
+        }
         if let Some(dialog) = self.render_dialog(active, app) {
             let theme = Appearance::as_ref(app).theme();
             let mut scrim = theme.background().into_solid();
@@ -509,6 +794,7 @@ impl TypedActionView for RootView {
                     chats.update(ctx, |chats, ctx| chats.step(delta, unread_only, ctx));
                 }
             }
+            RootAction::OpenSwitcher => self.open_switcher(ctx),
             RootAction::CloseDialog => {
                 if Session::as_ref(ctx)
                     .active()

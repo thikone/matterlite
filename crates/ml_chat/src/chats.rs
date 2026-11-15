@@ -178,33 +178,112 @@ fn matches_filter(store: &Store, channel: &SidebarChannel, filter: &str) -> bool
 }
 
 fn channel_row(store: &Store, channel: &SidebarChannel) -> ChannelRow {
-    let icon = match channel.channel_type {
-        _ if channel.archived => ChannelIcon::Archived,
+    ChannelRow {
+        id: channel.id.clone(),
+        name: channel.name.clone(),
+        icon: channel_icon(store, &channel.id),
+        unread: channel.unread,
+        current: channel.current,
+    }
+}
+
+/// The icon of a chat: its type, the DM partner's status, the GM's other members.
+pub fn channel_icon(store: &Store, channel: &ChannelId) -> ChannelIcon {
+    let Some(full) = store.channels.get(channel) else {
+        return ChannelIcon::Public;
+    };
+    match full.channel_type {
+        _ if full.is_deleted() => ChannelIcon::Archived,
         ChannelType::Open => ChannelIcon::Public,
         ChannelType::Private => ChannelIcon::Private,
         ChannelType::Direct => {
-            let status = store
-                .channels
-                .get(&channel.id)
-                .and_then(|full| dm_partner(&full.name, &store.me))
+            let status = dm_partner(&full.name, &store.me)
                 .and_then(|partner| store.statuses.get(&partner))
                 .map(|status| status.status.as_str());
             ChannelIcon::Direct(Presence::from_status(status))
         }
         ChannelType::Group => {
-            ChannelIcon::Group(store.channels.get(&channel.id).map_or(0, |full| {
-                full.display_name.split(',').count().saturating_sub(1)
-            }))
+            ChannelIcon::Group(full.display_name.split(',').count().saturating_sub(1))
         }
         _ => ChannelIcon::Public,
-    };
-    ChannelRow {
-        id: channel.id.clone(),
-        name: channel.name.clone(),
-        icon,
-        unread: channel.unread,
-        current: channel.current,
     }
+}
+
+/// One result of the chat switcher (Ctrl/Cmd+K).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SwitcherItem {
+    pub id: ChannelId,
+    pub name: String,
+    /// The team's name for channels when I'm in several teams.
+    pub team: Option<String>,
+    pub icon: ChannelIcon,
+    pub unread: ChannelUnread,
+}
+
+/// How many results the switcher lists.
+pub const SWITCHER_RESULTS: usize = 12;
+
+/// The chats for the switcher: every chat I'm in (not archived), across teams. Without a
+/// query, the most recently viewed first; with one, fuzzy matches on the name (and a DM
+/// partner's username) by score, then by last view.
+pub fn switcher_items(store: &Store, query: &str) -> Vec<SwitcherItem> {
+    let query = query.trim();
+    let several_teams = store.teams.len() > 1;
+    let mut scored: Vec<(i64, i64, SwitcherItem)> = store
+        .channels
+        .values()
+        .filter(|channel| !channel.is_deleted())
+        .filter_map(|channel| {
+            let member = store.channel_members.get(&channel.id)?;
+            let name = store.channel_name(&channel.id)?;
+            let score = if query.is_empty() {
+                0
+            } else {
+                let mut best = fuzzy_match::match_indices_case_insensitive(&name, query)
+                    .map(|result| result.score);
+                if channel.channel_type == ChannelType::Direct
+                    && let Some(user) = dm_partner(&channel.name, &store.me)
+                        .and_then(|partner| store.users.get(&partner))
+                {
+                    let by_username =
+                        fuzzy_match::match_indices_case_insensitive(&user.username, query)
+                            .map(|result| result.score);
+                    best = best.max(by_username);
+                }
+                if !channel.channel_type.is_direct_or_group() {
+                    let by_url = fuzzy_match::match_indices_case_insensitive(&channel.name, query)
+                        .map(|result| result.score);
+                    best = best.max(by_url);
+                }
+                best?
+            };
+            let team = (several_teams && !channel.team_id.is_empty())
+                .then(|| store.teams.get(&channel.team_id))
+                .flatten()
+                .map(|team| team.display_name.clone());
+            Some((
+                score,
+                member.last_viewed_at,
+                SwitcherItem {
+                    id: channel.id.clone(),
+                    name,
+                    team,
+                    icon: channel_icon(store, &channel.id),
+                    unread: store.channel_unread(&channel.id).unwrap_or_default(),
+                },
+            ))
+        })
+        .collect();
+    scored.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then(b.1.cmp(&a.1))
+            .then_with(|| compare_names(&a.2.name, &b.2.name))
+    });
+    scored
+        .into_iter()
+        .take(SWITCHER_RESULTS)
+        .map(|(_, _, item)| item)
+        .collect()
 }
 
 /// The chat `delta` rows away from `current` (Alt+↑/↓), or the next unread one

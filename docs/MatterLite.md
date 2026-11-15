@@ -1063,7 +1063,8 @@ the webapp:
 | `Alt+1…6` | Show/hide tool panel tab (Chats, Activity, Channel, History, Files, Search) |
 | `Ctrl/Cmd+K` | Chat switcher (opens or focuses a tab) |
 | Warp's `ActivateNextTab` / `ActivatePrevTab` bindings, `Ctrl/Cmd+1…9` | Next/previous tab, go to tab N (`ActivateTabByNumber`, `app/src/workspace/mod.rs`) |
-| `Ctrl/Cmd+W`, reopen-closed-tab binding | Close tab, reopen closed tab (Warp's `undo_close`) |
+| `Ctrl/Cmd+W`, `Ctrl/Cmd+Shift+T` | Close tab, reopen closed tab (Warp's `undo_close`) |
+| `Ctrl/Cmd+T` | Open a chat (the chat switcher) |
 | `Alt+↑/↓`, `Alt+Shift+↑/↓` | Previous/next chat in the list, previous/next unread |
 | `Ctrl/Cmd+F` | Focus the History search bar for the active chat |
 | `Ctrl/Cmd+Shift+F` | Server-wide Search tab |

@@ -145,15 +145,39 @@ impl ChatsView {
         }
     }
 
-    /// Opens a chat: it becomes the current one and is remembered for its team.
+    /// Asks to open a chat; the owner opens its tab and calls [`Self::show_channel`].
     pub fn open(&mut self, channel: ChannelId, ctx: &mut ViewContext<Self>) {
-        self.current = Some(channel.clone());
-        if let Some(team) = self.team.clone() {
+        ctx.emit(ChatsEvent::Open(channel));
+    }
+
+    /// Marks the chat of the active tab as current, switching to its team if it belongs to
+    /// another one (DMs and GMs belong to every team). `None`: no tab is open.
+    pub fn show_channel(&mut self, channel: Option<&ChannelId>, ctx: &mut ViewContext<Self>) {
+        let team = channel.and_then(|channel| {
+            Session::as_ref(ctx)
+                .store()?
+                .read()
+                .ok()?
+                .channels
+                .get(channel)
+                .map(|channel| channel.team_id.clone())
+                .filter(|team| !team.is_empty())
+        });
+        if let Some(team) = team
+            && self.team.as_ref() != Some(&team)
+        {
+            self.team = Some(team.clone());
+            Session::handle(ctx).update(ctx, |session, _| {
+                session.set_ui_state(LAST_TEAM, Some(team.to_string()))
+            });
+            ctx.emit(ChatsEvent::TeamChanged(Some(team)));
+        }
+        self.current = channel.cloned();
+        if let (Some(team), Some(channel)) = (self.team.clone(), channel) {
             Session::handle(ctx).update(ctx, |session, _| {
                 session.set_ui_state(&last_channel_key(&team), Some(channel.to_string()))
             });
         }
-        ctx.emit(ChatsEvent::Open(channel));
         self.refresh(ctx);
     }
 
@@ -568,7 +592,7 @@ fn render_channel(
     .finish()
 }
 
-fn channel_icon(
+pub(crate) fn channel_icon(
     kind: ChannelIcon,
     color: ColorU,
     chat: &ChatColors,
@@ -635,7 +659,7 @@ fn dot(color: ColorU, size: f32) -> Box<dyn Element> {
 }
 
 /// A mention count pill.
-fn badge(count: i64, chat: &ChatColors, font: FamilyId) -> Box<dyn Element> {
+pub(crate) fn badge(count: i64, chat: &ChatColors, font: FamilyId) -> Box<dyn Element> {
     let text = if count > 99 {
         "99+".to_owned()
     } else {

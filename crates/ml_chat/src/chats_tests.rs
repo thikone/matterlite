@@ -247,3 +247,39 @@ fn an_empty_favorites_category_is_hidden() {
     let rows = rows(&store, &"t1".into(), None, "");
     assert_eq!(names(&rows)[0], "-Channels");
 }
+
+#[test]
+fn the_switcher_ranks_recent_chats_and_fuzzy_matches() {
+    let mut store = store();
+    // Viewed most recently: #quiet, then the DM.
+    store
+        .channel_members
+        .get_mut(&ChannelId::from("quiet"))
+        .unwrap()
+        .last_viewed_at = 20;
+    store
+        .channel_members
+        .get_mut(&ChannelId::from("dm"))
+        .unwrap()
+        .last_viewed_at = 10;
+    let items = switcher_items(&store, "");
+    let names: Vec<&str> = items.iter().map(|item| item.name.as_str()).collect();
+    assert_eq!(names[..2], ["Quiet", "bob"]);
+    assert_eq!(items.len(), 6);
+    // Channels name their team (I'm in two); DMs and GMs don't.
+    assert_eq!(items[0].team.as_deref(), Some("Beta"));
+    assert_eq!(items[1].team, None);
+    assert_eq!(items[1].icon, ChannelIcon::Direct(Presence::Online));
+
+    let names = |query: &str| -> Vec<String> {
+        switcher_items(&store, query)
+            .into_iter()
+            .map(|item| item.name)
+            .collect()
+    };
+    assert_eq!(names("twnsq"), ["Town Square"]);
+    assert_eq!(names("othr"), ["Other"]);
+    let bob = names("bob");
+    assert!(bob.contains(&"bob".to_owned()) && bob.contains(&"bob, carol".to_owned()));
+    assert!(names("zzzz").is_empty());
+}
