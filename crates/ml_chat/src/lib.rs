@@ -3,6 +3,7 @@
 //! MatterLite's chat models and views on top of the sync engine (`mm_sync`) and the window
 //! shell (`ml_workspace`): the signed-in [`Session`], the login screen and the window root.
 
+pub mod account_theme;
 mod format;
 mod login_view;
 mod root_view;
@@ -15,6 +16,7 @@ pub use session::{Session, SessionEvent, SessionState};
 /// Registers the session model and the keybindings. Secure storage must be registered first.
 pub fn init(app: &mut warpui::AppContext) {
     app.add_singleton_model(|_| Session::new(warp_core::paths::servers_dir()));
+    app.add_singleton_model(account_theme::AccountThemeFollower::new);
     root_view::init(app);
 }
 

@@ -10,8 +10,9 @@ use super::*;
 fn every_built_in_theme_kind_has_a_theme() {
     let config = WarpThemeConfig::new();
     let built_in = config.theme_items().count();
-    // Every ThemeKind except the two custom variants is built in.
-    assert_eq!(built_in, 21);
+    // Every ThemeKind except the two custom variants is built in: Warp's 21, Mattermost's 5
+    // and the account's.
+    assert_eq!(built_in, 27);
     assert!(
         config
             .theme_items()
@@ -20,10 +21,13 @@ fn every_built_in_theme_kind_has_a_theme() {
 }
 
 #[test]
-fn unknown_theme_falls_back_to_dark() {
+fn unknown_theme_falls_back_to_the_default() {
     let config = WarpThemeConfig::new();
     let missing = ThemeKind::Custom(CustomTheme::new("Missing".into(), PathBuf::from("x.yml")));
-    assert_eq!(config.theme(&missing), config.theme(&ThemeKind::Dark));
+    assert_eq!(
+        config.theme(&missing),
+        config.theme(&ThemeKind::MattermostAccount)
+    );
 }
 
 #[test]
@@ -59,4 +63,17 @@ fn custom_theme_outside_the_themes_dir_keeps_its_path() {
 fn theme_kind_matches_names_case_insensitively() {
     assert!(ThemeKind::SolarizedDark.matches("solar"));
     assert!(!ThemeKind::Dracula.matches("solar"));
+}
+
+#[test]
+fn mattermost_kinds_are_stored_in_snake_case() {
+    assert_eq!(
+        ThemeKind::MattermostAccount.to_file_value(),
+        serde_json::json!("mattermost_account")
+    );
+    assert_eq!(
+        ThemeKind::from_file_value(&serde_json::json!("mattermost_onyx")),
+        Some(ThemeKind::MattermostOnyx)
+    );
+    assert_eq!(ThemeKind::default(), ThemeKind::MattermostAccount);
 }

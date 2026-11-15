@@ -26,7 +26,11 @@ pub const DEFAULT_MONOSPACE_FONT_SIZE: f32 = 13.0;
 /// read at startup and again by [`Self::reload_themes`].
 pub struct AppearanceManager {
     themes: WarpThemeConfig,
-    transient_theme: Option<WarpTheme>,
+    /// The theme previewed in the chooser, resolved at each refresh so a change to it (the
+    /// account's theme arriving, say) shows at once.
+    transient_theme: Option<ThemeKind>,
+    /// The signed-in account's theme, shown for [`ThemeKind::MattermostAccount`].
+    account_theme: Option<WarpTheme>,
 }
 
 impl AppearanceManager {
@@ -37,13 +41,40 @@ impl AppearanceManager {
         Self {
             themes,
             transient_theme: None,
+            account_theme: None,
         }
+    }
+
+    /// Sets the signed-in account's theme (`None`: signed out or no theme preference, which
+    /// shows Mattermost Denim). It applies when the theme setting is "Mattermost account".
+    pub fn set_account_theme(&mut self, theme: Option<WarpTheme>, ctx: &mut ModelContext<Self>) {
+        if self.account_theme == theme {
+            return;
+        }
+        self.account_theme = theme;
+        self.insert_account_theme();
+        ctx.emit(AppearanceManagerEvent::ThemesChanged);
+        self.refresh_theme_state(ctx);
+    }
+
+    pub fn account_theme(&self) -> Option<&WarpTheme> {
+        self.account_theme.as_ref()
+    }
+
+    fn insert_account_theme(&mut self) {
+        let theme = self
+            .account_theme
+            .clone()
+            .unwrap_or_else(|| crate::mattermost::builtin(crate::mattermost::DEFAULT_KEY));
+        self.themes
+            .add_new_theme(ThemeKind::MattermostAccount, theme);
     }
 
     /// Re-reads the custom themes from the themes directory, then re-applies the active theme
     /// (an edited custom theme takes effect at once).
     pub fn reload_themes(&mut self, ctx: &mut ModelContext<Self>) {
         self.themes = load_theme_configs(&warp_core::paths::themes_dir());
+        self.insert_account_theme();
         ctx.emit(AppearanceManagerEvent::ThemesChanged);
         self.refresh_theme_state(ctx);
     }
@@ -56,13 +87,11 @@ impl AppearanceManager {
     /// Re-derives the active theme (settings + OS mode, or the transient preview) and applies it.
     /// Call this when the OS appearance changes.
     pub fn refresh_theme_state(&mut self, ctx: &mut ModelContext<Self>) {
-        let new_theme = match &self.transient_theme {
-            Some(theme) => theme.clone(),
-            None => {
-                let theme_kind = active_theme_kind(ThemeSettings::as_ref(ctx), ctx);
-                self.themes.theme(&theme_kind)
-            }
+        let theme_kind = match &self.transient_theme {
+            Some(kind) => kind.clone(),
+            None => active_theme_kind(ThemeSettings::as_ref(ctx), ctx),
         };
+        let new_theme = self.themes.theme(&theme_kind);
         Appearance::handle(ctx).update(ctx, |appearance, ctx| {
             appearance.set_theme(new_theme, ctx);
         })
@@ -70,7 +99,7 @@ impl AppearanceManager {
 
     /// Shows `theme` without changing the saved setting (theme chooser preview).
     pub fn set_transient_theme(&mut self, theme: &ThemeKind, ctx: &mut ModelContext<Self>) {
-        self.transient_theme = Some(self.themes.theme(theme));
+        self.transient_theme = Some(theme.clone());
         self.refresh_theme_state(ctx);
     }
 

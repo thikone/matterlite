@@ -12,6 +12,7 @@ pub use warp_core::ui::color::blend::Blend;
 pub use warp_core::ui::theme::*;
 
 use crate::default_themes::*;
+use crate::mattermost;
 
 // We use the discriminant of enum variants to determine the order of theme types in the
 // theme chooser view.
@@ -31,11 +32,26 @@ use crate::default_themes::*;
 )]
 #[schemars(description = "The color theme.", rename_all = "snake_case")]
 pub enum ThemeKind {
+    /// The theme of the signed-in Mattermost account (its `theme` preference, per team), so
+    /// MatterLite looks like the webapp (MatterLite.md §11.4). Mattermost Denim while signed
+    /// out or when the account has none.
+    #[default]
+    #[schemars(description = "The theme of the Mattermost account (follows the server).")]
+    MattermostAccount,
+    #[schemars(description = "Mattermost Denim")]
+    MattermostDenim,
+    #[schemars(description = "Mattermost Sapphire")]
+    MattermostSapphire,
+    #[schemars(description = "Mattermost Quartz")]
+    MattermostQuartz,
+    #[schemars(description = "Mattermost Indigo")]
+    MattermostIndigo,
+    #[schemars(description = "Mattermost Onyx")]
+    MattermostOnyx,
     #[schemars(description = "Adeberry")]
     Adeberry,
     #[schemars(description = "Phenomenon")]
     Phenomenon,
-    #[default]
     #[schemars(description = "Dark")]
     Dark,
     #[schemars(description = "Dracula")]
@@ -94,6 +110,12 @@ impl From<CustomTheme> for ThemeKind {
 impl std::fmt::Display for ThemeKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let value = match &self {
+            ThemeKind::MattermostAccount => "Mattermost account",
+            ThemeKind::MattermostDenim => "Mattermost Denim",
+            ThemeKind::MattermostSapphire => "Mattermost Sapphire",
+            ThemeKind::MattermostQuartz => "Mattermost Quartz",
+            ThemeKind::MattermostIndigo => "Mattermost Indigo",
+            ThemeKind::MattermostOnyx => "Mattermost Onyx",
             ThemeKind::Light => "Light",
             ThemeKind::Dark => "Dark",
             ThemeKind::Dracula => "Dracula",
@@ -304,6 +326,18 @@ impl WarpThemeConfig {
     pub fn new() -> Self {
         // preload with built-in themes
         let theme_map: HashMap<ThemeKind, WarpTheme> = HashMap::from_iter([
+            (
+                ThemeKind::MattermostAccount,
+                mattermost::builtin(mattermost::DEFAULT_KEY),
+            ),
+            (ThemeKind::MattermostDenim, mattermost::builtin("denim")),
+            (
+                ThemeKind::MattermostSapphire,
+                mattermost::builtin("sapphire"),
+            ),
+            (ThemeKind::MattermostQuartz, mattermost::builtin("quartz")),
+            (ThemeKind::MattermostIndigo, mattermost::builtin("indigo")),
+            (ThemeKind::MattermostOnyx, mattermost::builtin("onyx")),
             (ThemeKind::Dark, dark_theme()),
             (ThemeKind::Light, light_theme()),
             (ThemeKind::SolarizedDark, solarized_dark()),
@@ -341,8 +375,14 @@ impl WarpThemeConfig {
         self.theme_map.iter()
     }
 
+    /// The theme of `name`; the default theme (the account's) if there is no such theme,
+    /// e.g. a custom theme whose file was removed.
     pub fn theme(&self, name: &ThemeKind) -> WarpTheme {
-        self.theme_map.get(name).cloned().unwrap_or_else(dark_theme)
+        self.theme_map
+            .get(name)
+            .or_else(|| self.theme_map.get(&ThemeKind::default()))
+            .cloned()
+            .unwrap_or_else(dark_theme)
     }
 }
 
@@ -387,10 +427,11 @@ impl RespectSystemTheme {
 }
 
 impl Default for SelectedSystemThemes {
+    /// The webapp's light and dark counterparts (MatterLite.md §11.3).
     fn default() -> Self {
         Self {
-            light: ThemeKind::Light,
-            dark: ThemeKind::Dark,
+            light: ThemeKind::MattermostQuartz,
+            dark: ThemeKind::MattermostOnyx,
         }
     }
 }

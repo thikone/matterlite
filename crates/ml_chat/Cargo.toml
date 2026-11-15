@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 log.workspace = true
 ml_editor.workspace = true
+ml_themes.workspace = true
 ml_workspace.workspace = true
 mm_api.workspace = true
 mm_cache.workspace = true

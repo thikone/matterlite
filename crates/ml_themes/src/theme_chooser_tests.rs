@@ -65,10 +65,12 @@ fn lists_the_built_in_themes_sorted_and_selects_the_saved_one() {
         let chooser = add_chooser(&mut app);
         chooser.read(&app, |chooser, _| {
             let themes: Vec<_> = chooser.themes().cloned().collect();
-            assert_eq!(themes.len(), 21);
+            // Warp's 21, Mattermost's 5 and the account's theme, which comes first.
+            assert_eq!(themes.len(), 27);
             assert!(themes.windows(2).all(|pair| pair[0] < pair[1]));
+            assert_eq!(themes[0], ThemeKind::MattermostAccount);
             assert_eq!(chooser.mode(), ThemeChooserMode::SystemAgnostic);
-            assert_eq!(chooser.selected(), Some(&ThemeKind::Dark));
+            assert_eq!(chooser.selected(), Some(&ThemeKind::MattermostAccount));
         });
     });
 }
@@ -80,11 +82,11 @@ fn moving_down_applies_and_saves_the_next_theme() {
         let chooser = add_chooser(&mut app);
         let next = chooser.read(&app, |chooser, _| {
             let themes: Vec<_> = chooser.themes().cloned().collect();
-            let dark = themes
+            let saved = themes
                 .iter()
-                .position(|kind| *kind == ThemeKind::Dark)
+                .position(|kind| *kind == ThemeKind::default())
                 .unwrap();
-            themes[dark + 1].clone()
+            themes[saved + 1].clone()
         });
 
         chooser.update(&mut app, |chooser, ctx| {

@@ -4461,6 +4461,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "ml_editor",
+ "ml_themes",
  "ml_workspace",
  "mm_api",
  "mm_cache",

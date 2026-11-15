@@ -2,6 +2,7 @@
 // Derived from warp-terminal `crates/warp_core/src/ui/theme/mod.rs` @ 5bb7bcc6a — adapted for MatterLite.
 // Original: Copyright (C) 2020-2026 Denver Technologies, Inc.
 
+pub mod chat;
 pub mod color;
 pub mod phenomenon;
 
@@ -603,6 +604,10 @@ pub struct WarpTheme {
     terminal_colors: TerminalColors,
     // If name is None, we construct the name by processing the theme .yaml file name
     name: Option<String>,
+
+    /// MatterLite: the theme's chat colours (`chat:` in YAML), see [`chat`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chat: Option<chat::ChatColorOverrides>,
 }
 
 impl WarpTheme {
@@ -626,6 +631,7 @@ impl WarpTheme {
             terminal_colors,
             background_image,
             name,
+            chat: None,
         }
     }
 

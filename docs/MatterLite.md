@@ -1415,7 +1415,8 @@ theme made in the webapp).
   and accent as in §11.3, `details` from luminance, `terminal_colors` from `codeTheme`
   (`github`, `solarized-dark`, `solarized-light`, `monokai`; fall back to Warp
   Dark/Light), and the full `chat` section.
-- Setting **Theme source**:
+- Setting **Theme source** (implemented as the theme kind "Mattermost account", the default,
+  next to the local themes in the chooser):
   - **Mattermost account** (default): follow the server preference live, applying
     `preferences_changed` events, including per-team themes when switching teams. Shown in
     the chooser as `ThemeKind::InMemory` named "Mattermost: <type>".

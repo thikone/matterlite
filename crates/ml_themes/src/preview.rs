@@ -3,8 +3,9 @@
 // size, background image with opacity, input line with an accent cursor); the content is new: a
 // small chat instead of a terminal listing.
 
-//! A thumbnail of a theme for the theme chooser: a channel header, two messages and the
-//! composer, drawn in the theme's colours.
+//! A thumbnail of a theme for the theme chooser: a strip of the chat sidebar (the theme's chat
+//! palette), then a channel header, two messages and the composer, drawn in the theme's
+//! colours.
 
 use warp_core::ui::theme::WarpTheme;
 use warpui::elements::{
@@ -20,6 +21,7 @@ const TEXT_SIZE: f32 = 9.;
 const MARGIN: f32 = 10.;
 const LINE_GAP: f32 = 4.;
 const AUTHOR_WIDTH: f32 = 34.;
+const SIDEBAR_WIDTH: f32 = 44.;
 
 pub fn render_preview(theme: &WarpTheme, font_family: FamilyId) -> Box<dyn Element> {
     let foreground = theme.foreground().into_solid();
@@ -100,6 +102,7 @@ pub fn render_preview(theme: &WarpTheme, font_family: FamilyId) -> Box<dyn Eleme
     .finish();
 
     let content = Flex::column()
+        .with_main_axis_size(warpui::elements::MainAxisSize::Max)
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
         .with_child(
             Container::new(
@@ -131,10 +134,20 @@ pub fn render_preview(theme: &WarpTheme, font_family: FamilyId) -> Box<dyn Eleme
         background_opacity -= image.opacity;
     }
     thumbnail.add_child(
-        Container::new(content)
-            .with_padding_top(MARGIN - 2.)
-            .with_padding_bottom(MARGIN - 2.)
-            .with_background(theme.background().with_opacity(background_opacity))
+        Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_child(render_sidebar(theme, font_family))
+            .with_child(
+                Shrinkable::new(
+                    1.,
+                    Container::new(content)
+                        .with_padding_top(MARGIN - 2.)
+                        .with_padding_bottom(MARGIN - 2.)
+                        .with_background(theme.background().with_opacity(background_opacity))
+                        .finish(),
+                )
+                .finish(),
+            )
             .finish(),
     );
 
@@ -144,5 +157,65 @@ pub fn render_preview(theme: &WarpTheme, font_family: FamilyId) -> Box<dyn Eleme
             .with_width(PREVIEW_WIDTH)
             .finish(),
     )
+    .finish()
+}
+
+/// Three channels: the active one, an unread one with a mention badge and a read one.
+fn render_sidebar(theme: &WarpTheme, font_family: FamilyId) -> Box<dyn Element> {
+    let chat = theme.chat();
+    let line = |label: &str, color: ColorU| {
+        Text::new_inline(label.to_string(), font_family, TEXT_SIZE - 1.)
+            .with_color(color)
+            .finish()
+    };
+    let mut read = chat.sidebar_text;
+    read.a = (read.a as f32 * 0.64) as u8;
+    let active = Container::new(line("general", chat.sidebar_active_text))
+        .with_padding_left(4.)
+        .with_background_color(chat.sidebar_hover_bg)
+        .with_border(Border::left(2.).with_border_color(chat.sidebar_active_border))
+        .finish();
+    let badge = Container::new(line("2", chat.mention_badge_text))
+        .with_horizontal_padding(2.)
+        .with_background_color(chat.mention_badge_bg)
+        .with_corner_radius(warpui::elements::CornerRadius::with_all(
+            warpui::elements::Radius::Pixels(3.),
+        ))
+        .finish();
+    let unread = Container::new(
+        Flex::row()
+            .with_child(Shrinkable::new(1., line("dev", chat.sidebar_unread_text)).finish())
+            .with_child(badge)
+            .finish(),
+    )
+    .with_padding_left(6.)
+    .with_padding_right(3.)
+    .finish();
+    let column = Flex::column()
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_child(
+            ConstrainedBox::new(
+                Rect::new()
+                    .with_background_color(chat.sidebar_header_bg)
+                    .finish(),
+            )
+            .with_height(MARGIN - 2.)
+            .finish(),
+        )
+        .with_child(Container::new(active).with_margin_top(LINE_GAP).finish())
+        .with_child(Container::new(unread).with_margin_top(LINE_GAP).finish())
+        .with_child(
+            Container::new(line("random", read))
+                .with_padding_left(6.)
+                .with_margin_top(LINE_GAP)
+                .finish(),
+        )
+        .finish();
+    ConstrainedBox::new(
+        Container::new(column)
+            .with_background_color(chat.sidebar_bg)
+            .finish(),
+    )
+    .with_width(SIDEBAR_WIDTH)
     .finish()
 }
