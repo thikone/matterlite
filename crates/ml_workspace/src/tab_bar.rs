@@ -119,14 +119,27 @@ pub enum ConnectionStatus {
 const ACCOUNT_BUTTON_SIZE: f32 = 22.;
 const STATUS_DOT_SIZE: f32 = 8.;
 
+/// The window's own buttons in the tab bar.
+pub(crate) struct WindowFrameParts {
+    /// Drawn at the right end (Windows, Linux).
+    pub buttons: Option<Box<dyn Element>>,
+    /// Leave room at the left for the native macOS buttons.
+    pub macos_buttons: bool,
+}
+
 pub(crate) fn render_tab_bar(
     tabs: &[ChatTab],
     active: Option<usize>,
     menu: Option<&TabMenu>,
     new_tab_mouse_state: &MouseStateHandle,
     account: Option<(&AccountBadge, &MouseStateHandle)>,
+    frame: WindowFrameParts,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
+    let WindowFrameParts {
+        buttons: window_buttons,
+        macos_buttons,
+    } = frame;
     let theme = appearance.theme();
     let mut row = Flex::row()
         .with_main_axis_size(MainAxisSize::Max)
@@ -195,15 +208,32 @@ pub(crate) fn render_tab_bar(
     }
     let bar = bar.finish();
 
-    Container::new(
+    let padding_left = if macos_buttons {
+        crate::window_controls::MACOS_BUTTONS_WIDTH
+    } else {
+        TAB_BAR_PADDING_LEFT
+    };
+    let bar = Container::new(
         ConstrainedBox::new(bar)
             .with_height(TAB_BAR_HEIGHT)
             .finish(),
     )
-    .with_padding_left(TAB_BAR_PADDING_LEFT)
+    .with_padding_left(padding_left)
     .with_padding_right(TAB_BAR_PADDING_RIGHT)
-    .with_border(Border::bottom(1.).with_border_fill(internal_colors::fg_overlay_3(theme)))
-    .finish()
+    .finish();
+    // The window buttons sit flush with the window's right edge, like the OS's own.
+    let row = match window_buttons {
+        Some(buttons) => Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Start)
+            .with_child(Shrinkable::new(1., bar).finish())
+            .with_child(buttons)
+            .finish(),
+        None => bar,
+    };
+    Container::new(row)
+        .with_border(Border::bottom(1.).with_border_fill(internal_colors::fg_overlay_3(theme)))
+        .finish()
 }
 
 fn render_tab(

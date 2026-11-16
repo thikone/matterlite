@@ -40,6 +40,8 @@ fn main() -> anyhow::Result<()> {
         })),
         on_become_active: Some(Box::new(|ctx| ml_chat::set_window_active(ctx, true))),
         on_resigned_active: Some(Box::new(|ctx| ml_chat::set_window_active(ctx, false))),
+        // The maximize/restore button follows the window's state.
+        on_window_resized: Some(Box::new(ml_workspace::window_resized)),
         // Saves the WebSocket resume state and flushes the cache.
         on_will_terminate: Some(Box::new(ml_chat::shutdown)),
         // One window: closing it quits (on macOS too, until there is a way to reopen it).

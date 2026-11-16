@@ -8,6 +8,7 @@ mod right_panel;
 pub mod search_bar;
 mod tab_bar;
 mod tool_panel;
+pub mod window_controls;
 mod workspace;
 
 pub use search_bar::{
@@ -15,7 +16,14 @@ pub use search_bar::{
 };
 pub use tab_bar::{AccountBadge, ConnectionStatus, TabBadge, TabLeading, TabMenuItem, TabSpec};
 pub use tool_panel::{ToolPane, ToolPanel, ToolPanelTab, ViewPane};
+pub use window_controls::{WindowButton, WindowButtonStates, WindowFrame};
 pub use workspace::{Banner, Workspace, WorkspaceAction, WorkspaceEvent, init};
+
+/// Call from the app's `on_window_resized`: the maximize/restore button follows the window.
+pub fn window_resized(app: &mut warpui::AppContext) {
+    use warpui::SingletonEntity as _;
+    WindowFrame::handle(app).update(app, |frame, ctx| frame.window_resized(ctx));
+}
 
 /// Height of the tab bar, without its 1-px bottom border.
 pub const TAB_BAR_HEIGHT: f32 = 34.;

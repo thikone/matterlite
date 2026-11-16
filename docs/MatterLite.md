@@ -1017,6 +1017,12 @@ on the left with a toolbelt of icons, the **active tab's content** in the middle
  toolbelt  tool panel (Alt+1…6)        chat tab content                  right panel
 ```
 
+- **Window frame**: no OS title bar; the tab bar is the title bar (drag its empty part to
+  move the window, double-click to maximize, drag the edges to resize). Minimize,
+  maximize/restore and close are drawn at its right end on Windows and Linux
+  (`ml_workspace::window_controls`, from Warp's `app/src/util/traffic_lights*`); macOS shows
+  its native buttons at the left. The ⚙ at the right end (Settings) comes with the
+  `SettingsView` (M8).
 - **Toolbelt and tool panel** (Warp's `app/src/workspace/view/left_panel.rs`,
   `ToolPanelView`): an icon per tab, `Alt+1…6` to switch, the same shortcut again to hide
   the panel, resizable, and the open tab and width persisted. Six tabs (§10.6).
@@ -1778,7 +1784,7 @@ and version resource.
 | M5 Files + previews | Upload (multipart order!), **eager attachment pipeline** (P4: download on receive/cache, thumbnails, quota/eviction, `ml_extract` text extraction, `file_text_fts`, coverage reporting), file cards and thumbnails, OpenGraph/permalink embeds, message attachments; **Warp viewers** (`ml_file_views`): code editor, Markdown/Jupyter viewer, image lightbox; editing with "send as new version" / "save as"; snippets; edit attachments before sending; **Files explorer** pane (grouped by chat, local index + per-chat server listing, name/content search); History "files" search scope; Channel › Bookmarks; optional **Vim mode** for the code editor and the multi-line composers ([`MatterLite-ComposerVim.md`](MatterLite-ComposerVim.md)) |
 | M6 Notifications + search | OS notifications (WarpUI), mention highlighting/keys, tray + dock/taskbar badges, **Search** tab (server-wide messages/files with modifiers), slash commands, interactive buttons/dialogs |
 | M7 Auth + multi-server | Personal access tokens, SSO via system browser + custom URL scheme, multiple servers (store already keyed by `ServerId`) |
-| M8 Polish | **Split panes** in chat tabs (pane groups), vertical tabs option, tab groups, settings (notify props, display), theme creator, export/upload themes to Mattermost, i18n, drafts sync, LaTeX, accessibility |
+| M8 Polish | **Split panes** in chat tabs (pane groups), vertical tabs option, tab groups, settings (`SettingsView` with the ⚙ button in the tab bar: notify props, display), theme creator, export/upload themes to Mattermost, i18n, drafts sync, LaTeX, accessibility |
 | M9 Collaborative drafts (optional) | Restore Warp's collaborative editing in `ml_editor` (remote edits, remote cursors, CRDT tests); `matterlite-collab` server plugin (session store, relay over plugin WebSocket events); `ml_collab` session layer; "Write together" in the composer, shared draft in the right panel, owner-only send — see [`MatterLite-Collaborate.md`](MatterLite-Collaborate.md) |
 
 ---

@@ -72,6 +72,8 @@ pub enum RootAction {
     DismissError,
     PauseSync,
     ResumeSync,
+    /// The window buttons on the login screen.
+    Window(ml_workspace::WindowButton),
 }
 
 pub(crate) fn init(app: &mut AppContext) {
@@ -147,6 +149,8 @@ pub struct RootView {
     errors: Vec<String>,
     errors_shown: u64,
     error_close: MouseStateHandle,
+    window: warpui::WindowId,
+    window_buttons: ml_workspace::WindowButtonStates,
 }
 
 impl RootView {
@@ -201,7 +205,13 @@ impl RootView {
             errors: Vec::new(),
             errors_shown: 0,
             error_close: MouseStateHandle::default(),
+            window: ctx.window_id(),
+            window_buttons: Default::default(),
         };
+        ctx.subscribe_to_model(&ml_workspace::WindowFrame::handle(ctx), |_, _, _, ctx| {
+            ctx.notify()
+        });
+        ml_workspace::window_controls::show_native_buttons(ctx, root.window);
         root.on_state_changed(ctx);
         root
     }
@@ -1093,7 +1103,20 @@ impl View for RootView {
         let session = Session::as_ref(app);
         let (SessionState::Active(active), Some(workspace)) = (session.state(), &self.workspace)
         else {
-            return ChildView::new(&self.login).finish();
+            let login = ChildView::new(&self.login).finish();
+            let buttons = ml_workspace::window_controls::render(
+                self.window,
+                &self.window_buttons,
+                |button, ctx| ctx.dispatch_typed_action(RootAction::Window(button)),
+                app,
+            );
+            return match buttons {
+                Some(buttons) => Stack::new()
+                    .with_child(login)
+                    .with_child(Align::new(buttons).top_right().finish())
+                    .finish(),
+                None => login,
+            };
         };
         let mut stack = Stack::new().with_child(ChildView::new(workspace).finish());
         if self.switcher_open
@@ -1155,6 +1178,11 @@ impl TypedActionView for RootView {
                     session.resolve_server_change(answer, ctx)
                 });
             }
+            RootAction::Window(button) => match button {
+                ml_workspace::WindowButton::Minimize => ctx.minimize_window(),
+                ml_workspace::WindowButton::Maximize => ctx.toggle_maximized_window(),
+                ml_workspace::WindowButton::Close => ctx.close_window(),
+            },
             RootAction::DismissError => {
                 self.errors.clear();
                 ctx.notify();

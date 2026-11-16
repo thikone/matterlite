@@ -4652,6 +4652,7 @@ name = "ml_workspace"
 version = "0.1.0"
 dependencies = [
  "enum-iterator",
+ "log",
  "ml_editor",
  "ml_themes",
  "pathfinder_color",

@@ -21,8 +21,11 @@ use warpui::{
 };
 
 use crate::right_panel::RightPanel;
-use crate::tab_bar::{AccountBadge, ChatTab, TabMenu, TabMenuItem, TabSpec, render_tab_bar};
+use crate::tab_bar::{
+    AccountBadge, ChatTab, TabMenu, TabMenuItem, TabSpec, WindowFrameParts, render_tab_bar,
+};
 use crate::tool_panel::{ToolPanel, ToolPanelEvent, ToolPanelTab};
+use crate::window_controls::{self, ButtonsSide, WindowButton, WindowButtonStates, WindowFrame};
 
 /// Keymap context set while the right panel is open (Esc closes it).
 const RIGHT_PANEL_OPEN: &str = "Workspace_RightPanelOpen";
@@ -63,6 +66,8 @@ pub enum WorkspaceAction {
     /// The account button in the tab bar was clicked.
     OpenAccountMenu,
     BannerAction,
+    /// Minimize, maximize/restore or close the window.
+    Window(WindowButton),
 }
 
 /// A bar under the tab bar about the whole window (the connection), with an optional link.
@@ -95,6 +100,8 @@ pub enum WorkspaceEvent {
 /// Registers the workspace keybindings (MatterLite.md §10.5).
 pub fn init(app: &mut AppContext) {
     use warpui::keymap::macros::*;
+
+    app.add_singleton_model(WindowFrame::new);
 
     let workspace = || id!("Workspace");
     let mut bindings = Vec::new();
@@ -159,11 +166,14 @@ pub struct Workspace {
     content: Option<Box<dyn crate::ToolPane>>,
     banner: Option<Banner>,
     banner_mouse_state: MouseStateHandle,
+    window: warpui::WindowId,
+    window_buttons: WindowButtonStates,
 }
 
 impl Workspace {
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
         ctx.subscribe_to_model(&Appearance::handle(ctx), |_, _, _, ctx| ctx.notify());
+        ctx.subscribe_to_model(&WindowFrame::handle(ctx), |_, _, _, ctx| ctx.notify());
         let tool_panel = ctx.add_typed_action_view(ToolPanel::new);
         ctx.subscribe_to_view(&tool_panel, |me, _, event, ctx| match event {
             ToolPanelEvent::ReturnFocus => me.focus_content(ctx),
@@ -199,6 +209,8 @@ impl Workspace {
             content: None,
             banner: None,
             banner_mouse_state: MouseStateHandle::default(),
+            window: ctx.window_id(),
+            window_buttons: WindowButtonStates::default(),
         }
     }
 
@@ -526,6 +538,16 @@ impl View for Workspace {
                 self.account
                     .as_ref()
                     .map(|account| (account, &self.account_mouse_state)),
+                WindowFrameParts {
+                    buttons: window_controls::render(
+                        self.window,
+                        &self.window_buttons,
+                        |button, ctx| ctx.dispatch_typed_action(WorkspaceAction::Window(button)),
+                        app,
+                    ),
+                    macos_buttons: window_controls::buttons_side(app, self.window)
+                        == ButtonsSide::Left,
+                },
                 appearance,
             ))
             .with_child(match &self.banner {
@@ -549,6 +571,11 @@ impl TypedActionView for Workspace {
         match *action {
             WorkspaceAction::ShowToolPanelTab(tab) => self.show_tool_panel_tab(tab, ctx),
             WorkspaceAction::BannerAction => ctx.emit(WorkspaceEvent::BannerAction),
+            WorkspaceAction::Window(button) => match button {
+                WindowButton::Minimize => ctx.minimize_window(),
+                WindowButton::Maximize => ctx.toggle_maximized_window(),
+                WindowButton::Close => ctx.close_window(),
+            },
             WorkspaceAction::ToggleToolPanel => {
                 self.set_tool_panel_open(!self.tool_panel_open, ctx);
             }
