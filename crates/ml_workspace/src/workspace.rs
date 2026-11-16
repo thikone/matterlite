@@ -22,7 +22,7 @@ use warpui::{
 
 use crate::right_panel::RightPanel;
 use crate::tab_bar::{
-    AccountBadge, ChatTab, TabMenu, TabMenuItem, TabSpec, WindowFrameParts, render_tab_bar,
+    AccountBadge, ChatTab, TabBar, TabMenu, TabMenuItem, TabSpec, render_tab_bar,
 };
 use crate::tool_panel::{ToolPanel, ToolPanelEvent, ToolPanelTab};
 use crate::window_controls::{self, ButtonsSide, WindowButton, WindowButtonStates, WindowFrame};
@@ -38,8 +38,14 @@ const THEME_CHOOSER_KEY: &str = if cfg!(target_os = "macos") {
 } else {
     "ctrl-alt-shift-T"
 };
+/// Shows or hides the tool panel: Warp's key for its left panel.
+const TOOL_PANEL_KEY: &str = if cfg!(target_os = "macos") {
+    "cmd-\\"
+} else {
+    "ctrl-shift-|"
+};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WorkspaceAction {
     /// Shows the tab in the tool panel, or hides the panel if that tab is already showing.
     ShowToolPanelTab(ToolPanelTab),
@@ -68,6 +74,12 @@ pub enum WorkspaceAction {
     BannerAction,
     /// Minimize, maximize/restore or close the window.
     Window(WindowButton),
+    /// The pointer came onto a tab's close button: the unpinned tabs keep this width.
+    TabHoverWidthStart {
+        width: f32,
+    },
+    /// The pointer left the close button: the tabs size themselves again.
+    TabHoverWidthEnd,
 }
 
 /// A bar under the tab bar about the whole window (the connection), with an optional link.
@@ -127,6 +139,11 @@ pub fn init(app: &mut AppContext) {
             workspace(),
         ),
         FixedBinding::new("cmdorctrl-t", WorkspaceAction::NewTab, workspace()),
+        FixedBinding::new(
+            TOOL_PANEL_KEY,
+            WorkspaceAction::ToggleToolPanel,
+            workspace(),
+        ),
         FixedBinding::new("cmdorctrl-w", WorkspaceAction::CloseActiveTab, workspace()),
         FixedBinding::new(
             "cmdorctrl-shift-T",
@@ -168,6 +185,9 @@ pub struct Workspace {
     banner_mouse_state: MouseStateHandle,
     window: warpui::WindowId,
     window_buttons: WindowButtonStates,
+    tool_panel_mouse_state: MouseStateHandle,
+    /// See [`TabBar::fixed_tab_width`].
+    fixed_tab_width: Option<f32>,
 }
 
 impl Workspace {
@@ -211,6 +231,8 @@ impl Workspace {
             banner_mouse_state: MouseStateHandle::default(),
             window: ctx.window_id(),
             window_buttons: WindowButtonStates::default(),
+            tool_panel_mouse_state: MouseStateHandle::default(),
+            fixed_tab_width: None,
         }
     }
 
@@ -531,15 +553,19 @@ impl View for Workspace {
         let column = Flex::column()
             .with_main_axis_size(MainAxisSize::Max)
             .with_child(render_tab_bar(
-                &self.tabs,
-                self.active_tab,
-                self.tab_menu.as_ref(),
-                &self.new_tab_mouse_state,
-                self.account
-                    .as_ref()
-                    .map(|account| (account, &self.account_mouse_state)),
-                WindowFrameParts {
-                    buttons: window_controls::render(
+                TabBar {
+                    tabs: &self.tabs,
+                    active: self.active_tab,
+                    menu: self.tab_menu.as_ref(),
+                    fixed_tab_width: self.fixed_tab_width,
+                    tool_panel_open: self.tool_panel_open,
+                    tool_panel_mouse_state: &self.tool_panel_mouse_state,
+                    new_tab_mouse_state: &self.new_tab_mouse_state,
+                    account: self
+                        .account
+                        .as_ref()
+                        .map(|account| (account, &self.account_mouse_state)),
+                    window_buttons: window_controls::render(
                         self.window,
                         &self.window_buttons,
                         |button, ctx| ctx.dispatch_typed_action(WorkspaceAction::Window(button)),
@@ -571,6 +597,15 @@ impl TypedActionView for Workspace {
         match *action {
             WorkspaceAction::ShowToolPanelTab(tab) => self.show_tool_panel_tab(tab, ctx),
             WorkspaceAction::BannerAction => ctx.emit(WorkspaceEvent::BannerAction),
+            WorkspaceAction::TabHoverWidthStart { width } => {
+                self.fixed_tab_width = Some(width);
+                ctx.notify();
+            }
+            WorkspaceAction::TabHoverWidthEnd => {
+                if self.fixed_tab_width.take().is_some() {
+                    ctx.notify();
+                }
+            }
             WorkspaceAction::Window(button) => match button {
                 WindowButton::Minimize => ctx.minimize_window(),
                 WindowButton::Maximize => ctx.toggle_maximized_window(),

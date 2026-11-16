@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Modelled on warp-terminal `app/src/tab.rs` @ 5bb7bcc6a (the `NewTabStyling` look: overlay
-// fills, 1-px dividers, close button on hover); the code is new.
+// Modelled on warp-terminal `app/src/tab.rs` and the tab bar of `app/src/workspace/view.rs`
+// (`render_tab_bar_contents`, `render_tab_bar_icon_button`) @ 5bb7bcc6a (the `NewTabStyling`
+// look: overlay fills, 1-px dividers, the close button over the tab's right end on hover, the
+// hover-fixed tab width, the tools panel button); the code is new.
 
 //! The chat tab bar across the top of the window (MatterLite.md §10.7). The app supplies the
 //! tabs ([`TabSpec`]); the bar draws them and reports clicks as workspace actions.
@@ -13,13 +15,14 @@ use warp_core::ui::theme::color::internal_colors;
 use warpui::Element;
 use warpui::color::ColorU;
 use warpui::elements::{
-    Align, Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty,
-    Fill, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning,
-    ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Shrinkable, Stack, Text,
+    Align, Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
+    DispatchEventResult, Empty, EventHandler, Fill, Flex, Hoverable, MainAxisAlignment,
+    MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
+    ParentOffsetBounds, Radius, SavePosition, Shrinkable, Stack, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
-use warpui::ui_components::components::UiComponent;
+use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 
 use crate::buttons::icon_button_with_color;
 use crate::{TAB_BAR_HEIGHT, WorkspaceAction};
@@ -27,10 +30,36 @@ use crate::{TAB_BAR_HEIGHT, WorkspaceAction};
 const TAB_MIN_WIDTH: f32 = 90.;
 const TAB_MAX_WIDTH: f32 = 220.;
 const PINNED_TAB_MAX_WIDTH: f32 = 150.;
-const TAB_HORIZONTAL_PADDING: f32 = 10.;
-const TAB_BAR_PADDING_LEFT: f32 = 4.;
+/// Warp's padding either side of a tab's title (equal, so the title stays centred).
+const TAB_CONTENT_PADDING: f32 = 8.;
+/// A pinned tab's padding: room for the pin at the right, mirrored at the left.
+const PINNED_TAB_CONTENT_PADDING: f32 = 26.;
+/// Before the first item of the bar (Warp's `compute_tab_bar_left_padding`).
+const TAB_BAR_LEADING: f32 = 16.;
+/// Between the tab bar's icon buttons (Warp's `TAB_BAR_ICON_PADDING`).
+const TAB_BAR_ICON_PADDING: f32 = 4.;
 const TAB_BAR_PADDING_RIGHT: f32 = 8.;
 const CLOSE_BUTTON_WIDTH: f32 = 20.;
+/// The close button's distance from the tab's right edge.
+const CLOSE_BUTTON_INSET: f32 = 6.;
+/// The close button's fill over the title, in percent of `surface_3`.
+const CLOSE_BUTTON_OPACITY: u8 = 60;
+
+/// Shortcut labels for the tab bar's tooltips (the bindings are in `workspace::init`).
+const NEW_TAB_KEY_LABEL: &str = if cfg!(target_os = "macos") {
+    "⌘K"
+} else {
+    "Ctrl+K"
+};
+const TOOL_PANEL_KEY_LABEL: &str = if cfg!(target_os = "macos") {
+    "⌘\\"
+} else {
+    "Ctrl+Shift+\\"
+};
+
+fn tab_position_id(index: usize) -> String {
+    format!("ml_workspace:tab:{index}")
+}
 const LEADING_SIZE: f32 = 13.;
 
 /// What a tab shows; supplied by the app.
@@ -119,33 +148,85 @@ pub enum ConnectionStatus {
 const ACCOUNT_BUTTON_SIZE: f32 = 22.;
 const STATUS_DOT_SIZE: f32 = 8.;
 
-/// The window's own buttons in the tab bar.
-pub(crate) struct WindowFrameParts {
-    /// Drawn at the right end (Windows, Linux).
-    pub buttons: Option<Box<dyn Element>>,
+/// Everything the tab bar draws; the workspace fills it in each render.
+pub(crate) struct TabBar<'a> {
+    pub tabs: &'a [ChatTab],
+    pub active: Option<usize>,
+    pub menu: Option<&'a TabMenu>,
+    /// While the pointer is on a tab's close button, every unpinned tab keeps that tab's width,
+    /// so after a close the next tab's button slides under the pointer (Warp's
+    /// `hover_fixed_width`).
+    pub fixed_tab_width: Option<f32>,
+    pub tool_panel_open: bool,
+    pub tool_panel_mouse_state: &'a MouseStateHandle,
+    pub new_tab_mouse_state: &'a MouseStateHandle,
+    pub account: Option<(&'a AccountBadge, &'a MouseStateHandle)>,
+    /// The window's buttons, drawn at the right end (Windows, Linux).
+    pub window_buttons: Option<Box<dyn Element>>,
     /// Leave room at the left for the native macOS buttons.
     pub macos_buttons: bool,
 }
 
-pub(crate) fn render_tab_bar(
-    tabs: &[ChatTab],
-    active: Option<usize>,
-    menu: Option<&TabMenu>,
-    new_tab_mouse_state: &MouseStateHandle,
-    account: Option<(&AccountBadge, &MouseStateHandle)>,
-    frame: WindowFrameParts,
+/// A tab bar icon button as Warp draws one: sub-text colour, main-text colour and a fill while
+/// `active`, and a tooltip with the shortcut under the label.
+fn tab_bar_icon_button(
     appearance: &Appearance,
+    icon: Icon,
+    mouse_state: &MouseStateHandle,
+    active: bool,
+    label: &str,
+    shortcut: &str,
+    action: WorkspaceAction,
 ) -> Box<dyn Element> {
-    let WindowFrameParts {
-        buttons: window_buttons,
-        macos_buttons,
-    } = frame;
     let theme = appearance.theme();
+    let color = if active {
+        theme.main_text_color(theme.background())
+    } else {
+        theme.sub_text_color(theme.background())
+    };
+    let tooltip = appearance
+        .ui_builder()
+        .tool_tip_with_sublabel(label.to_owned(), shortcut.to_owned())
+        .build()
+        .finish();
+    let mut button = icon_button_with_color(appearance, icon, active, mouse_state.clone(), color);
+    if active {
+        button = button.with_active_styles(
+            UiComponentStyles::default()
+                .set_background(internal_colors::fg_overlay_3(theme).into()),
+        );
+    }
+    button
+        .with_tooltip(move || tooltip)
+        .build()
+        .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action))
+        .with_cursor(Cursor::PointingHand)
+        .finish()
+}
+
+pub(crate) fn render_tab_bar(bar: TabBar, appearance: &Appearance) -> Box<dyn Element> {
+    let TabBar {
+        tabs,
+        active,
+        menu,
+        fixed_tab_width,
+        tool_panel_open,
+        tool_panel_mouse_state,
+        new_tab_mouse_state,
+        account,
+        window_buttons,
+        macos_buttons,
+    } = bar;
     let mut row = Flex::row()
         .with_main_axis_size(MainAxisSize::Max)
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
+    let last = tabs.len().saturating_sub(1);
     for (index, tab) in tabs.iter().enumerate() {
-        let mut element = render_tab(tab, index, Some(index) == active, appearance);
+        let mut element = SavePosition::new(
+            render_tab(tab, index, Some(index) == active, index == last, appearance),
+            &tab_position_id(index),
+        )
+        .finish();
         if let Some(menu) = menu.filter(|menu| menu.index == index) {
             let mut stack = Stack::new().with_child(element);
             stack.add_positioned_overlay_child(
@@ -159,46 +240,54 @@ pub(crate) fn render_tab_bar(
             );
             element = stack.finish();
         }
-        let max_width = if tab.spec.pinned {
-            PINNED_TAB_MAX_WIDTH
-        } else {
-            TAB_MAX_WIDTH
+        let sized = match fixed_tab_width {
+            // Pinned tabs have no close button, so the width comes from an unpinned tab.
+            Some(width) if !tab.spec.pinned => ConstrainedBox::new(element).with_width(width),
+            _ => ConstrainedBox::new(element)
+                .with_min_width(TAB_MIN_WIDTH)
+                .with_max_width(if tab.spec.pinned {
+                    PINNED_TAB_MAX_WIDTH
+                } else {
+                    TAB_MAX_WIDTH
+                }),
         };
-        row.add_child(
-            Shrinkable::new(
-                1.,
-                ConstrainedBox::new(element)
-                    .with_min_width(TAB_MIN_WIDTH)
-                    .with_max_width(max_width)
-                    .finish(),
-            )
-            .finish(),
-        );
+        row.add_child(Shrinkable::new(1., sized.finish()).finish());
     }
 
-    let new_tab_tooltip = appearance
-        .ui_builder()
-        .tool_tip("Open a chat (Ctrl+K)".to_string())
-        .build()
-        .finish();
-    let new_tab_button = icon_button_with_color(
+    let tool_panel_button = tab_bar_icon_button(
+        appearance,
+        Icon::Menu,
+        tool_panel_mouse_state,
+        tool_panel_open,
+        "Tools panel",
+        TOOL_PANEL_KEY_LABEL,
+        WorkspaceAction::ToggleToolPanel,
+    );
+    let new_tab_button = tab_bar_icon_button(
         appearance,
         Icon::Plus,
+        new_tab_mouse_state,
         false,
-        new_tab_mouse_state.clone(),
-        theme.sub_text_color(theme.background()),
-    )
-    .with_tooltip(move || new_tab_tooltip)
-    .build()
-    .on_click(|ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::NewTab))
-    .with_cursor(Cursor::PointingHand)
-    .finish();
+        "Open a chat",
+        NEW_TAB_KEY_LABEL,
+        WorkspaceAction::NewTab,
+    );
 
     let mut bar = Flex::row()
         .with_main_axis_size(MainAxisSize::Max)
         .with_cross_axis_alignment(CrossAxisAlignment::Center)
+        .with_child(
+            Container::new(tool_panel_button)
+                .with_margin_left(TAB_BAR_ICON_PADDING)
+                .with_margin_right(8.)
+                .finish(),
+        )
         .with_child(Shrinkable::new(1., row.finish()).finish())
-        .with_child(Container::new(new_tab_button).with_margin_left(4.).finish());
+        .with_child(
+            Container::new(new_tab_button)
+                .with_margin_left(TAB_BAR_ICON_PADDING)
+                .finish(),
+        );
     if let Some((badge, mouse_state)) = account {
         bar.add_child(
             Container::new(render_account_button(badge, mouse_state, appearance))
@@ -209,9 +298,9 @@ pub(crate) fn render_tab_bar(
     let bar = bar.finish();
 
     let padding_left = if macos_buttons {
-        crate::window_controls::MACOS_BUTTONS_WIDTH
+        crate::window_controls::MACOS_BUTTONS_WIDTH + TAB_BAR_LEADING
     } else {
-        TAB_BAR_PADDING_LEFT
+        TAB_BAR_LEADING
     };
     let bar = Container::new(
         ConstrainedBox::new(bar)
@@ -231,15 +320,79 @@ pub(crate) fn render_tab_bar(
             .finish(),
         None => bar,
     };
+    // The mouse's back and forward buttons go to the previous and next tab, as in Warp.
+    let row = EventHandler::new(row)
+        .on_back_mouse_down(|ctx, _, _| {
+            ctx.dispatch_typed_action(WorkspaceAction::ActivatePrevTab);
+            DispatchEventResult::StopPropagation
+        })
+        .on_forward_mouse_down(|ctx, _, _| {
+            ctx.dispatch_typed_action(WorkspaceAction::ActivateNextTab);
+            DispatchEventResult::StopPropagation
+        })
+        .finish();
+    let theme = appearance.theme();
     Container::new(row)
         .with_border(Border::bottom(1.).with_border_fill(internal_colors::fg_overlay_3(theme)))
         .finish()
+}
+
+/// The close button laid over the tab's right end while the tab is hovered. Its translucent
+/// fill keeps a long title readable under it. Hovering it fixes the tabs' width
+/// (`TabHoverWidthStart`) until the pointer leaves it.
+fn render_close_button(
+    tab: &ChatTab,
+    index: usize,
+    is_last: bool,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let theme = appearance.theme();
+    let surface = theme.surface_3().into_solid();
+    let mut translucent = surface;
+    translucent.a = (u16::from(surface.a) * u16::from(CLOSE_BUTTON_OPACITY) / 100) as u8;
+    let styles = |color| {
+        UiComponentStyles::default()
+            .set_background(Fill::Solid(color))
+            .set_border_radius(CornerRadius::with_all(Radius::Pixels(2.)))
+    };
+    icon_button_with_color(
+        appearance,
+        Icon::X,
+        false,
+        tab.close_mouse_state.clone(),
+        theme.sub_text_color(theme.background()),
+    )
+    .with_style(styles(translucent))
+    .with_hovered_styles(styles(surface))
+    .with_active_styles(styles(surface))
+    .build()
+    .on_hover(move |hovered, ctx, _, _| {
+        if hovered {
+            if let Some(rect) = ctx.element_position_by_id(tab_position_id(index)) {
+                ctx.dispatch_typed_action(WorkspaceAction::TabHoverWidthStart {
+                    width: rect.width(),
+                });
+            }
+        } else {
+            ctx.dispatch_typed_action(WorkspaceAction::TabHoverWidthEnd);
+        }
+    })
+    .on_click(move |ctx, _, _| {
+        // No tab slides into the last tab's place, so the others may grow at once.
+        if is_last {
+            ctx.dispatch_typed_action(WorkspaceAction::TabHoverWidthEnd);
+        }
+        ctx.dispatch_typed_action(WorkspaceAction::CloseTab(index))
+    })
+    .with_cursor(Cursor::PointingHand)
+    .finish()
 }
 
 fn render_tab(
     tab: &ChatTab,
     index: usize,
     is_active: bool,
+    is_last: bool,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
     let theme = appearance.theme().clone();
@@ -247,17 +400,7 @@ fn render_tab(
     let font = appearance.ui_font_family();
     let font_size = appearance.ui_font_size();
     let spec = tab.spec.clone();
-    let close_button = icon_button_with_color(
-        appearance,
-        Icon::X,
-        false,
-        tab.close_mouse_state.clone(),
-        theme.sub_text_color(theme.background()),
-    )
-    .build()
-    .on_click(move |ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::CloseTab(index)))
-    .with_cursor(Cursor::PointingHand)
-    .finish();
+    let close_button = render_close_button(tab, index, is_last, appearance);
 
     Hoverable::new(tab.mouse_state.clone(), move |mouse_state| {
         let is_hovered = mouse_state.is_hovered();
@@ -337,10 +480,22 @@ fn render_tab(
             ),
             TabBadge::None => {}
         }
-        // Pinned tabs show a pin and close from the menu; the others reserve the close button's
-        // space on every tab so titles don't shift on hover.
-        content.add_child(if spec.pinned {
-            ConstrainedBox::new(
+        // As in Warp, the title is centred in the whole tab and the close button is laid over
+        // the tab's right end while the pointer is on the tab. Pinned tabs show a pin there
+        // instead and close from the menu.
+        let padding = if spec.pinned {
+            PINNED_TAB_CONTENT_PADDING
+        } else {
+            TAB_CONTENT_PADDING
+        };
+        let mut stack = Stack::new().with_child(
+            Container::new(content.finish())
+                .with_horizontal_padding(padding)
+                .with_vertical_padding(2.)
+                .finish(),
+        );
+        let slot = if spec.pinned {
+            Some(
                 Align::new(
                     ConstrainedBox::new(
                         Icon::Pin
@@ -353,28 +508,32 @@ fn render_tab(
                 )
                 .finish(),
             )
-            .with_width(CLOSE_BUTTON_WIDTH)
-            .finish()
-        } else if is_active || is_hovered {
-            ConstrainedBox::new(close_button)
-                .with_width(CLOSE_BUTTON_WIDTH)
-                .with_height(CLOSE_BUTTON_WIDTH)
-                .finish()
+        } else if is_hovered {
+            Some(close_button)
         } else {
-            ConstrainedBox::new(Empty::new().finish())
-                .with_width(CLOSE_BUTTON_WIDTH)
-                .finish()
-        });
+            None
+        };
+        if let Some(slot) = slot {
+            stack.add_positioned_child(
+                ConstrainedBox::new(slot)
+                    .with_width(CLOSE_BUTTON_WIDTH)
+                    .with_height(CLOSE_BUTTON_WIDTH)
+                    .finish(),
+                OffsetPositioning::offset_from_parent(
+                    vec2f(-CLOSE_BUTTON_INSET, 0.),
+                    ParentOffsetBounds::ParentByPosition,
+                    ParentAnchor::MiddleRight,
+                    ChildAnchor::MiddleRight,
+                ),
+            );
+        }
 
         let border = if is_active {
             internal_colors::fg_overlay_4(&theme)
         } else {
             internal_colors::fg_overlay_3(&theme)
         };
-        Container::new(content.finish())
-            .with_padding_left(TAB_HORIZONTAL_PADDING)
-            .with_padding_right(TAB_HORIZONTAL_PADDING / 2.)
-            .with_vertical_padding(2.)
+        Container::new(stack.finish())
             .with_background(background)
             .with_border(
                 Border::all(1.)
@@ -384,6 +543,8 @@ fn render_tab(
             )
             .finish()
     })
+    // A click on the close button must not also activate the tab that takes its place.
+    .with_defer_events_to_children()
     .on_click(move |ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::ActivateTab(index)))
     .on_middle_click(move |ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::CloseTab(index)))
     .on_right_click(move |ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::OpenTabMenu(index)))

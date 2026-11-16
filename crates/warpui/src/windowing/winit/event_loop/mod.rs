@@ -1196,6 +1196,24 @@ impl EventLoop {
                                 click_count,
                             },
                         )),
+                        // MatterLite: the mouse's side buttons, as the macOS front end reports
+                        // them (previous/next tab).
+                        MouseButton::Back => {
+                            Some(ConvertedEvent::Event(crate::event::Event::BackMouseDown {
+                                position: window_state.last_cursor_position.to_vec2f(),
+                                cmd: window_state.modifiers.super_key(),
+                                shift: window_state.modifiers.shift_key(),
+                                click_count,
+                            }))
+                        }
+                        MouseButton::Forward => Some(ConvertedEvent::Event(
+                            crate::event::Event::ForwardMouseDown {
+                                position: window_state.last_cursor_position.to_vec2f(),
+                                cmd: window_state.modifiers.super_key(),
+                                shift: window_state.modifiers.shift_key(),
+                                click_count,
+                            },
+                        )),
                         _ => None,
                     }
                 }

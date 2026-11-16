@@ -43,6 +43,8 @@ pub enum Icon {
     Users,
     Pin,
     Check,
+    /// A window with its left pane marked: the tools panel button.
+    Menu,
 }
 
 impl From<Icon> for &'static str {
@@ -75,6 +77,7 @@ impl From<Icon> for &'static str {
             Icon::Users => "bundled/svg/users-02.svg",
             Icon::Pin => "bundled/svg/pin-01.svg",
             Icon::Check => "bundled/svg/check-thick.svg",
+            Icon::Menu => "bundled/svg/layout-left.svg",
             // Drawn for MatterLite (Warp has no lock or archive icon).
             Icon::Lock => "matterlite/svg/lock.svg",
             Icon::Archive => "matterlite/svg/archive.svg",

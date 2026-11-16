@@ -215,6 +215,8 @@ fn test_uniform_layered_click_handling() {
 /// and the Chats list did, which crashed the first login on a fresh install).
 struct EmptyListView {
     list_state: UniformListState,
+    /// In a `Scrollable`, as the Chats list is: the list has a height but nothing to scroll.
+    scrollable: Option<crate::elements::ScrollStateHandle>,
 }
 
 impl Entity for EmptyListView {
@@ -228,14 +230,25 @@ impl crate::core::View for EmptyListView {
 
     fn render(&self, _: &AppContext) -> Box<dyn Element> {
         let rows: Vec<&str> = Vec::new();
-        UniformList::new(self.list_state.clone(), rows.len(), move |range, _| {
+        let list = UniformList::new(self.list_state.clone(), rows.len(), move |range, _| {
             let rows = rows.clone();
             range.map(move |index| {
                 let _ = rows[index];
                 Rect::new().finish()
             })
-        })
-        .finish()
+        });
+        match &self.scrollable {
+            Some(state) => crate::elements::Scrollable::vertical(
+                state.clone(),
+                list.finish_scrollable(),
+                crate::elements::ScrollbarWidth::Auto,
+                crate::elements::Fill::None,
+                crate::elements::Fill::None,
+                crate::elements::Fill::None,
+            )
+            .finish(),
+            None => list.finish(),
+        }
     }
 }
 
@@ -243,12 +256,12 @@ impl TypedActionView for EmptyListView {
     type Action = ();
 }
 
-#[test]
-fn an_empty_list_builds_no_items() {
+fn build_empty_list(scrollable: bool) {
     App::test((), |mut app| async move {
         let app = &mut app;
         let (window_id, _view) = app.add_window(WindowStyle::NotStealFocus, |_| EmptyListView {
             list_state: UniformListState::new(),
+            scrollable: scrollable.then(Default::default),
         });
         let root = app.root_view_id(window_id).unwrap();
         app.update(move |ctx| {
@@ -265,4 +278,16 @@ fn an_empty_list_builds_no_items() {
             presenter.build_scene(vec2f(200., 300.), 1., None, ctx);
         });
     });
+}
+
+#[test]
+fn an_empty_list_builds_no_items() {
+    build_empty_list(false);
+}
+
+/// MatterLite: the scrollbar of an empty list has no thumb; it was placed at 0/0 = NaN, which
+/// a debug build's scene asserts on (the Chats list right after the first login).
+#[test]
+fn an_empty_scrollable_list_paints() {
+    build_empty_list(true);
 }

@@ -449,17 +449,29 @@ impl Element for Scrollable {
 
         let minimum_size_percentage =
             (MINIMUM_HEIGHT / self.scrollable_size.unwrap().along(self.axis)).min(1.);
-        let size_percentage =
-            (scroll_data.visible_px / total_size).max(minimum_size_percentage.into_pixels());
+        // MatterLite: an empty child (nothing to scroll) shows no thumb; 0/0 would draw one at a
+        // NaN position.
+        let size_percentage = if total_size.as_f32() > 0. {
+            (scroll_data.visible_px / total_size)
+                .max(minimum_size_percentage.into_pixels())
+                .as_f32()
+        } else {
+            1.
+        };
 
-        self.scrollbar_size_percentage = Some(size_percentage.as_f32());
+        self.scrollbar_size_percentage = Some(size_percentage);
 
         // The scrollbar position is calculated with the ratio between scroll top and scroll bottom.
         let scroll_start = self.scroll_start(app);
         let scroll_remaining = self.scroll_remaining(app);
 
-        let scrollbar_position_percentage = scroll_start / (scroll_start + scroll_remaining);
-        self.scrollbar_position_percentage = Some(scrollbar_position_percentage.as_f32());
+        let scrollable = (scroll_start + scroll_remaining).as_f32();
+        let scrollbar_position_percentage = if scrollable > 0. {
+            scroll_start.as_f32() / scrollable
+        } else {
+            0.
+        };
+        self.scrollbar_position_percentage = Some(scrollbar_position_percentage);
     }
 
     fn paint(&mut self, origin: Vector2F, ctx: &mut PaintContext, app: &AppContext) {

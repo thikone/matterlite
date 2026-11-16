@@ -1026,8 +1026,10 @@ on the left with a toolbelt of icons, the **active tab's content** in the middle
 - **Toolbelt and tool panel** (Warp's `app/src/workspace/view/left_panel.rs`,
   `ToolPanelView`): an icon per tab, `Alt+1…6` to switch, the same shortcut again to hide
   the panel, resizable, and the open tab and width persisted. Six tabs (§10.6).
-- **Tab bar** (Warp's `app/src/tab.rs`, `TabBarState`, `TabComponent`): one tab per
-  recent chat (§10.7). Optional vertical tabs, as in Warp
+- **Tab bar** (Warp's `app/src/tab.rs`, `TabBarState`, `TabComponent`): the Tools panel
+  button, one tab per recent chat (§10.7), `+` (open a chat), the account button. As in
+  Warp: the close button over the tab's right end on hover, tab widths held while closing
+  tabs with it, the mouse's back/forward buttons switch tabs, shortcuts in the tooltips. Optional vertical tabs, as in Warp
   (`app/src/workspace/view/vertical_tabs*`).
 - **Chat tab content**: channel header, timeline, typing indicator, composer. Later (after
   the MVP) a tab can hold **split panes** using Warp's pane groups
@@ -1070,6 +1072,7 @@ the webapp:
 | Keys | Action |
 |---|---|
 | `Alt+1…6` | Show/hide tool panel tab (Chats, Activity, Channel, History, Files, Search) |
+| `Ctrl+Shift+\` / `Cmd+\` | Show/hide the tool panel (Warp's left panel key) |
 | `Ctrl/Cmd+K` | Chat switcher (opens or focuses a tab) |
 | Warp's `ActivateNextTab` / `ActivatePrevTab` bindings, `Ctrl/Cmd+1…9` | Next/previous tab, go to tab N (`ActivateTabByNumber`, `app/src/workspace/mod.rs`) |
 | `Ctrl/Cmd+W`, `Ctrl/Cmd+Shift+T` | Close tab, reopen closed tab (Warp's `undo_close`) |
