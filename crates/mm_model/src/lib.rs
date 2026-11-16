@@ -23,7 +23,9 @@ pub mod user;
 pub mod version;
 pub mod ws;
 
-pub use channel::{Channel, ChannelMember, ChannelType, OrderedSidebarCategories, SidebarCategory};
+pub use channel::{
+    Channel, ChannelMember, ChannelStats, ChannelType, OrderedSidebarCategories, SidebarCategory,
+};
 pub use config::{ClientConfig, CollapsedThreads};
 pub use error::AppError;
 pub use ids::{CategoryId, ChannelId, EmojiId, FileId, PostId, TeamId, UserId, is_valid_id};

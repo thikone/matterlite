@@ -27,6 +27,7 @@ use settings::Setting as _;
 use warp_core::ui::icons::Icon;
 
 use crate::account_theme::AccountThemeFollower;
+use crate::channel_view::{ChannelEvent, ChannelView};
 use crate::chats::{ChannelIcon, Presence};
 use crate::chats_view::{ChatsEvent, ChatsView};
 use crate::format::format_size;
@@ -108,6 +109,7 @@ pub struct RootView {
     login: ViewHandle<LoginView>,
     workspace: Option<ViewHandle<Workspace>>,
     chats: Option<ViewHandle<ChatsView>>,
+    channel: Option<ViewHandle<ChannelView>>,
     switcher: Option<ViewHandle<SwitcherView>>,
     switcher_open: bool,
     tabs: ChatTabs,
@@ -151,6 +153,7 @@ impl RootView {
             login,
             workspace: None,
             chats: None,
+            channel: None,
             switcher: None,
             switcher_open: false,
             tabs: ChatTabs::new(DEFAULT_MAX_TABS),
@@ -190,6 +193,15 @@ impl RootView {
             workspace.update(ctx, |workspace, ctx| {
                 workspace.set_tool_pane(ToolPanelTab::Chats, Some(Box::new(pane)), ctx)
             });
+            let channel = ctx.add_typed_action_view(ChannelView::new);
+            ctx.subscribe_to_view(&channel, |me, _, event, ctx| match event {
+                ChannelEvent::OpenChannel(channel) => me.open_chat(channel.clone(), ctx),
+            });
+            let content = ViewPane(channel.clone());
+            workspace.update(ctx, |workspace, ctx| {
+                workspace.set_content(Some(Box::new(content)), ctx)
+            });
+            self.channel = Some(channel);
             let team = chats.as_ref(ctx).team().cloned();
             AccountThemeFollower::handle(ctx)
                 .update(ctx, |follower, ctx| follower.set_team(team, ctx));
@@ -201,6 +213,7 @@ impl RootView {
         } else {
             self.workspace = None;
             self.chats = None;
+            self.channel = None;
             self.switcher = None;
             ctx.focus(&self.login);
         }
@@ -233,6 +246,7 @@ impl RootView {
             WorkspaceEvent::ActivateTab(index) => {
                 self.tabs.activate(index);
                 self.after_tabs_change(ctx);
+                self.focus_chat(ctx);
             }
             WorkspaceEvent::CloseTab(index) => {
                 self.tabs.close(index);
@@ -258,6 +272,14 @@ impl RootView {
         self.tabs.set_cap(max_tabs(ctx));
         self.tabs.open(channel);
         self.after_tabs_change(ctx);
+        self.focus_chat(ctx);
+    }
+
+    /// Moves the focus to the open chat (its composer, once there is one).
+    fn focus_chat(&mut self, ctx: &mut ViewContext<Self>) {
+        if let Some(workspace) = &self.workspace {
+            workspace.update(ctx, |workspace, ctx| workspace.focus_content(ctx));
+        }
     }
 
     /// After any change to the tabs: tell the engine which chat is open, show it in the Chats
@@ -273,6 +295,18 @@ impl RootView {
         }
         if let Some(chats) = &self.chats {
             chats.update(ctx, |chats, ctx| chats.show_channel(active.as_ref(), ctx));
+        }
+        if let Some(view) = &self.channel {
+            let open: Vec<ChannelId> = self
+                .tabs
+                .tabs()
+                .iter()
+                .map(|tab| tab.channel.clone())
+                .collect();
+            view.update(ctx, |view, ctx| {
+                view.retain(&open);
+                view.set_channel(active.clone(), ctx);
+            });
         }
         if self.tabs_restored {
             let json = self.tabs.to_json();
@@ -310,6 +344,10 @@ impl RootView {
             self.tabs = tabs;
         }
         self.after_tabs_change(ctx);
+        // Back where the user left off, with the keyboard in the chat.
+        if self.tabs.active_channel().is_some() {
+            self.focus_chat(ctx);
+        }
     }
 
     /// Closes the tabs of chats I'm no longer in.

@@ -140,17 +140,18 @@ pub struct Workspace {
     theme_chooser_open: bool,
     account: Option<AccountBadge>,
     account_mouse_state: MouseStateHandle,
-    /// Lines shown in a chat tab until tabs hold chats.
+    /// Lines shown while no chat is open.
     placeholder: Vec<String>,
+    /// The active tab's content, supplied by the app.
+    content: Option<Box<dyn crate::ToolPane>>,
 }
 
 impl Workspace {
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
         ctx.subscribe_to_model(&Appearance::handle(ctx), |_, _, _, ctx| ctx.notify());
         let tool_panel = ctx.add_typed_action_view(ToolPanel::new);
-        ctx.subscribe_to_view(&tool_panel, |_, _, event, ctx| match event {
-            // Until chats have a composer, the workspace itself takes the focus back.
-            ToolPanelEvent::ReturnFocus => ctx.focus_self(),
+        ctx.subscribe_to_view(&tool_panel, |me, _, event, ctx| match event {
+            ToolPanelEvent::ReturnFocus => me.focus_content(ctx),
         });
         let right_panel = ctx.add_typed_action_view(RightPanel::new);
         let theme_chooser = ctx.add_typed_action_view(ThemeChooser::new);
@@ -180,6 +181,25 @@ impl Workspace {
             account: None,
             account_mouse_state: MouseStateHandle::default(),
             placeholder: Vec::new(),
+            content: None,
+        }
+    }
+
+    /// What the active tab shows; `None` shows the placeholder.
+    pub fn set_content(
+        &mut self,
+        content: Option<Box<dyn crate::ToolPane>>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.content = content;
+        ctx.notify();
+    }
+
+    /// Moves the focus into the tab content (or onto the workspace without one).
+    pub fn focus_content(&mut self, ctx: &mut ViewContext<Self>) {
+        match &self.content {
+            Some(content) if self.active_tab.is_some() => content.focus_from(ctx),
+            _ => ctx.focus_self(),
         }
     }
 
@@ -319,6 +339,11 @@ impl Workspace {
     }
 
     fn render_tab_content(&self, appearance: &Appearance) -> Box<dyn Element> {
+        if let Some(content) = &self.content
+            && self.active_tab.is_some()
+        {
+            return content.render();
+        }
         let theme = appearance.theme();
         let font = appearance.ui_font_family();
         let size = appearance.ui_font_size();

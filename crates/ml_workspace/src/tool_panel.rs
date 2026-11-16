@@ -169,6 +169,8 @@ pub trait ToolPane {
     fn render(&self) -> Box<dyn Element>;
     /// Moves the focus into the pane (Alt+N, clicking the toolbelt).
     fn focus(&self, ctx: &mut ViewContext<ToolPanel>);
+    /// Moves the focus into the pane from the workspace (as the tab content).
+    fn focus_from(&self, ctx: &mut ViewContext<crate::Workspace>);
     fn has_focus(&self, app: &AppContext) -> bool;
 }
 
@@ -182,6 +184,10 @@ impl<V: View> ToolPane for ViewPane<V> {
     }
 
     fn focus(&self, ctx: &mut ViewContext<ToolPanel>) {
+        ctx.focus(&self.0);
+    }
+
+    fn focus_from(&self, ctx: &mut ViewContext<crate::Workspace>) {
         ctx.focus(&self.0);
     }
 

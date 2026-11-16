@@ -42,6 +42,7 @@ pub enum Icon {
     Archive,
     Users,
     Pin,
+    Check,
 }
 
 impl From<Icon> for &'static str {
@@ -73,6 +74,7 @@ impl From<Icon> for &'static str {
             Icon::Hash => "bundled/svg/hash-02.svg",
             Icon::Users => "bundled/svg/users-02.svg",
             Icon::Pin => "bundled/svg/pin-01.svg",
+            Icon::Check => "bundled/svg/check-thick.svg",
             // Drawn for MatterLite (Warp has no lock or archive icon).
             Icon::Lock => "matterlite/svg/lock.svg",
             Icon::Archive => "matterlite/svg/archive.svg",

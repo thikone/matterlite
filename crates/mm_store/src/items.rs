@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use mm_model::{ChannelId, Post, User};
 
@@ -196,10 +196,15 @@ impl Zone {
     }
 
     pub fn date(self, at_ms: i64) -> NaiveDate {
+        self.local(at_ms).date()
+    }
+
+    /// The wall-clock time in this zone.
+    pub fn local(self, at_ms: i64) -> NaiveDateTime {
         let utc = DateTime::<Utc>::from_timestamp_millis(at_ms).unwrap_or_default();
         match self {
-            Self::Named(tz) => tz.from_utc_datetime(&utc.naive_utc()).date_naive(),
-            Self::Local => Local.from_utc_datetime(&utc.naive_utc()).date_naive(),
+            Self::Named(tz) => tz.from_utc_datetime(&utc.naive_utc()).naive_local(),
+            Self::Local => Local.from_utc_datetime(&utc.naive_utc()).naive_local(),
         }
     }
 }

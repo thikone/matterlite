@@ -16,6 +16,7 @@
 pub mod auth;
 mod bootstrap;
 mod engine;
+pub mod images;
 mod limiter;
 mod scheduler;
 
@@ -33,6 +34,7 @@ use mm_store::{Store, StoreDelta};
 
 pub use auth::{Auth, AuthError, ServerInfo, SignInOptions};
 pub use bootstrap::{SINCE_CAP, SINCE_MARGIN};
+pub use images::ImageKey;
 pub use limiter::{Limiter, Rate};
 pub use scheduler::Priority;
 
@@ -142,6 +144,11 @@ pub enum Command {
     /// The window gained or lost focus; posts in the open channel mark it read only while
     /// focused.
     SetFocused(bool),
+    /// Marks the channel read now, also after it was marked unread by hand (`Esc`).
+    MarkRead(ChannelId),
+    /// Downloads a profile picture or custom emoji image into the account's folder unless it
+    /// is there; answered with [`Event::ImageReady`] (nothing if it fails). Once per session.
+    FetchImage(ImageKey),
     /// Loads the page before the oldest loaded post of the open stretch.
     LoadOlder(ChannelId),
     /// Loads the page after the newest loaded post, when the loaded stretch doesn't reach the
@@ -215,6 +222,8 @@ pub enum Event {
         channel: ChannelId,
         last_viewed_at: i64,
     },
+    /// An image asked for with [`Command::FetchImage`] is at [`ImageKey::path`].
+    ImageReady(ImageKey),
     Connection(ConnectionState),
     /// The eager sync's progress (at most every half second, and when it goes idle).
     Sync(SyncStatus),

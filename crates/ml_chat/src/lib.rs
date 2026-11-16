@@ -4,15 +4,19 @@
 //! shell (`ml_workspace`): the signed-in [`Session`], the login screen and the window root.
 
 pub mod account_theme;
+mod channel_view;
 pub mod chats;
 mod chats_view;
 mod format;
 mod login_view;
+mod message;
 mod root_view;
 pub mod session;
 pub mod settings;
 mod switcher_view;
 pub mod tabs;
+pub mod timeline;
+mod timeline_list;
 
 pub use chats_view::{ChatsAction, ChatsEvent, ChatsView};
 pub use login_view::{LoginAction, LoginView};
@@ -25,6 +29,7 @@ pub fn init(app: &mut warpui::AppContext) {
     app.add_singleton_model(|_| Session::new(warp_core::paths::servers_dir()));
     app.add_singleton_model(account_theme::AccountThemeFollower::new);
     root_view::init(app);
+    channel_view::init(app);
 }
 
 /// Opens the most recently used account if its login is saved (call once the window exists,

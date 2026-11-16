@@ -92,6 +92,16 @@ impl Channel {
     }
 }
 
+/// A channel's counts (`GET /channels/{id}/stats`, `server/public/model/channel_stats.go`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ChannelStats {
+    pub channel_id: ChannelId,
+    pub member_count: i64,
+    pub guest_count: i64,
+    pub pinnedpost_count: i64,
+}
+
 /// The current user's membership in a channel (`server/public/model/channel_member.go`):
 /// read state, counters and notification settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use mm_model::preference::keys;
 use mm_model::{
-    Channel, ChannelId, ChannelMember, ChannelType, ClientConfig, CollapsedThreads, Emoji,
-    OrderedSidebarCategories, Post, PostId, PostList, Preference, Role, SidebarCategory, Status,
-    Team, TeamId, TeamMember, ThreadList, ThreadResponse, User, UserId,
+    Channel, ChannelId, ChannelMember, ChannelStats, ChannelType, ClientConfig, CollapsedThreads,
+    Emoji, OrderedSidebarCategories, Post, PostId, PostList, Preference, Role, SidebarCategory,
+    Status, Team, TeamId, TeamMember, ThreadList, ThreadResponse, User, UserId,
 };
 
 use crate::delta::StoreDelta;
@@ -63,6 +63,8 @@ pub struct Store {
     pub team_members: HashMap<TeamId, TeamMember>,
     pub thread_counts: HashMap<TeamId, ThreadCounts>,
     pub channels: HashMap<ChannelId, Arc<Channel>>,
+    /// Member and pinned counts of channels opened this session.
+    pub channel_stats: HashMap<ChannelId, ChannelStats>,
     /// My memberships.
     pub channel_members: HashMap<ChannelId, ChannelMember>,
     pub posts: HashMap<PostId, Arc<Post>>,
@@ -216,6 +218,16 @@ impl Store {
                 StoreDelta::StatusChanged(id)
             })
             .collect()
+    }
+
+    /// A channel's member and pinned counts, fetched when it is opened (not cached).
+    pub fn set_channel_stats(&mut self, stats: ChannelStats) -> Vec<StoreDelta> {
+        let id = stats.channel_id.clone();
+        if self.channel_stats.get(&id) == Some(&stats) {
+            return Vec::new();
+        }
+        self.channel_stats.insert(id.clone(), stats);
+        vec![StoreDelta::ChannelChanged(id)]
     }
 
     pub fn add_emoji(&mut self, emoji: Vec<Emoji>) {

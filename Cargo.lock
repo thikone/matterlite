@@ -4525,6 +4525,8 @@ name = "ml_chat"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel",
+ "chrono",
  "concat-idents",
  "fuzzy_match",
  "log",
@@ -4533,7 +4535,9 @@ dependencies = [
  "ml_workspace",
  "mm_api",
  "mm_cache",
+ "mm_emoji",
  "mm_model",
+ "mm_render",
  "mm_store",
  "mm_sync",
  "pathfinder_geometry",

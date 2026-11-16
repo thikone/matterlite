@@ -17,6 +17,7 @@ use serde_json::json;
 use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, timeout};
 
 use crate::bootstrap::{self, PAGE};
+use crate::images::{self, ImageKey};
 use crate::limiter::Limiter;
 use crate::scheduler::{self, Context, Job, Outcome, Priority, Queue, USER_BATCH};
 use crate::{
@@ -48,6 +49,11 @@ enum Internal {
         job: Job,
         result: Result<Outcome, ApiError>,
     },
+    ImageSaved {
+        key: ImageKey,
+        result: Result<(), String>,
+    },
+    Stats(Result<mm_model::ChannelStats, ApiError>),
 }
 
 struct Engine {
@@ -89,6 +95,8 @@ struct Engine {
     last_sweep: i64,
     /// When profiles were last refreshed (`POST /users/ids?since=`).
     users_synced_at: Option<i64>,
+    /// Images asked for this session (downloading, saved or failed): each is fetched once.
+    images: HashSet<ImageKey>,
     stopping: bool,
 }
 
@@ -147,6 +155,7 @@ pub(crate) async fn run(
         last_status: Instant::now(),
         last_sweep: now_ms(),
         users_synced_at: None,
+        images: HashSet::new(),
         stopping: false,
     };
     let Some(ws_output) = engine.start(&commands).await else {
@@ -906,6 +915,15 @@ impl Engine {
                     self.mark_viewed(&channel).await;
                 }
             }
+            Command::MarkRead(channel) => {
+                self.store
+                    .write()
+                    .expect("store lock")
+                    .manually_unread
+                    .remove(&channel);
+                self.mark_viewed(&channel).await;
+            }
+            Command::FetchImage(key) => self.fetch_image(key).await,
             Command::LoadOlder(channel) => self.load_older(channel),
             Command::LoadNewer(channel) => self.load_newer(channel),
             Command::OpenThread(root) => self.enqueue(Priority::Interactive, Job::Thread(root)),
@@ -1089,6 +1107,47 @@ impl Engine {
         if self.focused {
             self.mark_viewed(&channel).await;
         }
+        self.fetch_stats(channel);
+    }
+
+    /// The member count for the channel header.
+    fn fetch_stats(&self, channel: ChannelId) {
+        let client = self.client.clone();
+        let limiter = self.limiter.clone();
+        let internal = self.internal_tx.clone();
+        tokio::spawn(async move {
+            limiter.acquire().await;
+            let result = client.channel_stats(&channel).await;
+            let _ = internal.send(Internal::Stats(result)).await;
+        });
+    }
+
+    /// Downloads an image once per session; [`Event::ImageReady`] when it is on disk.
+    async fn fetch_image(&mut self, key: ImageKey) {
+        let Some(dir) = self.account_dir.clone() else {
+            return;
+        };
+        if key.path(&dir).is_file() {
+            self.emit(Event::ImageReady(key)).await;
+            return;
+        }
+        if !self.images.insert(key.clone()) {
+            return;
+        }
+        let client = self.client.clone();
+        let limiter = self.limiter.clone();
+        let internal = self.internal_tx.clone();
+        tokio::spawn(async move {
+            limiter.acquire().await;
+            let bytes = match &key {
+                ImageKey::Avatar { user, updated } => client.user_image(user, *updated).await,
+                ImageKey::Emoji(id) => client.emoji_image(id).await,
+            };
+            let result = bytes.map_err(|error| error.to_string()).and_then(|bytes| {
+                images::save(&dir, &key, &bytes).map_err(|error| error.to_string())
+            });
+            let _ = internal.send(Internal::ImageSaved { key, result }).await;
+        });
     }
 
     async fn mark_viewed(&mut self, channel: &ChannelId) {
@@ -1518,6 +1577,21 @@ impl Engine {
                 job,
                 result,
             } => self.on_job_done(priority, job, result).await,
+            Internal::ImageSaved { key, result } => match result {
+                Ok(()) => self.emit(Event::ImageReady(key)).await,
+                Err(error) => log::debug!("image {key:?}: {error}"),
+            },
+            Internal::Stats(result) => match result {
+                Ok(stats) => {
+                    let deltas = self
+                        .store
+                        .write()
+                        .expect("store lock")
+                        .set_channel_stats(stats);
+                    self.emit_changes(deltas).await;
+                }
+                Err(error) => log::debug!("channel stats: {error}"),
+            },
             Internal::PostSent { pending, result } => match result {
                 Ok(post) => {
                     self.unsent.remove(&pending);

@@ -639,7 +639,7 @@ pub(crate) fn channel_icon(
     }
 }
 
-fn icon(icon: Icon, color: ColorU, size: f32) -> Box<dyn Element> {
+pub(crate) fn icon(icon: Icon, color: ColorU, size: f32) -> Box<dyn Element> {
     ConstrainedBox::new(icon.to_warpui_icon(Fill::Solid(color)).finish())
         .with_width(size)
         .with_height(size)
@@ -679,7 +679,7 @@ pub(crate) fn badge(count: i64, chat: &ChatColors, font: FamilyId) -> Box<dyn El
 }
 
 /// `color` with its opacity multiplied by `factor`.
-fn fade(mut color: ColorU, factor: f32) -> ColorU {
+pub(crate) fn fade(mut color: ColorU, factor: f32) -> ColorU {
     color.a = (color.a as f32 * factor).round() as u8;
     color
 }

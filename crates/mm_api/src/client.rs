@@ -6,9 +6,10 @@ use std::time::Duration;
 
 use mm_model::error::ids;
 use mm_model::{
-    AppError, Channel, ChannelId, ChannelMember, ClientConfig, Emoji, OrderedSidebarCategories,
-    Post, PostId, PostList, Preference, Role, ServerVersion, SessionToken, SidebarCategory, Status,
-    Team, TeamId, TeamMember, TeamUnread, ThreadList, User, UserId,
+    AppError, Channel, ChannelId, ChannelMember, ChannelStats, ClientConfig, Emoji, EmojiId,
+    OrderedSidebarCategories, Post, PostId, PostList, Preference, Role, ServerVersion,
+    SessionToken, SidebarCategory, Status, Team, TeamId, TeamMember, TeamUnread, ThreadList, User,
+    UserId,
 };
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{Method, RequestBuilder, Response, StatusCode};
@@ -228,6 +229,11 @@ impl Client {
         let path = response.url().path().to_owned();
         let body = response.bytes().await?;
         serde_json::from_slice(&body).map_err(|source| ApiError::Decode { path, source })
+    }
+
+    async fn bytes(&self, builder: RequestBuilder) -> Result<Vec<u8>, ApiError> {
+        let response = self.send(builder).await?;
+        Ok(response.bytes().await?.to_vec())
     }
 
     async fn empty(&self, builder: RequestBuilder) -> Result<(), ApiError> {
@@ -510,6 +516,35 @@ impl Client {
             ("per_page", per_page.to_string()),
             ("sort", "name".to_owned()),
         ]))
+        .await
+    }
+
+    /// `GET /emoji/{id}/image`: a custom emoji's image (PNG, GIF or JPEG).
+    pub async fn emoji_image(&self, emoji_id: &EmojiId) -> Result<Vec<u8>, ApiError> {
+        self.bytes(self.get(&["emoji", emoji_id.as_str(), "image"]))
+            .await
+    }
+
+    /// `GET /users/{id}/image?_=<last_picture_update>`: a profile picture (the server draws
+    /// one with the initials when none was uploaded). The query only busts HTTP caches.
+    pub async fn user_image(
+        &self,
+        user_id: &UserId,
+        last_picture_update: i64,
+    ) -> Result<Vec<u8>, ApiError> {
+        self.bytes(
+            self.get(&["users", user_id.as_str(), "image"])
+                .query(&[("_", last_picture_update.to_string())]),
+        )
+        .await
+    }
+
+    /// `GET /channels/{id}/stats`: member and pinned post counts.
+    pub async fn channel_stats(&self, channel_id: &ChannelId) -> Result<ChannelStats, ApiError> {
+        self.json(
+            self.get(&["channels", channel_id.as_str(), "stats"])
+                .query(&[("exclude_files_count", "true")]),
+        )
         .await
     }
 

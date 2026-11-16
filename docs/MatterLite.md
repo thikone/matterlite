@@ -1045,11 +1045,14 @@ plus the chat palette `ChatColors` that comes with the active theme.
 - Per channel, a `Timeline` in `mm_store`: ordered post ids (`BTreeMap<(create_at, id), ()>`
   or Warp's `sum_tree` with a height summary), list of contiguous loaded ranges,
   `reached_oldest/newest` flags (WebApp §9.2).
-- Render with WarpUI's **virtualized list** (`viewported_list` / `uniform_list` —
-  check which supports variable item heights; chat items vary) **anchored to the bottom**;
-  load older posts when scrolled near the top (`before=<oldest_id>&per_page=60`), keeping
-  the scroll anchor stable.
-- Cache laid-out message elements by `(post_id, update_at, width bucket, theme)`.
+- Render with a virtualized list **anchored to the bottom** (`ml_chat::timeline_list`,
+  modelled on WarpUI's `viewported_list`, which is anchored at the top): the scroll position
+  is the bottom or a row's key and offset, so pages loaded above and posts arriving below
+  don't move what is on screen. Load older posts when a hole comes within a few rows
+  (`before=<oldest_id>&per_page=60`).
+- Cache the rendered `MessageDoc` by `(post_id, update_at)` (cleared when names, emoji or
+  mention keys change) and row heights by `(row key, content version, width)` (cleared when
+  the theme changes); elements are rebuilt for the visible rows only.
 - Items: post (full header or compact continuation), date separator, new-messages line,
   combined system message, pending/failed post with retry.
 
@@ -1456,8 +1459,10 @@ post.message ──comrak (GFM: tables, strikethrough, autolink, tasklist; unsaf
          Span  = Text{style} | Link{url} | Mention{user} | ChannelLink | Emoji{id|unicode} | Hashtag
 ```
 
-The `matterlite` crate converts `MessageDoc` into WarpUI elements
-(`formatted_text_element`, flex/stack, image elements for emoji/inline images).
+`ml_chat::message` converts `MessageDoc` into WarpUI elements: a `Text` with styled
+character ranges per paragraph, flex/stack for blocks, image elements for emoji (system emoji
+too: the platforms' colour emoji fonts aren't reliably drawn, and images look the same
+everywhere).
 
 - Emoji-only messages (≤ some count) → large emoji (WebApp §11.2).
 - Edited marker, `(message deleted)`, webhook/bot `BOT` tag, `override_username`/icon.
@@ -1473,9 +1478,10 @@ The `matterlite` crate converts `MessageDoc` into WarpUI elements
   (6.4 MB) in `assets/emoji/`, embedded with the other assets and loaded through
   `asset_cache`. Custom emoji: fetch metadata via
   `POST /emoji/names` for unknown names (negative-cache misses), images from
-  `/emoji/{id}/image`, cached on disk in `cache/emoji/`.
-- Avatars: `/users/{id}/image?_=<last_picture_update>`, disk cache keyed by user id +
-  `last_picture_update`.
+  `/emoji/{id}/image`, cached on disk in `<account>/images/emoji/<id>`.
+- Avatars: `/users/{id}/image?_=<last_picture_update>`, cached on disk in
+  `<account>/images/avatars/<user id>-<last_picture_update>` (older pictures deleted).
+  Both are downloaded by the engine on request (`Command::FetchImage`).
 
 ---
 

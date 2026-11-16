@@ -58,11 +58,17 @@ pub struct Active {
     /// saved).
     pub notices: Vec<String>,
     pub last_error: Option<String>,
+    account_dir: PathBuf,
     /// UI state saved in the account's cache (last team, collapsed groups, …).
     ui_state: std::collections::HashMap<String, String>,
 }
 
 impl Active {
+    /// The account's folder (cache, images).
+    pub fn account_dir(&self) -> &Path {
+        &self.account_dir
+    }
+
     pub fn ui_state(&self, key: &str) -> Option<&str> {
         self.ui_state.get(key).map(String::as_str)
     }
@@ -87,6 +93,8 @@ pub enum SessionEvent {
         channel: mm_model::ChannelId,
         last_viewed_at: i64,
     },
+    /// An image asked for with `Command::FetchImage` is on disk.
+    ImageReady(mm_sync::ImageKey),
     Error(String),
 }
 
@@ -341,6 +349,7 @@ impl Session {
             logging_out: false,
             notices,
             last_error: None,
+            account_dir,
             ui_state,
         }));
         ctx.emit(SessionEvent::StateChanged);
@@ -419,6 +428,7 @@ impl Session {
                 channel,
                 last_viewed_at,
             }),
+            Event::ImageReady(key) => ctx.emit(SessionEvent::ImageReady(key)),
             Event::Connection(connection) => {
                 active.connection = connection;
                 if connection != ConnectionState::Online {
