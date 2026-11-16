@@ -65,6 +65,11 @@ pub struct Store {
     pub channels: HashMap<ChannelId, Arc<Channel>>,
     /// Member and pinned counts of channels opened this session.
     pub channel_stats: HashMap<ChannelId, ChannelStats>,
+    /// Members of channels whose member list was loaded this session (not cached).
+    pub channel_users: HashMap<ChannelId, Vec<UserId>>,
+    /// Pinned posts as last loaded, newest first (the posts are in `posts`; a post pinned or
+    /// unpinned since shows by its `is_pinned`).
+    pub pinned: HashMap<ChannelId, Vec<PostId>>,
     /// My memberships.
     pub channel_members: HashMap<ChannelId, ChannelMember>,
     pub posts: HashMap<PostId, Arc<Post>>,
@@ -228,6 +233,92 @@ impl Store {
         }
         self.channel_stats.insert(id.clone(), stats);
         vec![StoreDelta::ChannelChanged(id)]
+    }
+
+    /// A channel's members (the first page of them).
+    pub fn set_channel_users(&mut self, channel: ChannelId, users: Vec<User>) -> Vec<StoreDelta> {
+        let ids = users.iter().map(|user| user.id.clone()).collect();
+        let mut deltas = self.add_users(users);
+        self.channel_users.insert(channel.clone(), ids);
+        deltas.push(StoreDelta::ChannelChanged(channel));
+        deltas
+    }
+
+    /// A channel's pinned posts. They are stored without joining the timeline's ranges (they
+    /// may be far older than what is loaded).
+    pub fn set_pinned(&mut self, channel: ChannelId, list: &PostList) -> Vec<StoreDelta> {
+        let mut changed = Vec::new();
+        for post in list.ordered() {
+            let newer = self
+                .posts
+                .get(&post.id)
+                .is_none_or(|old| old.update_at < post.update_at);
+            if newer {
+                self.posts.insert(post.id.clone(), Arc::new(post.clone()));
+                changed.push(post.id.clone());
+            }
+        }
+        self.pinned.insert(channel.clone(), list.order.clone());
+        let mut deltas = Vec::new();
+        if !changed.is_empty() {
+            deltas.push(StoreDelta::PostsChanged(changed));
+        }
+        deltas.push(StoreDelta::ChannelChanged(channel));
+        deltas
+    }
+
+    /// The channel's pinned posts, newest first: those loaded with [`Store::set_pinned`] that
+    /// are still pinned, and any other loaded post pinned since.
+    pub fn pinned_posts(&self, channel: &ChannelId) -> Vec<Arc<Post>> {
+        let mut posts: Vec<Arc<Post>> = self
+            .posts
+            .values()
+            .filter(|post| post.channel_id == *channel && post.is_pinned && !post.is_deleted())
+            .cloned()
+            .collect();
+        posts.sort_by_key(|post| std::cmp::Reverse(post.create_at));
+        posts
+    }
+
+    /// Mutes or unmutes a channel for me (`mark_unread`: `mention` or `all`).
+    pub fn set_muted(&mut self, channel: &ChannelId, muted: bool) -> Vec<StoreDelta> {
+        let Some(member) = self.channel_members.get_mut(channel) else {
+            return Vec::new();
+        };
+        member.notify_props.insert(
+            "mark_unread".to_owned(),
+            if muted { "mention" } else { "all" }.to_owned(),
+        );
+        vec![StoreDelta::MemberChanged(channel.clone())]
+    }
+
+    /// Moves a channel into a category of a team, at its top, as the webapp's
+    /// `addChannelToCategory`; the categories changed, to save on the server.
+    pub fn move_to_category(
+        &mut self,
+        team: &TeamId,
+        channel: &ChannelId,
+        category: &mm_model::CategoryId,
+    ) -> Vec<SidebarCategory> {
+        let Some(categories) = self.categories.get_mut(team) else {
+            return Vec::new();
+        };
+        if !categories.iter().any(|c| c.id == *category) {
+            return Vec::new();
+        }
+        let mut changed = Vec::new();
+        for entry in categories.iter_mut() {
+            if entry.id == *category {
+                if !entry.channel_ids.contains(channel) {
+                    entry.channel_ids.insert(0, channel.clone());
+                    changed.push(entry.clone());
+                }
+            } else if let Some(position) = entry.channel_ids.iter().position(|c| c == channel) {
+                entry.channel_ids.remove(position);
+                changed.push(entry.clone());
+            }
+        }
+        changed
     }
 
     pub fn add_emoji(&mut self, emoji: Vec<Emoji>) {

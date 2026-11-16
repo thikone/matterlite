@@ -209,6 +209,10 @@ impl Client {
         self.request(Method::PUT, segments)
     }
 
+    fn delete(&self, segments: &[&str]) -> RequestBuilder {
+        self.request(Method::DELETE, segments)
+    }
+
     async fn send(&self, builder: RequestBuilder) -> Result<Response, ApiError> {
         let response = builder.send().await?;
         if let Some(version) = response
@@ -481,6 +485,65 @@ impl Client {
     /// `POST /users/ids`.
     pub async fn users_by_ids(&self, user_ids: &[UserId]) -> Result<Vec<User>, ApiError> {
         self.json(self.post(&["users", "ids"]).json(user_ids)).await
+    }
+
+    /// `GET /users?in_channel=<id>`: a page of a channel's members (the webapp's
+    /// `getProfilesInChannel`).
+    pub async fn users_in_channel(
+        &self,
+        channel_id: &ChannelId,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Vec<User>, ApiError> {
+        self.json(self.get(&["users"]).query(&[
+            ("in_channel", channel_id.to_string()),
+            ("page", page.to_string()),
+            ("per_page", per_page.to_string()),
+        ]))
+        .await
+    }
+
+    /// `GET /channels/{id}/pinned`: the channel's pinned posts.
+    pub async fn pinned_posts(&self, channel_id: &ChannelId) -> Result<PostList, ApiError> {
+        self.json(self.get(&["channels", channel_id.as_str(), "pinned"]))
+            .await
+    }
+
+    /// `PUT /channels/{id}/members/{user}/notify_props`: changes some of my notification
+    /// settings for a channel (the others keep their values).
+    pub async fn update_channel_notify_props(
+        &self,
+        channel_id: &ChannelId,
+        user_id: &UserId,
+        props: &[(&str, &str)],
+    ) -> Result<(), ApiError> {
+        let mut body = serde_json::Map::new();
+        body.insert("channel_id".into(), json!(channel_id));
+        body.insert("user_id".into(), json!(user_id));
+        for (key, value) in props {
+            body.insert((*key).into(), json!(value));
+        }
+        self.empty(
+            self.put(&[
+                "channels",
+                channel_id.as_str(),
+                "members",
+                user_id.as_str(),
+                "notify_props",
+            ])
+            .json(&body),
+        )
+        .await
+    }
+
+    /// `DELETE /channels/{id}/members/{user}`: leave a channel (or remove someone).
+    pub async fn remove_channel_member(
+        &self,
+        channel_id: &ChannelId,
+        user_id: &UserId,
+    ) -> Result<(), ApiError> {
+        self.empty(self.delete(&["channels", channel_id.as_str(), "members", user_id.as_str()]))
+            .await
     }
 
     /// `POST /users/status/ids`.

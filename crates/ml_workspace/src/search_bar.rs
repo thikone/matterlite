@@ -270,6 +270,17 @@ impl SearchBarView {
         }
     }
 
+    /// Sets a toggle from outside (e.g. a "Show all" link turning a filter off), without
+    /// [`SearchBarEvent::ToggleChanged`].
+    pub fn set_toggle(&mut self, id: &str, on: bool, ctx: &mut ViewContext<Self>) {
+        for (_, toggles) in &mut self.groups {
+            for toggle in toggles.iter_mut().filter(|toggle| toggle.spec.id == id) {
+                toggle.on = on;
+            }
+        }
+        ctx.notify();
+    }
+
     fn toggle(&mut self, group: usize, index: usize, ctx: &mut ViewContext<Self>) {
         let Some((keep_one_on, toggles)) = self.groups.get_mut(group) else {
             return;

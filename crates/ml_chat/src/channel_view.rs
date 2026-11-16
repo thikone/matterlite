@@ -49,8 +49,9 @@ use crate::chats::{ChannelIcon, channel_icon as icon_kind};
 use crate::chats_view::{channel_icon, fade, icon};
 use crate::composer;
 use crate::composer_view::{ComposerEvent, ComposerView};
+use crate::history_pane::ChatFilter;
 use crate::message::{
-    CustomEmoji, MessageRenderer, OnClick, Palette, SyntaxColors, Target, emoji_image, fixed_width,
+    CustomEmoji, MessageRenderer, OnClick, Palette, Target, emoji_image, fixed_width,
 };
 use crate::session::{Session, SessionEvent};
 use crate::timeline::{self, Author, ChatLookup, Clock, HoleKind, Pending, Row};
@@ -69,6 +70,9 @@ const LOAD_MARGIN: usize = 4;
 const LOAD_RETRY: Duration = Duration::from_secs(10);
 /// The "New messages" line, this far below the top when a chat opens there.
 const NEW_LINE_OFFSET: f32 = 80.;
+/// A post shown from elsewhere: this far below the top, highlighted this long.
+const SHOW_POST_OFFSET: f32 = 120.;
+const FLASH: Duration = Duration::from_secs(3);
 const SCROLLBAR: warpui::elements::ScrollbarWidth = warpui::elements::ScrollbarWidth::Auto;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -78,6 +82,8 @@ pub enum ChannelAction {
     JumpToNewest,
     /// `Esc`: mark the chat read now.
     MarkRead,
+    /// "Show all" in the filter banner.
+    ClearFilter,
     /// A click in the chat: it takes the keyboard (PageUp/PageDown, Esc).
     Focus,
     Retry(String),
@@ -90,6 +96,8 @@ pub enum ChannelAction {
 pub enum ChannelEvent {
     /// A `~channel` link was clicked.
     OpenChannel(ChannelId),
+    /// "Show all" in the filter banner: turn "Filter the chat" off.
+    ClearFilter,
 }
 
 pub(crate) fn init(app: &mut AppContext) {
@@ -181,6 +189,11 @@ pub struct ChannelView {
     scroll_state: ScrollStateHandle,
     jump_mouse_state: MouseStateHandle,
     composer: ViewHandle<ComposerView>,
+    /// History's "Filter the chat": only these posts are shown.
+    filter: Option<ChatFilter>,
+    /// A post shown from elsewhere (History, Pinned), highlighted for a moment.
+    flash: Option<PostId>,
+    flashes: u64,
     /// The next focus of this view stays on the timeline (a click in it) instead of moving
     /// on to the composer.
     focus_timeline: bool,
@@ -263,8 +276,64 @@ impl ChannelView {
             scroll_state: ScrollStateHandle::default(),
             jump_mouse_state: MouseStateHandle::default(),
             composer,
+            filter: None,
+            flash: None,
+            flashes: 0,
             focus_timeline: false,
         }
+    }
+
+    /// Shows only the matches of History's search in their chat, or everything again.
+    pub fn set_filter(&mut self, filter: Option<ChatFilter>, ctx: &mut ViewContext<Self>) {
+        if filter != self.filter {
+            self.filter = filter;
+            self.refresh(ctx);
+        }
+    }
+
+    /// The filter, if it is for the chat on screen.
+    fn active_filter(&self) -> Option<&ChatFilter> {
+        self.filter
+            .as_ref()
+            .filter(|filter| Some(&filter.channel) == self.channel.as_ref())
+    }
+
+    /// Scrolls the open chat to a post and highlights it for a moment (the webapp's permalink
+    /// view). False when the post isn't among the loaded rows.
+    pub fn show_post(&mut self, post: &PostId, ctx: &mut ViewContext<Self>) -> bool {
+        let key = timeline::RowKey::Post(post.clone());
+        let found = self
+            .shared
+            .rows
+            .iter()
+            .any(|row| matches!(row, RowData::Post(data) if data.post.id == *post));
+        if !found {
+            return false;
+        }
+        let Some(chat) = self
+            .channel
+            .clone()
+            .and_then(|channel| self.chats.get_mut(&channel))
+        else {
+            return false;
+        };
+        chat.list.scroll_to(key, SHOW_POST_OFFSET);
+        // Showing a post replaces the jump to the "New messages" line.
+        chat.jump_to_new = false;
+        self.flash = Some(post.clone());
+        self.flashes += 1;
+        let flashes = self.flashes;
+        let _ = ctx.spawn(
+            async { warpui::r#async::Timer::after(FLASH).await },
+            move |me, _, ctx| {
+                if me.flashes == flashes {
+                    me.flash = None;
+                    ctx.notify();
+                }
+            },
+        );
+        ctx.notify();
+        true
     }
 
     /// Shows a chat (the active tab's), or nothing.
@@ -452,7 +521,10 @@ impl ChannelView {
         let Some(chat) = self.chats.get(&channel) else {
             return;
         };
-        let rows = timeline::rows(&store, &channel, chat.last_viewed_at);
+        let mut rows = timeline::rows(&store, &channel, chat.last_viewed_at);
+        if let Some(filter) = self.active_filter() {
+            rows = filtered(rows, &filter.ids);
+        }
         let clock = Clock::of(&store);
         let today = clock.today(now_ms());
         let crt = store.crt_enabled();
@@ -692,6 +764,61 @@ impl ChannelView {
     }
 }
 
+/// The rows of a filtered chat: the matching posts (each with its header, since its
+/// neighbours may be gone) and the date separators of their days.
+fn filtered(rows: Vec<Row>, ids: &HashSet<PostId>) -> Vec<Row> {
+    let mut kept: Vec<Row> = Vec::new();
+    for row in rows {
+        match row {
+            Row::Post { post, pending, .. } if ids.contains(&post.id) => kept.push(Row::Post {
+                post,
+                consecutive: false,
+                pending,
+            }),
+            Row::Date(date) => {
+                if matches!(kept.last(), Some(Row::Date(_))) {
+                    kept.pop();
+                }
+                kept.push(Row::Date(date));
+            }
+            _ => {}
+        }
+    }
+    if matches!(kept.last(), Some(Row::Date(_))) {
+        kept.pop();
+    }
+    kept
+}
+
+/// "Showing 12 of 340 messages matching "deploy" · Show all".
+fn filter_banner(filter: &ChatFilter, style: &RowStyle) -> Box<dyn Element> {
+    let text = format!(
+        "Showing {} of {} messages matching \u{201c}{}\u{201d} · ",
+        filter.ids.len(),
+        filter.total,
+        filter.query
+    );
+    let start = text.chars().count();
+    let label = format!("{text}Show all");
+    let end = label.chars().count();
+    Container::new(
+        Text::new_inline(label, style.font, style.size - 1.)
+            .with_color(style.text)
+            .with_highlights([HighlightedRange {
+                highlight: Highlight::new().with_foreground_color(style.palette.link),
+                highlight_indices: (start..end).collect(),
+            }])
+            .with_clickable_char_range(start..end, |_, ctx, _| {
+                ctx.dispatch_typed_action(ChannelAction::ClearFilter)
+            })
+            .finish(),
+    )
+    .with_horizontal_padding(SIDE_PADDING)
+    .with_vertical_padding(8.)
+    .with_background_color(fade(style.chat.button_bg, 0.1))
+    .finish()
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -800,44 +927,17 @@ struct RowStyle {
 }
 
 fn row_style(appearance: &Appearance) -> RowStyle {
-    let theme = appearance.theme();
-    let chat = theme.chat();
-    let background = theme.background();
-    let text = theme.main_text_color(background).into_solid();
-    let muted = theme.sub_text_color(background).into_solid();
-    let border = fade(text, 0.16);
-    let ansi = &theme.terminal_colors().normal;
-    let bright = &theme.terminal_colors().bright;
+    let chat = appearance.theme().chat();
+    let palette = Palette::of(appearance);
     RowStyle {
-        palette: Palette {
-            font: appearance.ui_font_family(),
-            mono: appearance.monospace_font_family(),
-            size: appearance.ui_font_size() + 1.,
-            text,
-            muted,
-            link: chat.link,
-            mention_bg: chat.mention_highlight_bg,
-            mention_text: chat.mention_highlight_link,
-            code_bg: fade(text, 0.07),
-            border,
-            syntax: SyntaxColors {
-                keyword: ansi.magenta.into(),
-                function: ansi.blue.into(),
-                string: ansi.green.into(),
-                kind: ansi.yellow.into(),
-                number: ansi.red.into(),
-                comment: bright.black.into(),
-                property: ansi.cyan.into(),
-                tag: ansi.red.into(),
-            },
-        },
-        font: appearance.ui_font_family(),
-        size: appearance.ui_font_size() + 1.,
-        text,
-        muted,
-        border,
+        font: palette.font,
+        size: palette.size,
+        text: palette.text,
+        muted: palette.muted,
+        border: palette.border,
         error: chat.error_text,
         chat,
+        palette,
     }
 }
 
@@ -870,7 +970,12 @@ fn activity_doc(shared: &Shared, text: &str) -> Rc<MessageDoc> {
         .clone()
 }
 
-fn render_row(shared: &Shared, style: &RowStyle, index: usize) -> Box<dyn Element> {
+fn render_row(
+    shared: &Shared,
+    style: &RowStyle,
+    index: usize,
+    flash: Option<&PostId>,
+) -> Box<dyn Element> {
     let Some(row) = shared.rows.get(index) else {
         return Empty::new().finish();
     };
@@ -939,7 +1044,16 @@ fn render_row(shared: &Shared, style: &RowStyle, index: usize) -> Box<dyn Elemen
                 4.,
             )
         }
-        RowData::Post(data) => render_post(shared, style, data),
+        RowData::Post(data) => {
+            let post = render_post(shared, style, data);
+            if flash == Some(&data.post.id) {
+                Container::new(post)
+                    .with_background_color(fade(style.chat.mention_highlight_bg, 0.55))
+                    .finish()
+            } else {
+                post
+            }
+        }
     }
 }
 
@@ -1246,8 +1360,9 @@ impl View for ChannelView {
         let header = self.render_header(&style.chat, appearance);
         let shared = self.shared.clone();
         let row_style = style.clone();
+        let flash = self.flash.clone();
         let list = TimelineList::new(chat.list.clone(), move |index, _| {
-            render_row(&shared, &row_style, index)
+            render_row(&shared, &row_style, index, flash.as_ref())
         });
         let timeline = Scrollable::vertical(
             self.scroll_state.clone(),
@@ -1259,6 +1374,15 @@ impl View for ChannelView {
         )
         .finish();
         let timeline = Container::new(timeline).with_padding_bottom(10.).finish();
+        let timeline = match self.active_filter() {
+            Some(filter) => Flex::column()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_child(filter_banner(filter, &style))
+                .with_child(Shrinkable::new(1., timeline).finish())
+                .finish(),
+            None => timeline,
+        };
         let mut stack = Stack::new().with_child(timeline);
         if !chat.viewport.at_bottom && !self.shared.rows.is_empty() {
             let chat_colors = style.chat;
@@ -1347,6 +1471,7 @@ impl TypedActionView for ChannelView {
                 ctx.notify();
             }
             ChannelAction::MarkRead => Session::as_ref(ctx).send(Command::MarkRead(channel)),
+            ChannelAction::ClearFilter => ctx.emit(ChannelEvent::ClearFilter),
             ChannelAction::Focus => {
                 self.focus_timeline = true;
                 ctx.focus_self();

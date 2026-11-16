@@ -64,6 +64,41 @@ pub struct SyntaxColors {
     pub tag: ColorU,
 }
 
+impl Palette {
+    /// Messages on the window's background in the current theme: text colours, the chat
+    /// palette's links and mention highlight, code in the monospace font with the ANSI colours.
+    pub fn of(appearance: &warp_core::ui::appearance::Appearance) -> Self {
+        let theme = appearance.theme();
+        let chat = theme.chat();
+        let background = theme.background();
+        let text = theme.main_text_color(background).into_solid();
+        let ansi = &theme.terminal_colors().normal;
+        let bright = &theme.terminal_colors().bright;
+        Self {
+            font: appearance.ui_font_family(),
+            mono: appearance.monospace_font_family(),
+            size: appearance.ui_font_size() + 1.,
+            text,
+            muted: theme.sub_text_color(background).into_solid(),
+            link: chat.link,
+            mention_bg: chat.mention_highlight_bg,
+            mention_text: chat.mention_highlight_link,
+            code_bg: crate::chats_view::fade(text, 0.07),
+            border: crate::chats_view::fade(text, 0.16),
+            syntax: SyntaxColors {
+                keyword: ansi.magenta.into(),
+                function: ansi.blue.into(),
+                string: ansi.green.into(),
+                kind: ansi.yellow.into(),
+                number: ansi.red.into(),
+                comment: bright.black.into(),
+                property: ansi.cyan.into(),
+                tag: ansi.red.into(),
+            },
+        }
+    }
+}
+
 impl SyntaxColors {
     fn of(&self, class: Syntax) -> ColorU {
         match class {

@@ -11,6 +11,7 @@ publish.workspace = true
 anyhow.workspace = true
 async-channel.workspace = true
 chrono.workspace = true
+diesel.workspace = true
 concat-idents.workspace = true
 fuzzy_match.workspace = true
 log.workspace = true

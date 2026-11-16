@@ -4528,6 +4528,7 @@ dependencies = [
  "async-channel",
  "chrono",
  "concat-idents",
+ "diesel",
  "fuzzy_match",
  "log",
  "ml_editor",

@@ -162,6 +162,24 @@ pub enum Command {
         root: PostId,
         message: String,
     },
+    /// Moves a channel into a sidebar category of a team (Favorites, or back to Channels or
+    /// Direct Messages), saved on the server as the webapp's `addChannelToCategory`.
+    MoveToCategory {
+        team: TeamId,
+        channel: ChannelId,
+        category: CategoryId,
+    },
+    /// Mutes or unmutes a channel for me (`mark_unread`).
+    SetMuted {
+        channel: ChannelId,
+        muted: bool,
+    },
+    /// Leaves a channel; the server's events remove it.
+    LeaveChannel(ChannelId),
+    /// Loads a channel's members (`Store::channel_users`) and their statuses.
+    LoadMembers(ChannelId),
+    /// Loads a channel's pinned posts (`Store::pinned`).
+    LoadPinned(ChannelId),
     /// Saves the unsent text of a composer in the cache (`message` empty: deletes it).
     SaveDraft {
         channel: ChannelId,

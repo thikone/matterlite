@@ -65,7 +65,7 @@ pub enum Presence {
 }
 
 impl Presence {
-    fn from_status(status: Option<&str>) -> Self {
+    pub(crate) fn from_status(status: Option<&str>) -> Self {
         match status {
             Some("online") => Self::Online,
             Some("away") => Self::Away,

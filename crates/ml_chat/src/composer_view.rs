@@ -239,7 +239,11 @@ impl ComposerView {
         let Some(channel) = self.channel.clone() else {
             return;
         };
-        let text = self.editor.as_ref(ctx).buffer_text(ctx);
+        let mut text = self.editor.as_ref(ctx).buffer_text(ctx);
+        // Whitespace alone is no draft (as in the webapp).
+        if text.trim().is_empty() {
+            text.clear();
+        }
         Session::handle(ctx).update(ctx, |session, _| {
             session.set_draft(&channel, &PostId::default(), text)
         });

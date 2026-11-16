@@ -377,6 +377,7 @@ impl Session {
         let ui_state = mm_cache::ui_state(&account_dir);
         let drafts = mm_cache::drafts(&account_dir)
             .into_iter()
+            .filter(|draft| !draft.message.trim().is_empty())
             .map(|draft| ((draft.channel, draft.root), draft.message))
             .collect();
         if account_dir.is_dir() {

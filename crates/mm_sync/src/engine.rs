@@ -30,6 +30,8 @@ const RESUME_WAIT: Duration = Duration::from_secs(10);
 /// Unconfirmed WebSocket connections in a row before the token is checked over REST (the
 /// server accepts any token on the upgrade and drops the socket later, WebApp.md §7.2).
 const UNCONFIRMED_BEFORE_CHECK: u32 = 3;
+/// Members listed in the Channel tab (the first page of `GET /users?in_channel`).
+const MEMBERS_PAGE: u32 = 200;
 /// A failing job is tried this often before it's dropped.
 const JOB_ATTEMPTS: u32 = 3;
 /// `Event::Sync` at most this often (and when the sync goes idle).
@@ -997,6 +999,25 @@ impl Engine {
                 category,
                 collapsed,
             } => self.set_category_collapsed(team, category, collapsed).await,
+            Command::MoveToCategory {
+                team,
+                channel,
+                category,
+            } => self.move_to_category(team, channel, category).await,
+            Command::SetMuted { channel, muted } => self.set_muted(channel, muted).await,
+            Command::LeaveChannel(channel) => {
+                let me = self.store.read().expect("store lock").me.clone();
+                self.limiter.acquire().await;
+                if let Err(error) = self.client.remove_channel_member(&channel, &me).await {
+                    self.emit(Event::Error(format!(
+                        "Leaving the channel failed: {}",
+                        crate::auth::describe(&error)
+                    )))
+                    .await;
+                }
+            }
+            Command::LoadMembers(channel) => self.load_members(channel).await,
+            Command::LoadPinned(channel) => self.load_pinned(channel).await,
             Command::SaveDraft {
                 channel,
                 root,
@@ -1051,6 +1072,138 @@ impl Engine {
 
     /// Collapses or expands a category at once, then saves it. If the server refuses, its
     /// categories are fetched again so the sidebar shows what it has.
+    async fn move_to_category(&mut self, team: TeamId, channel: ChannelId, category: CategoryId) {
+        let changed = self
+            .store
+            .write()
+            .expect("store lock")
+            .move_to_category(&team, &channel, &category);
+        if changed.is_empty() {
+            return;
+        }
+        self.emit_changes(vec![StoreDelta::CategoriesChanged(team.clone())])
+            .await;
+        for updated in changed {
+            self.limiter.acquire().await;
+            if let Err(error) = self.client.update_sidebar_category(&updated).await {
+                log::warn!("saving category {}: {error}", updated.id);
+                self.emit(Event::Error(format!(
+                    "The category couldn't be saved on the server: {}",
+                    crate::auth::describe(&error)
+                )))
+                .await;
+                self.refetch_categories(team).await;
+                return;
+            }
+        }
+    }
+
+    async fn refetch_categories(&mut self, team: TeamId) {
+        let me = self.store.read().expect("store lock").me.clone();
+        self.limiter.acquire().await;
+        match self.client.sidebar_categories(&me, &team).await {
+            Ok(categories) => {
+                self.store
+                    .write()
+                    .expect("store lock")
+                    .set_categories(team.clone(), categories);
+                self.emit_changes(vec![StoreDelta::CategoriesChanged(team)])
+                    .await;
+            }
+            Err(error) => log::warn!("categories of {team}: {error}"),
+        }
+    }
+
+    async fn set_muted(&mut self, channel: ChannelId, muted: bool) {
+        let (me, before) = {
+            let store = self.store.read().expect("store lock");
+            let before = store
+                .channel_members
+                .get(&channel)
+                .and_then(|member| member.notify_props.get("mark_unread").cloned());
+            (store.me.clone(), before)
+        };
+        let deltas = self
+            .store
+            .write()
+            .expect("store lock")
+            .set_muted(&channel, muted);
+        self.emit_changes(deltas).await;
+        self.limiter.acquire().await;
+        let value = if muted { "mention" } else { "all" };
+        if let Err(error) = self
+            .client
+            .update_channel_notify_props(&channel, &me, &[("mark_unread", value)])
+            .await
+        {
+            log::warn!("muting {channel}: {error}");
+            // Back to what the server has.
+            let deltas = self
+                .store
+                .write()
+                .expect("store lock")
+                .set_muted(&channel, before.as_deref() == Some("mention"));
+            self.emit_changes(deltas).await;
+            self.emit(Event::Error(format!(
+                "Muting the channel failed: {}",
+                crate::auth::describe(&error)
+            )))
+            .await;
+        }
+    }
+
+    async fn load_members(&mut self, channel: ChannelId) {
+        self.limiter.acquire().await;
+        let users = match self
+            .client
+            .users_in_channel(&channel, 0, MEMBERS_PAGE)
+            .await
+        {
+            Ok(users) => users,
+            Err(error) => {
+                log::warn!("members of {channel}: {error}");
+                return;
+            }
+        };
+        let ids: Vec<UserId> = users.iter().map(|user| user.id.clone()).collect();
+        let deltas = self
+            .store
+            .write()
+            .expect("store lock")
+            .set_channel_users(channel, users);
+        self.emit_changes(deltas).await;
+        for batch in ids.chunks(USER_BATCH) {
+            self.limiter.acquire().await;
+            match self.client.statuses_by_ids(batch).await {
+                Ok(statuses) => {
+                    let deltas = self
+                        .store
+                        .write()
+                        .expect("store lock")
+                        .set_statuses(statuses);
+                    self.emit_changes(deltas).await;
+                }
+                Err(error) => log::warn!("statuses: {error}"),
+            }
+        }
+    }
+
+    async fn load_pinned(&mut self, channel: ChannelId) {
+        self.limiter.acquire().await;
+        match self.client.pinned_posts(&channel).await {
+            Ok(list) => {
+                self.fetch_missing_authors(&list, Priority::Interactive);
+                let deltas = self
+                    .store
+                    .write()
+                    .expect("store lock")
+                    .set_pinned(channel, &list);
+                self.emit_changes(deltas).await;
+            }
+            Err(error) => log::warn!("pinned posts of {channel}: {error}"),
+        }
+    }
+
     async fn set_category_collapsed(
         &mut self,
         team: TeamId,

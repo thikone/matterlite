@@ -27,10 +27,12 @@ use settings::Setting as _;
 use warp_core::ui::icons::Icon;
 
 use crate::account_theme::AccountThemeFollower;
+use crate::channel_pane::{ChannelPane, ChannelPaneEvent};
 use crate::channel_view::{ChannelEvent, ChannelView};
 use crate::chats::{ChannelIcon, Presence};
 use crate::chats_view::{ChatsEvent, ChatsView};
 use crate::format::format_size;
+use crate::history_pane::{HistoryEvent, HistoryPane};
 use crate::login_view::LoginView;
 use crate::session::{Active, Session, SessionEvent, SessionState};
 use crate::settings::ChatSettings;
@@ -110,6 +112,8 @@ pub struct RootView {
     workspace: Option<ViewHandle<Workspace>>,
     chats: Option<ViewHandle<ChatsView>>,
     channel: Option<ViewHandle<ChannelView>>,
+    channel_pane: Option<ViewHandle<ChannelPane>>,
+    history: Option<ViewHandle<HistoryPane>>,
     switcher: Option<ViewHandle<SwitcherView>>,
     switcher_open: bool,
     tabs: ChatTabs,
@@ -155,6 +159,8 @@ impl RootView {
             workspace: None,
             chats: None,
             channel: None,
+            channel_pane: None,
+            history: None,
             switcher: None,
             switcher_open: false,
             tabs: ChatTabs::new(DEFAULT_MAX_TABS),
@@ -197,13 +203,46 @@ impl RootView {
             let channel = ctx.add_typed_action_view(ChannelView::new);
             ctx.subscribe_to_view(&channel, |me, _, event, ctx| match event {
                 ChannelEvent::OpenChannel(channel) => me.open_chat(channel.clone(), ctx),
+                ChannelEvent::ClearFilter => {
+                    if let Some(history) = &me.history {
+                        history.update(ctx, |history, ctx| history.clear_filter(ctx));
+                    }
+                }
             });
             let content = ViewPane(channel.clone());
             workspace.update(ctx, |workspace, ctx| {
                 workspace.set_content(Some(Box::new(content)), ctx)
             });
             self.channel = Some(channel);
+            let channel_pane = ctx.add_typed_action_view(ChannelPane::new);
+            ctx.subscribe_to_view(&channel_pane, |me, _, event, ctx| match event {
+                ChannelPaneEvent::ShowPost(post) => me.show_post(post.clone(), ctx),
+            });
+            let pane = ViewPane(channel_pane.clone());
+            workspace.update(ctx, |workspace, ctx| {
+                workspace.set_tool_pane(ToolPanelTab::Channel, Some(Box::new(pane)), ctx)
+            });
+            self.channel_pane = Some(channel_pane);
+            let history = ctx.add_typed_action_view(HistoryPane::new);
+            ctx.subscribe_to_view(&history, |me, _, event, ctx| match event {
+                HistoryEvent::ShowPost(post) => me.show_post(post.clone(), ctx),
+                HistoryEvent::Filter(filter) => {
+                    if let Some(view) = &me.channel {
+                        let filter = filter.clone();
+                        view.update(ctx, |view, ctx| view.set_filter(filter, ctx));
+                    }
+                }
+            });
+            let pane = ViewPane(history.clone());
+            workspace.update(ctx, |workspace, ctx| {
+                workspace.set_tool_pane(ToolPanelTab::History, Some(Box::new(pane)), ctx)
+            });
+            self.history = Some(history);
             let team = chats.as_ref(ctx).team().cloned();
+            if let Some(pane) = &self.channel_pane {
+                let team = team.clone();
+                pane.update(ctx, |pane, ctx| pane.set_team(team, ctx));
+            }
             AccountThemeFollower::handle(ctx)
                 .update(ctx, |follower, ctx| follower.set_team(team, ctx));
             ctx.focus(&workspace);
@@ -215,6 +254,8 @@ impl RootView {
             self.workspace = None;
             self.chats = None;
             self.channel = None;
+            self.channel_pane = None;
+            self.history = None;
             self.switcher = None;
             ctx.focus(&self.login);
         }
@@ -225,6 +266,10 @@ impl RootView {
         match event {
             ChatsEvent::Open(channel) => self.open_chat(channel.clone(), ctx),
             ChatsEvent::TeamChanged(team) => {
+                if let Some(pane) = &self.channel_pane {
+                    let team = team.clone();
+                    pane.update(ctx, |pane, ctx| pane.set_team(team, ctx));
+                }
                 let team = team.clone();
                 AccountThemeFollower::handle(ctx)
                     .update(ctx, |follower, ctx| follower.set_team(team, ctx));
@@ -276,6 +321,16 @@ impl RootView {
         self.focus_chat(ctx);
     }
 
+    /// Shows a post in the open chat (from the Channel tab's Pinned list or History).
+    fn show_post(&mut self, post: mm_model::PostId, ctx: &mut ViewContext<Self>) {
+        if let Some(view) = &self.channel {
+            let shown = view.update(ctx, |view, ctx| view.show_post(&post, ctx));
+            if !shown {
+                log::info!("post {post} isn't loaded in the chat");
+            }
+        }
+    }
+
     /// Moves the focus to the open chat (its composer, once there is one).
     fn focus_chat(&mut self, ctx: &mut ViewContext<Self>) {
         if let Some(workspace) = &self.workspace {
@@ -308,6 +363,14 @@ impl RootView {
                 view.retain(&open);
                 view.set_channel(active.clone(), ctx);
             });
+        }
+        if let Some(pane) = &self.channel_pane {
+            let active = active.clone();
+            pane.update(ctx, |pane, ctx| pane.set_channel(active, ctx));
+        }
+        if let Some(history) = &self.history {
+            let active = active.clone();
+            history.update(ctx, |history, ctx| history.set_channel(active, ctx));
         }
         if self.tabs_restored {
             let json = self.tabs.to_json();
