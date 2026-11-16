@@ -8,6 +8,14 @@ mod config_watcher;
 mod settings_init;
 
 use ml_themes::AppearanceManager;
+
+/// The release this binary is: `GIT_RELEASE_TAG` at build time (`v<semver>`, set by
+/// `script/build-portable.*`), else the crate version marked as a development build. The
+/// packaging scripts look for this string in the built binary, so archive names can't lie.
+const VERSION: &str = match option_env!("GIT_RELEASE_TAG") {
+    Some(tag) => tag,
+    None => concat!("v", env!("CARGO_PKG_VERSION"), "-dev"),
+};
 use warpui::{AddWindowOptions, SingletonEntity as _, platform};
 
 fn main() -> anyhow::Result<()> {
@@ -17,7 +25,7 @@ fn main() -> anyhow::Result<()> {
         eprintln!("Logging to {} failed: {err:#}", log_dir.display());
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     }
-    log::info!("MatterLite {} starting", env!("CARGO_PKG_VERSION"));
+    log::info!("MatterLite {VERSION} starting");
     warp_core::features::init();
     match warp_core::paths::portable_root() {
         Some(root) => log::info!("Portable mode: data in {}", root.display()),
@@ -58,7 +66,7 @@ fn main() -> anyhow::Result<()> {
         ml_chat::init(ctx);
         ctx.add_window(
             AddWindowOptions {
-                title: Some("MatterLite".to_string()),
+                title: Some(format!("MatterLite {VERSION}")),
                 ..Default::default()
             },
             ml_chat::RootView::new,

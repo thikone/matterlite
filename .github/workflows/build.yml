@@ -1,12 +1,17 @@
 name: build
 
-# Release binaries for each platform, uploaded as run artifacts. A first step towards the
-# portable archives of MatterLite.md §16 (no version tags, Info.plist or install script yet).
+# Portable archives for each platform (MatterLite.md §16), built by script/build-portable.*.
+# Pushes to main build development archives (v<version>-dev.<commit>), kept as run artifacts.
+# A pushed tag v<semver> builds that release and publishes the archives as a GitHub release.
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: never
@@ -39,33 +44,51 @@ jobs:
         with:
           key: release
       - run: echo "::add-matcher::.github/matchers/rust.json"
-      - run: cargo build --release -p matterlite
-      - name: Package
+      - name: Release tag
         shell: bash
         run: |
-          stage="matterlite-${GITHUB_SHA::7}-${{ matrix.target }}"
-          mkdir -p "$stage/data"
-          printf '%s\n' \
-            "MatterLite keeps its settings, cache and logs in this folder (portable mode)." \
-            "Delete the folder to use the per-user folders of your system instead." \
-            > "$stage/data/README.txt"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cp target/release/matterlite.exe "$stage/"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "TAG=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
           else
-            cp target/release/matterlite "$stage/"
+            echo "TAG=" >> "$GITHUB_ENV"
           fi
-          cp LICENSE LICENSE-MIT README.md "$stage/"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            echo "ARTIFACT_PATH=$stage" >> "$GITHUB_ENV"
-          else
-            # Artifact zips drop the executable bit; a tarball keeps it.
-            tar -czf "$stage.tar.gz" "$stage"
-            echo "ARTIFACT_PATH=$stage.tar.gz" >> "$GITHUB_ENV"
-          fi
-          echo "ARTIFACT_NAME=$stage" >> "$GITHUB_ENV"
+      - name: Build the portable archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ($env:TAG) { ./script/build-portable.ps1 -Tag $env:TAG } else { ./script/build-portable.ps1 }
+      - name: Build the portable archive
+        if: runner.os != 'Windows'
+        run: script/build-portable.sh $TAG
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.ARTIFACT_PATH }}
+          name: matterlite-${{ matrix.target }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          prerelease=""
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then prerelease="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" $prerelease \
+            --title "MatterLite $GITHUB_REF_NAME" \
+            --notes "Portable archives: unpack and run. The data folder next to the program keeps settings, cache and logs; delete it to use the per-user folders instead. Unsigned: Windows SmartScreen and macOS Gatekeeper warn on first start." \
+            *

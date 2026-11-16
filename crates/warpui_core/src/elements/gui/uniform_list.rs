@@ -129,7 +129,7 @@ where
         let mut state = self.state.0.lock();
         state.scroll_top = (state.scroll_top - delta.into_lines())
             .max(Lines::zero())
-            .min(self.scroll_max.unwrap());
+            .min(self.scroll_max.unwrap_or(Lines::zero()));
 
         ctx.notify();
         true
@@ -191,7 +191,13 @@ where
         let mut item_constraint =
             SizeConstraint::new(vec2f(size.x(), 0.0), vec2f(size.x(), f32::INFINITY));
 
-        let first_item = (self.build_items)(0..1, app).next();
+        // MatterLite: with no items there is nothing to measure; asking for item 0 made
+        // builders that index their data panic on an empty list.
+        let first_item = if self.item_count == 0 {
+            None
+        } else {
+            (self.build_items)(0..1, app).next()
+        };
         if let Some(mut first_item) = first_item {
             let mut item_size = first_item.layout(item_constraint, ctx, app);
             item_size.set_x(size.x());
@@ -324,7 +330,7 @@ where
         state.scroll_top = (state.scroll_top
             - delta.to_lines(self.line_height.unwrap_or_default()))
         .max(Lines::zero())
-        .min(self.scroll_max.unwrap());
+        .min(self.scroll_max.unwrap_or(Lines::zero()));
         ctx.notify();
     }
 }

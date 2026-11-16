@@ -943,6 +943,11 @@ impl Engine {
                 self.plan_eager();
                 self.emit_sync_status(true).await;
             }
+            Command::ReconnectNow => {
+                if let Some(ws) = &self.ws {
+                    ws.reconnect_now();
+                }
+            }
             Command::SendPost {
                 channel,
                 root,
@@ -1796,8 +1801,11 @@ impl Engine {
                         .expect("store lock")
                         .fail_pending(&pending);
                     self.emit_changes(deltas).await;
-                    self.emit(Event::Error(format!("message not sent: {error}")))
-                        .await;
+                    self.emit(Event::Error(format!(
+                        "Your message wasn't sent ({}). Use Retry under it to send it again.",
+                        crate::auth::describe(&error).trim_end_matches('.')
+                    )))
+                    .await;
                 }
             },
         }

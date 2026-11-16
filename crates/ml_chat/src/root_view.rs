@@ -3,13 +3,16 @@
 //! The window's root: the login screen while signed out, the workspace while signed in, and
 //! the session's dialogs on top (account and logout, server reset, notices).
 
-use ml_workspace::{AccountBadge, ConnectionStatus, Workspace, WorkspaceEvent};
+use std::time::{Duration, Instant};
+
+use ml_workspace::{AccountBadge, Banner, ConnectionStatus, Workspace, WorkspaceEvent};
 use mm_sync::{ConnectionState, ServerChange};
 use ui_components::{Component as _, Options as _, button, dialog};
 use warp_core::ui::appearance::Appearance;
 use warpui::elements::{
-    Align, ChildView, Container, CrossAxisAlignment, Flex, MainAxisAlignment, MainAxisSize,
-    ParentElement, Rect, Stack, Text,
+    Align, Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex,
+    Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, Rect,
+    Stack, Text,
 };
 use warpui::keymap::{Context, FixedBinding};
 use warpui::{
@@ -39,7 +42,11 @@ use crate::settings::ChatSettings;
 use crate::switcher_view::{SwitcherEvent, SwitcherView};
 use crate::tabs::{ChatTabs, DEFAULT_MAX_TABS, Tab};
 
-const DIALOG_WIDTH: f32 = 460.;
+const DIALOG_WIDTH: f32 = 600.;
+/// Errors shown at once, how long, and how wide.
+const MAX_ERRORS: usize = 3;
+const ERROR_TIME: Duration = Duration::from_secs(12);
+const ERROR_WIDTH: f32 = 360.;
 /// The switcher's distance from the top of the window.
 const SWITCHER_TOP: f32 = 80.;
 /// UI state key of the open tabs.
@@ -62,6 +69,9 @@ pub enum RootAction {
     },
     ResolveServerChange(ServerChange),
     DismissNotice,
+    DismissError,
+    PauseSync,
+    ResumeSync,
 }
 
 pub(crate) fn init(app: &mut AppContext) {
@@ -98,6 +108,7 @@ enum Dialog {
 
 #[derive(Default)]
 struct Buttons {
+    sync: button::Button,
     log_out: button::Button,
     log_out_delete: button::Button,
     cancel: button::Button,
@@ -123,6 +134,19 @@ pub struct RootView {
     open_channel: Option<ChannelId>,
     dialog: Option<Dialog>,
     buttons: Buttons,
+    /// The connection as last seen, when the next reconnect is due, and whether the
+    /// connection was up this session (so "Reconnecting…" isn't shown at start).
+    connection: Option<ConnectionState>,
+    retry_at: Option<Instant>,
+    was_online: bool,
+    /// A one-second tick runs while a countdown is shown.
+    ticking: bool,
+    /// What the banner's link does.
+    banner_action: Option<Command>,
+    /// Errors to show (newest last), each dismissed by hand or after a while.
+    errors: Vec<String>,
+    errors_shown: u64,
+    error_close: MouseStateHandle,
 }
 
 impl RootView {
@@ -140,6 +164,7 @@ impl RootView {
                 me.sync_tabs(ctx);
             }
             SessionEvent::TypingChanged => me.sync_tabs(ctx),
+            SessionEvent::Error(message) => me.show_error(message.clone(), ctx),
             SessionEvent::Changed(deltas) => {
                 if deltas
                     .iter()
@@ -168,6 +193,14 @@ impl RootView {
             open_channel: None,
             dialog: None,
             buttons: Buttons::default(),
+            connection: None,
+            retry_at: None,
+            was_online: false,
+            ticking: false,
+            banner_action: None,
+            errors: Vec::new(),
+            errors_shown: 0,
+            error_close: MouseStateHandle::default(),
         };
         root.on_state_changed(ctx);
         root
@@ -175,6 +208,10 @@ impl RootView {
 
     fn on_state_changed(&mut self, ctx: &mut ViewContext<Self>) {
         self.dialog = None;
+        self.connection = None;
+        self.retry_at = None;
+        self.was_online = false;
+        self.errors.clear();
         self.switcher_open = false;
         self.tabs = ChatTabs::new(max_tabs(ctx));
         self.tabs_restored = false;
@@ -289,6 +326,11 @@ impl RootView {
                 ctx.notify();
             }
             WorkspaceEvent::NewTab => self.open_switcher(ctx),
+            WorkspaceEvent::BannerAction => {
+                if let Some(command) = self.banner_action.clone() {
+                    Session::as_ref(ctx).send(command);
+                }
+            }
             WorkspaceEvent::ActivateTab(index) => {
                 self.tabs.activate(index);
                 self.after_tabs_change(ctx);
@@ -490,11 +532,166 @@ impl RootView {
         };
         let badge = account_badge(active);
         let lines = status_lines(active, session);
+        let connection = active.connection;
+        let paused = active.sync.paused;
+        let server = active
+            .server
+            .as_str()
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches('/')
+            .to_owned();
+        if self.connection != Some(connection) {
+            self.connection = Some(connection);
+            self.retry_at = match connection {
+                ConnectionState::Offline { retry_in } => Some(Instant::now() + retry_in),
+                _ => None,
+            };
+            if connection == ConnectionState::Online {
+                self.was_online = true;
+            }
+        }
+        let (banner, action) = match connection {
+            ConnectionState::Offline { .. } => {
+                let seconds = self.retry_at.map_or(0, |at| {
+                    at.saturating_duration_since(Instant::now())
+                        .as_secs_f32()
+                        .ceil() as u64
+                });
+                let text = if seconds > 0 {
+                    format!("No connection to {server}. Retrying in {seconds} s.")
+                } else {
+                    format!("No connection to {server}. Reconnecting…")
+                };
+                self.start_ticking(ctx);
+                (
+                    Some(Banner {
+                        text,
+                        action: Some("Retry now".to_owned()),
+                        warning: true,
+                    }),
+                    Some(Command::ReconnectNow),
+                )
+            }
+            ConnectionState::Connecting if self.was_online => (
+                Some(Banner {
+                    text: format!("Reconnecting to {server}…"),
+                    action: None,
+                    warning: true,
+                }),
+                None,
+            ),
+            _ if paused => (
+                Some(Banner {
+                    text: "Background sync is paused; new messages still arrive.".to_owned(),
+                    action: Some("Resume sync".to_owned()),
+                    warning: false,
+                }),
+                Some(Command::ResumeSync),
+            ),
+            _ => (None, None),
+        };
+        self.banner_action = action;
         workspace.update(ctx, |workspace, ctx| {
             workspace.set_account(Some(badge), ctx);
             workspace.set_placeholder(lines, ctx);
+            workspace.set_banner(banner, ctx);
         });
         ctx.notify();
+    }
+
+    /// Updates the countdown in the banner every second while offline.
+    fn start_ticking(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.ticking {
+            return;
+        }
+        self.ticking = true;
+        let _ = ctx.spawn(
+            async { warpui::r#async::Timer::after(Duration::from_secs(1)).await },
+            |me, _, ctx| {
+                me.ticking = false;
+                if matches!(me.connection, Some(ConnectionState::Offline { .. })) {
+                    me.on_status_changed(ctx);
+                }
+            },
+        );
+    }
+
+    /// Shows an error from the engine (a message not sent, a setting not saved) until it is
+    /// dismissed or for a while.
+    fn show_error(&mut self, message: String, ctx: &mut ViewContext<Self>) {
+        if self.workspace.is_none() {
+            return;
+        }
+        self.errors.retain(|error| *error != message);
+        self.errors.push(message);
+        if self.errors.len() > MAX_ERRORS {
+            self.errors.remove(0);
+        }
+        self.errors_shown += 1;
+        let shown = self.errors_shown;
+        let _ = ctx.spawn(
+            async { warpui::r#async::Timer::after(ERROR_TIME).await },
+            move |me, _, ctx| {
+                if me.errors_shown == shown {
+                    me.errors.clear();
+                    ctx.notify();
+                }
+            },
+        );
+        ctx.notify();
+    }
+
+    fn render_errors(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let chat = theme.chat();
+        let font = appearance.ui_font_family();
+        let size = appearance.ui_font_size();
+        let text = theme.main_text_color(theme.surface_1()).into_solid();
+        let mut column = Flex::column()
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_spacing(4.);
+        for error in &self.errors {
+            column.add_child(
+                Text::new(error.clone(), font, size)
+                    .with_color(text)
+                    .finish(),
+            );
+        }
+        let close = Hoverable::new(self.error_close.clone(), move |state| {
+            let mut properties = warpui::fonts::Properties::default();
+            if state.is_hovered() {
+                properties = properties.weight(warpui::fonts::Weight::Bold);
+            }
+            Text::new_inline("Dismiss", font, size - 1.)
+                .with_color(chat.link)
+                .with_style(properties)
+                .finish()
+        })
+        .with_cursor(warpui::platform::Cursor::PointingHand)
+        .on_click(|ctx, _, _| ctx.dispatch_typed_action(RootAction::DismissError))
+        .finish();
+        let card = Container::new(
+            Flex::row()
+                .with_spacing(12.)
+                .with_cross_axis_alignment(CrossAxisAlignment::Start)
+                .with_child(
+                    ConstrainedBox::new(column.finish())
+                        .with_max_width(ERROR_WIDTH)
+                        .finish(),
+                )
+                .with_child(close)
+                .finish(),
+        )
+        .with_uniform_padding(12.)
+        .with_background(theme.surface_1())
+        .with_border(Border::left(4.).with_border_color(chat.error_text))
+        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .finish();
+        Container::new(Align::new(card).bottom_right().finish())
+            .with_uniform_padding(20.)
+            .with_padding_bottom(90.)
+            .finish()
     }
 
     fn render_dialog(&self, active: &Active, app: &AppContext) -> Option<Box<dyn Element>> {
@@ -528,6 +725,7 @@ impl RootView {
             lines.push(name);
         }
         lines.push(connection_text(active));
+        lines.push(sync_text(active));
         if let Some(account) = Session::as_ref(app)
             .accounts()
             .iter()
@@ -541,7 +739,20 @@ impl RootView {
                 .to_owned(),
         );
         let busy = active.logging_out;
+        let (sync_label, sync_action) = if active.sync.paused {
+            ("Resume sync", RootAction::ResumeSync)
+        } else {
+            ("Pause sync", RootAction::PauseSync)
+        };
         let buttons = vec![
+            self.button(
+                &self.buttons.sync,
+                sync_label,
+                false,
+                busy,
+                sync_action,
+                appearance,
+            ),
             self.button(
                 &self.buttons.cancel,
                 "Cancel",
@@ -720,6 +931,24 @@ fn account_badge(active: &Active) -> AccountBadge {
     }
 }
 
+/// The eager sync's progress for the Account dialog.
+fn sync_text(active: &Active) -> String {
+    let sync = active.sync;
+    if sync.paused {
+        return "Background sync: paused (new messages still arrive)".to_owned();
+    }
+    if sync.queued + sync.running > 0 || sync.backfilling > 0 {
+        format!(
+            "Background sync: {} requests queued, {} running, {} chats loading older history",
+            sync.queued, sync.running, sync.backfilling
+        )
+    } else if active.ready {
+        "Background sync: up to date".to_owned()
+    } else {
+        "Background sync: waiting for the connection".to_owned()
+    }
+}
+
 fn connection_text(active: &Active) -> String {
     match active.connection {
         ConnectionState::Online if active.ready => "Connected".to_owned(),
@@ -880,6 +1109,9 @@ impl View for RootView {
                 .finish(),
             );
         }
+        if !self.errors.is_empty() {
+            stack.add_child(self.render_errors(Appearance::as_ref(app)));
+        }
         if let Some(dialog) = self.render_dialog(active, app) {
             let theme = Appearance::as_ref(app).theme();
             let mut scrim = theme.background().into_solid();
@@ -923,6 +1155,12 @@ impl TypedActionView for RootView {
                     session.resolve_server_change(answer, ctx)
                 });
             }
+            RootAction::DismissError => {
+                self.errors.clear();
+                ctx.notify();
+            }
+            RootAction::PauseSync => Session::as_ref(ctx).send(Command::PauseSync),
+            RootAction::ResumeSync => Session::as_ref(ctx).send(Command::ResumeSync),
             RootAction::DismissNotice => {
                 Session::handle(ctx).update(ctx, |session, ctx| session.dismiss_notice(ctx));
             }

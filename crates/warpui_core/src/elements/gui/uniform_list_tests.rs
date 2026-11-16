@@ -210,3 +210,59 @@ fn test_uniform_layered_click_handling() {
         });
     });
 }
+
+/// MatterLite: an empty list never asks its builder for an item (builders index their data,
+/// and the Chats list did, which crashed the first login on a fresh install).
+struct EmptyListView {
+    list_state: UniformListState,
+}
+
+impl Entity for EmptyListView {
+    type Event = ();
+}
+
+impl crate::core::View for EmptyListView {
+    fn ui_name() -> &'static str {
+        "empty_uniform_list_test_view"
+    }
+
+    fn render(&self, _: &AppContext) -> Box<dyn Element> {
+        let rows: Vec<&str> = Vec::new();
+        UniformList::new(self.list_state.clone(), rows.len(), move |range, _| {
+            let rows = rows.clone();
+            range.map(move |index| {
+                let _ = rows[index];
+                Rect::new().finish()
+            })
+        })
+        .finish()
+    }
+}
+
+impl TypedActionView for EmptyListView {
+    type Action = ();
+}
+
+#[test]
+fn an_empty_list_builds_no_items() {
+    App::test((), |mut app| async move {
+        let app = &mut app;
+        let (window_id, _view) = app.add_window(WindowStyle::NotStealFocus, |_| EmptyListView {
+            list_state: UniformListState::new(),
+        });
+        let root = app.root_view_id(window_id).unwrap();
+        app.update(move |ctx| {
+            let mut presenter = Presenter::new(window_id);
+            let mut updated = EntityIdSet::default();
+            updated.insert(root);
+            presenter.invalidate(
+                WindowInvalidation {
+                    updated,
+                    ..Default::default()
+                },
+                ctx,
+            );
+            presenter.build_scene(vec2f(200., 300.), 1., None, ctx);
+        });
+    });
+}

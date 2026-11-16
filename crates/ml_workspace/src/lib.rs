@@ -15,7 +15,7 @@ pub use search_bar::{
 };
 pub use tab_bar::{AccountBadge, ConnectionStatus, TabBadge, TabLeading, TabMenuItem, TabSpec};
 pub use tool_panel::{ToolPane, ToolPanel, ToolPanelTab, ViewPane};
-pub use workspace::{Workspace, WorkspaceAction, WorkspaceEvent, init};
+pub use workspace::{Banner, Workspace, WorkspaceAction, WorkspaceEvent, init};
 
 /// Height of the tab bar, without its 1-px bottom border.
 pub const TAB_BAR_HEIGHT: f32 = 34.;

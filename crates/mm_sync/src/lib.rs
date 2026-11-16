@@ -201,6 +201,8 @@ pub enum Command {
     ResumeSync,
     /// Plans the eager sync again now ("Sync now").
     SyncNow,
+    /// Reconnects the WebSocket at once instead of waiting for the next retry ("Retry now").
+    ReconnectNow,
     /// The answer to [`Event::ServerChanged`].
     ResolveServerChange(ServerChange),
     /// Collapses or expands a sidebar category; saved to the server as the webapp does, so

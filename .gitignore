@@ -2,3 +2,4 @@
 /data
 *.pdb
 .DS_Store
+/dist

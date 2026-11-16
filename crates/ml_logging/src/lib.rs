@@ -41,7 +41,24 @@ pub fn init(log_dir: &Path) -> Result<PathBuf> {
         .target(env_logger::Target::Pipe(target))
         .try_init()
         .context("a logger is already installed")?;
+    log_panics();
     Ok(log_dir.join(LOG_FILE_NAME))
+}
+
+/// Writes panics (with the thread and a backtrace) to the log before the default hook runs: a
+/// release build on Windows has no console, so the default message would be lost.
+fn log_panics() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        log::error!(
+            "panic in thread '{}': {info}\n{backtrace}",
+            thread.name().unwrap_or("<unnamed>")
+        );
+        log::logger().flush();
+        previous(info);
+    }));
 }
 
 /// Moves `<name>` to `<name>.old.0`, shifting older launches up and dropping the oldest.

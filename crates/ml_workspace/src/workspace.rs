@@ -62,6 +62,17 @@ pub enum WorkspaceAction {
     ToggleThemeChooser,
     /// The account button in the tab bar was clicked.
     OpenAccountMenu,
+    BannerAction,
+}
+
+/// A bar under the tab bar about the whole window (the connection), with an optional link.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Banner {
+    pub text: String,
+    /// Reported as [`WorkspaceEvent::BannerAction`] when clicked.
+    pub action: Option<String>,
+    /// A problem (drawn in the error colour) or information.
+    pub warning: bool,
 }
 
 /// What the user did with the tabs or the account button; the owner (which holds the tabs'
@@ -77,6 +88,8 @@ pub enum WorkspaceEvent {
     ReopenClosedTab,
     /// Ctrl/Cmd+T or the + button: open a chat.
     NewTab,
+    /// The banner's link was clicked.
+    BannerAction,
 }
 
 /// Registers the workspace keybindings (MatterLite.md §10.5).
@@ -144,6 +157,8 @@ pub struct Workspace {
     placeholder: Vec<String>,
     /// The active tab's content, supplied by the app.
     content: Option<Box<dyn crate::ToolPane>>,
+    banner: Option<Banner>,
+    banner_mouse_state: MouseStateHandle,
 }
 
 impl Workspace {
@@ -182,7 +197,66 @@ impl Workspace {
             account_mouse_state: MouseStateHandle::default(),
             placeholder: Vec::new(),
             content: None,
+            banner: None,
+            banner_mouse_state: MouseStateHandle::default(),
         }
+    }
+
+    /// Shows a bar under the tab bar, or removes it.
+    pub fn set_banner(&mut self, banner: Option<Banner>, ctx: &mut ViewContext<Self>) {
+        if banner != self.banner {
+            self.banner = banner;
+            ctx.notify();
+        }
+    }
+
+    fn render_banner(&self, banner: &Banner, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let chat = theme.chat();
+        let font = appearance.ui_font_family();
+        let size = appearance.ui_font_size();
+        let text_color = theme.main_text_color(theme.background()).into_solid();
+        let accent = if banner.warning {
+            chat.error_text
+        } else {
+            chat.button_bg
+        };
+        let mut background = accent;
+        background.a = 36;
+        let mut row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_main_axis_alignment(warpui::elements::MainAxisAlignment::Center)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(12.)
+            .with_child(
+                Text::new_inline(banner.text.clone(), font, size)
+                    .with_color(text_color)
+                    .finish(),
+            );
+        if let Some(action) = &banner.action {
+            let action = action.clone();
+            let link = chat.link;
+            row.add_child(
+                warpui::elements::Hoverable::new(self.banner_mouse_state.clone(), move |state| {
+                    let mut properties = warpui::fonts::Properties::default();
+                    if state.is_hovered() {
+                        properties = properties.weight(warpui::fonts::Weight::Bold);
+                    }
+                    Text::new_inline(action.clone(), font, size)
+                        .with_color(link)
+                        .with_style(properties)
+                        .finish()
+                })
+                .with_cursor(warpui::platform::Cursor::PointingHand)
+                .on_click(|ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::BannerAction))
+                .finish(),
+            );
+        }
+        Container::new(row.finish())
+            .with_vertical_padding(6.)
+            .with_background_color(background)
+            .with_border(Border::bottom(1.).with_border_color(accent))
+            .finish()
     }
 
     /// What the active tab shows; `None` shows the placeholder.
@@ -454,6 +528,10 @@ impl View for Workspace {
                     .map(|account| (account, &self.account_mouse_state)),
                 appearance,
             ))
+            .with_child(match &self.banner {
+                Some(banner) => self.render_banner(banner, appearance),
+                None => warpui::elements::Empty::new().finish(),
+            })
             .with_child(Shrinkable::new(1., body.finish()).finish())
             .finish();
 
@@ -470,6 +548,7 @@ impl TypedActionView for Workspace {
     fn handle_action(&mut self, action: &WorkspaceAction, ctx: &mut ViewContext<Self>) {
         match *action {
             WorkspaceAction::ShowToolPanelTab(tab) => self.show_tool_panel_tab(tab, ctx),
+            WorkspaceAction::BannerAction => ctx.emit(WorkspaceEvent::BannerAction),
             WorkspaceAction::ToggleToolPanel => {
                 self.set_tool_panel_open(!self.tool_panel_open, ctx);
             }

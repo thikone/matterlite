@@ -53,6 +53,8 @@ pub struct Active {
     /// Online and in sync with the server.
     pub ready: bool,
     pub connection: ConnectionState,
+    /// `ready` was reached once this session.
+    was_ready: bool,
     pub sync: SyncStatus,
     /// The server was reset or reinstalled: the engine waits for
     /// [`Session::resolve_server_change`].
@@ -399,6 +401,7 @@ impl Session {
             hydrated: false,
             ready: false,
             connection: ConnectionState::Connecting,
+            was_ready: false,
             sync: SyncStatus::default(),
             server_changed: false,
             logging_out: false,
@@ -463,6 +466,7 @@ impl Session {
                 );
                 active.hydrated = true;
                 active.ready = true;
+                active.was_ready = true;
                 if let Ok(store) = active.engine.store().read()
                     && let Some(me) = store.users.get(&store.me)
                 {
@@ -473,7 +477,11 @@ impl Session {
                 }
                 ctx.emit(SessionEvent::StatusChanged);
             }
-            Event::Resynced => ctx.emit(SessionEvent::Reloaded),
+            Event::Resynced => {
+                active.ready = true;
+                ctx.emit(SessionEvent::Reloaded);
+                ctx.emit(SessionEvent::StatusChanged);
+            }
             Event::ServerChanged => {
                 active.server_changed = true;
                 ctx.emit(SessionEvent::StatusChanged);
@@ -495,9 +503,10 @@ impl Session {
             Event::ImageReady(key) => ctx.emit(SessionEvent::ImageReady(key)),
             Event::Connection(connection) => {
                 active.connection = connection;
-                if connection != ConnectionState::Online {
-                    active.ready = false;
-                }
+                // Back online after a drop: the WebSocket session resumes with the missed
+                // events (or the engine resyncs and says so), so the store is current again.
+                // At start, `Ready` says it.
+                active.ready = connection == ConnectionState::Online && active.was_ready;
                 ctx.emit(SessionEvent::StatusChanged);
             }
             Event::Sync(status) => {

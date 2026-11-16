@@ -1722,11 +1722,21 @@ Mirror the Warp fork's portable scheme (`script/windows/build-portable.ps1`,
 | Linux x64 | `matterlite-<tag>-linux-x64.tar.gz` | binary, `data/`, `install.sh` (desktop entry + icon under `$HOME`, checks runtime libs and prints the apt line), `LICENSE*` |
 | macOS arm64 | `matterlite-<tag>-macos-arm64.tar.gz` | ad-hoc signed binary with embedded `Info.plist`, `data/`, `LICENSE*` |
 
+**Done in M3** (`script/build-portable.ps1` for Windows, `script/build-portable.sh` for
+Linux and macOS; `.github/workflows/build.yml` runs them on every push to `main` and, for a
+pushed `v*` tag, publishes the three archives with `SHA256SUMS.txt` as a GitHub release,
+pre-release when the tag has a suffix): profile `rlto` (thin LTO, stripped), version from
+`GIT_RELEASE_TAG` (else `v<crate version>-dev.<commit>`), checks of the version string in the
+binary, the PE subsystem and the embedded assets, the staged `data/` audited, licences
+(`LICENSE`, `LICENSE-MIT`, `LICENSE-APACHE`), `README.md` and `PROVENANCE.md` included; macOS
+binaries signed ad hoc. Not yet: the Linux `install.sh`, the macOS `Info.plist`, an exe icon
+and version resource.
+
 - Shipping the `data/` folder makes the archive portable by default; deleting it switches to
   per-user dirs.
-- Version from `GIT_RELEASE_TAG` (`v<semver>` or Warp-style date tag) read with
-  `option_env!` at build time; the packaging script reads it back from the built binary
-  (`matterlite --version`) so archive names can't lie.
+- Version from `GIT_RELEASE_TAG` (`v<semver>`) read with `option_env!` at build time (log,
+  window title); the packaging script finds it in the built binary, so archive names can't
+  lie. (A Windows GUI program has no console for `--version`.)
 - Build scripts verify: version string, PE subsystem 2 on Windows (proves
   `release_bundle`), embedded assets present.
 - Package scripts audit the staged folder for user data (no `data/state/*` from test runs).
