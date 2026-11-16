@@ -12,12 +12,12 @@
 //! them. Nothing is drawn when the window has the OS frame (or under a tiling window manager).
 
 use pathfinder_color::ColorU;
-#[cfg(target_os = "windows")]
-use warpui::elements::Text;
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, Rect, Stack,
+    MouseStateHandle, ParentElement, Radius, Rect, Stack,
 };
+#[cfg(target_os = "windows")]
+use warpui::elements::{MainAxisAlignment, MainAxisSize, Text};
 use warpui::fonts::FamilyId;
 use warpui::platform::FullscreenState;
 use warpui::{AppContext, Element, Entity, ModelContext, SingletonEntity, WindowId};
