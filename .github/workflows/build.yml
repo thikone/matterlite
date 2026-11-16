@@ -59,7 +59,7 @@ jobs:
           if ($env:TAG) { ./script/build-portable.ps1 -Tag $env:TAG } else { ./script/build-portable.ps1 }
       - name: Build the portable archive
         if: runner.os != 'Windows'
-        run: script/build-portable.sh $TAG
+        run: bash script/build-portable.sh $TAG
       - uses: actions/upload-artifact@v4
         with:
           name: matterlite-${{ matrix.target }}

@@ -22,10 +22,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Stops with a message, also as a GitHub Actions annotation (readable without the log).
+fail() {
+    echo "build-portable: $*" >&2
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+        echo "::error title=build-portable::$*"
+    fi
+    exit 1
+}
+
 case "$(uname -s)-$(uname -m)" in
     Linux-x86_64) platform=linux-x64 ;;
     Darwin-arm64) platform=macos-arm64 ;;
-    *) echo "unsupported platform: $(uname -s) $(uname -m)" >&2; exit 2 ;;
+    *) fail "unsupported platform: $(uname -s) $(uname -m)" ;;
 esac
 
 tag=${1:-}
@@ -34,25 +43,23 @@ if [ -z "$tag" ]; then
     tag="v$version-dev.$(git rev-parse --short=7 HEAD)"
 fi
 if ! [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$ ]]; then
-    echo "tag '$tag' isn't v<semver> (e.g. v0.3.0 or v0.3.0-rc.1)" >&2
-    exit 2
+    fail "tag '$tag' isn't v<semver> (e.g. v0.3.0 or v0.3.0-rc.1)"
 fi
 out=${OUT_DIR:-dist}
 # The emoji images alone are 6.4 MB; a binary without the embedded assets is far smaller.
 min_size=$((12 * 1024 * 1024))
 echo "== MatterLite $tag for $platform"
 
-GIT_RELEASE_TAG=$tag cargo build --profile rlto --locked -p matterlite
+GIT_RELEASE_TAG=$tag cargo build --profile rlto --locked -p matterlite ||
+    fail "cargo build failed"
 bin=target/rlto/matterlite
 
 if ! grep -qaF -- "$tag" "$bin"; then
-    echo "the built binary doesn't contain '$tag': it wasn't rebuilt with the tag" >&2
-    exit 1
+    fail "the built binary doesn't contain '$tag': it wasn't rebuilt with the tag"
 fi
 size=$(wc -c < "$bin" | tr -d ' ')
 if [ "$size" -lt "$min_size" ]; then
-    echo "the binary is only $size bytes: the assets aren't embedded" >&2
-    exit 1
+    fail "the binary is only $size bytes: the assets aren't embedded"
 fi
 echo "   verified: version $tag, $((size / 1024 / 1024)) MB"
 
@@ -62,7 +69,7 @@ rm -rf "$stage"
 mkdir -p "$stage/data"
 cp "$bin" "$stage/"
 if [ "$platform" = macos-arm64 ]; then
-    codesign --force --sign - "$stage/matterlite"
+    codesign --force --sign - "$stage/matterlite" || fail "ad-hoc signing failed"
 fi
 printf '%s\n' \
     "MatterLite keeps its settings, cache and logs in this folder (portable mode)." \
@@ -73,9 +80,7 @@ cp LICENSE LICENSE-MIT LICENSE-APACHE README.md PROVENANCE.md "$stage/"
 # No user data from test runs in the archive.
 extra=$(find "$stage/data" -mindepth 1 ! -name README.txt)
 if [ -n "$extra" ]; then
-    echo "unexpected files in the staged data folder:" >&2
-    echo "$extra" >&2
-    exit 1
+    fail "unexpected files in the staged data folder: $(echo $extra)"
 fi
 
 archive="$out/$name.tar.gz"
