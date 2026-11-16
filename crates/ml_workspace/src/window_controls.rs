@@ -12,12 +12,13 @@
 //! them. Nothing is drawn when the window has the OS frame (or under a tiling window manager).
 
 use pathfinder_color::ColorU;
+use warpui::elements::MainAxisSize;
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable,
     MouseStateHandle, ParentElement, Radius, Rect, Stack,
 };
 #[cfg(target_os = "windows")]
-use warpui::elements::{MainAxisAlignment, MainAxisSize, Text};
+use warpui::elements::{MainAxisAlignment, Text};
 use warpui::fonts::FamilyId;
 use warpui::platform::FullscreenState;
 use warpui::{AppContext, Element, Entity, ModelContext, SingletonEntity, WindowId};
@@ -257,7 +258,10 @@ fn render_platform(
     let foreground = theme.foreground().into_solid();
     let maximized = fullscreen != FullscreenState::Normal;
     let (normal, hovered) = (theme.surface_2(), theme.surface_3());
+    // As wide as the buttons: the caller places the row (an `Align` here would take the
+    // whole width and centre them).
     let mut row = Flex::row()
+        .with_main_axis_size(MainAxisSize::Min)
         .with_spacing(16.)
         .with_cross_axis_alignment(CrossAxisAlignment::Center);
     for (button, state) in [
@@ -284,13 +288,10 @@ fn render_platform(
             .finish(),
         );
     }
-    ConstrainedBox::new(
-        Container::new(Align::new(row.finish()).finish())
-            .with_horizontal_padding(12.)
-            .finish(),
-    )
-    .with_height(TAB_BAR_HEIGHT)
-    .finish()
+    Container::new(row.finish())
+        .with_horizontal_padding(12.)
+        .with_vertical_padding((TAB_BAR_HEIGHT - LINUX_BUTTON_SIZE) / 2.)
+        .finish()
 }
 
 /// Icons drawn with rectangles (Linux, and Windows without its symbol fonts).
