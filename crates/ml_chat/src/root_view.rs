@@ -681,7 +681,7 @@ impl RootView {
         .with_cursor(warpui::platform::Cursor::PointingHand)
         .on_click(|ctx, _, _| ctx.dispatch_typed_action(RootAction::DismissError))
         .finish();
-        let card = Container::new(
+        Container::new(
             Flex::row()
                 .with_spacing(12.)
                 .with_cross_axis_alignment(CrossAxisAlignment::Start)
@@ -697,11 +697,7 @@ impl RootView {
         .with_background(theme.surface_1())
         .with_border(Border::left(4.).with_border_color(chat.error_text))
         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
-        .finish();
-        Container::new(Align::new(card).bottom_right().finish())
-            .with_uniform_padding(20.)
-            .with_padding_bottom(90.)
-            .finish()
+        .finish()
     }
 
     fn render_dialog(&self, active: &Active, app: &AppContext) -> Option<Box<dyn Element>> {
@@ -1133,7 +1129,17 @@ impl View for RootView {
             );
         }
         if !self.errors.is_empty() {
-            stack.add_child(self.render_errors(Appearance::as_ref(app)));
+            // Positioned, so only the card covers what is under it (a full-size container would
+            // block the wheel and hover in the whole window while it shows).
+            stack.add_positioned_child(
+                self.render_errors(Appearance::as_ref(app)),
+                warpui::elements::OffsetPositioning::offset_from_parent(
+                    pathfinder_geometry::vector::vec2f(-20., -90.),
+                    warpui::elements::ParentOffsetBounds::ParentByPosition,
+                    warpui::elements::ParentAnchor::BottomRight,
+                    warpui::elements::ChildAnchor::BottomRight,
+                ),
+            );
         }
         if let Some(dialog) = self.render_dialog(active, app) {
             let theme = Appearance::as_ref(app).theme();

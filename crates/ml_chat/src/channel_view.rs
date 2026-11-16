@@ -1409,10 +1409,17 @@ impl View for ChannelView {
             .with_cursor(Cursor::PointingHand)
             .on_click(|ctx, _, _| ctx.dispatch_typed_action(ChannelAction::JumpToNewest))
             .finish();
-            stack.add_child(
-                Container::new(Align::new(button).bottom_center().finish())
-                    .with_padding_bottom(12.)
-                    .finish(),
+            // Positioned, not in a full-size `Container`: a container covers its whole area for
+            // hit testing, and the timeline under it then ignored the wheel and hid its
+            // scrollbar.
+            stack.add_positioned_child(
+                button,
+                warpui::elements::OffsetPositioning::offset_from_parent(
+                    pathfinder_geometry::vector::vec2f(0., -12.),
+                    warpui::elements::ParentOffsetBounds::ParentByPosition,
+                    warpui::elements::ParentAnchor::BottomMiddle,
+                    warpui::elements::ChildAnchor::BottomMiddle,
+                ),
             );
         }
         let column = Flex::column()
