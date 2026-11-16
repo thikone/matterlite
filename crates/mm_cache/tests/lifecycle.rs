@@ -228,3 +228,42 @@ fn ui_state_is_read_back_without_its_prefix() {
     assert_eq!(state.len(), 2, "{state:?}");
     assert_eq!(state["last_team"], "t");
 }
+
+#[test]
+fn drafts_are_saved_replaced_and_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(mm_cache::drafts(dir.path()).is_empty(), "no cache yet");
+    let (mut cache, _) = Cache::open(&dir.path().join("cache.sqlite")).unwrap();
+    let draft = |channel: &str, root: &str, message: &str, at: i64| Op::PutDraft {
+        channel: channel.into(),
+        root: root.into(),
+        message: message.into(),
+        updated_at: at,
+    };
+    cache
+        .apply(&[
+            draft("c1", "", "first", 1),
+            draft("c1", "", "second", 2),
+            draft("c1", "root", "a reply", 3),
+            draft("c2", "", "gone", 4),
+            Op::DeleteDraft {
+                channel: "c2".into(),
+                root: PostId::default(),
+            },
+        ])
+        .unwrap();
+    drop(cache);
+    let mut drafts = mm_cache::drafts(dir.path());
+    drafts.sort_by_key(|draft| draft.updated_at);
+    let found: Vec<_> = drafts
+        .iter()
+        .map(|draft| {
+            (
+                draft.channel.as_str(),
+                draft.root.as_str(),
+                draft.message.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(found, [("c1", "", "second"), ("c1", "root", "a reply")]);
+}

@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use diesel::prelude::*;
-use mm_model::User;
+use mm_model::{ChannelId, PostId, User};
 
 use crate::error::CacheError;
 use crate::ops::kv;
@@ -114,6 +114,51 @@ pub fn delete_unused_accounts(servers_dir: &Path, days: u32, now: i64) -> Vec<Pa
 
 /// Prefix of the `kv` keys that hold UI state (open tabs, last team, …).
 pub const UI_STATE_PREFIX: &str = "ui.";
+
+/// An unsent composer text saved in the cache.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Draft {
+    pub channel: ChannelId,
+    /// Empty for the channel's composer.
+    pub root: PostId,
+    pub message: String,
+    pub updated_at: i64,
+}
+
+/// The drafts saved in an account's cache. Empty when the account has no cache yet or it
+/// can't be read (logged).
+pub fn drafts(account_dir: &Path) -> Vec<Draft> {
+    let path = account_dir.join("cache.sqlite");
+    if !path.is_file() {
+        return Vec::new();
+    }
+    let read = || -> Result<Vec<(String, String, String, i64)>, CacheError> {
+        let mut conn = crate::db::open_reader(&path)?;
+        Ok(schema::drafts::table
+            .select((
+                schema::drafts::channel_id,
+                schema::drafts::root_id,
+                schema::drafts::message,
+                schema::drafts::updated_at,
+            ))
+            .load(&mut conn)?)
+    };
+    match read() {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|(channel, root, message, updated_at)| Draft {
+                channel: channel.into(),
+                root: root.into(),
+                message,
+                updated_at,
+            })
+            .collect(),
+        Err(error) => {
+            log::warn!("drafts in {}: {error}", path.display());
+            Vec::new()
+        }
+    }
+}
 
 /// The UI state saved in an account's cache, keys without [`UI_STATE_PREFIX`]. Empty when the
 /// account has no cache yet or it can't be read (logged).

@@ -98,6 +98,18 @@ pub enum Op {
     DeleteThread(PostId),
     /// `None` deletes the key.
     Kv(String, Option<String>),
+    /// The unsent text of a chat's (or a thread's) composer.
+    PutDraft {
+        channel: ChannelId,
+        /// Empty for the channel's composer.
+        root: PostId,
+        message: String,
+        updated_at: i64,
+    },
+    DeleteDraft {
+        channel: ChannelId,
+        root: PostId,
+    },
 }
 
 fn json<T: serde::Serialize>(value: &T) -> String {

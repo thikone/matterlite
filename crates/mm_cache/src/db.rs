@@ -339,6 +339,26 @@ fn apply_one(conn: &mut SqliteConnection, op: &Op) -> QueryResult<()> {
         Op::Kv(key, None) => {
             diesel::delete(kv::table.find(key)).execute(conn)?;
         }
+        Op::PutDraft {
+            channel,
+            root,
+            message,
+            updated_at,
+        } => {
+            use schema::drafts;
+            diesel::replace_into(drafts::table)
+                .values((
+                    drafts::channel_id.eq(channel.as_str()),
+                    drafts::root_id.eq(root.as_str()),
+                    drafts::message.eq(message),
+                    drafts::updated_at.eq(updated_at),
+                ))
+                .execute(conn)?;
+        }
+        Op::DeleteDraft { channel, root } => {
+            use schema::drafts;
+            diesel::delete(drafts::table.find((channel.as_str(), root.as_str()))).execute(conn)?;
+        }
     }
     Ok(())
 }

@@ -28,8 +28,8 @@ use mm_store::Store;
 
 pub use account::account_id;
 pub use accounts::{
-    StoredAccount, UI_STATE_PREFIX, delete_account, delete_unused_accounts, stored_accounts,
-    ui_state,
+    Draft, StoredAccount, UI_STATE_PREFIX, delete_account, delete_unused_accounts, drafts,
+    stored_accounts, ui_state,
 };
 pub use db::{OpenReport, open_reader};
 pub use error::CacheError;

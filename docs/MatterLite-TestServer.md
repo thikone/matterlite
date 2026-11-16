@@ -328,6 +328,17 @@ DM=$(as_bob -X POST $API/channels/direct -d "[\"$BOB\",\"$ALICE\"]" | jq -r .id)
 as_bob -X POST $API/posts -d "{\"channel_id\":\"$DM\",\"message\":\"ping\"}" >/dev/null
 ```
 
+**What MatterLite sends.** `script/test-server/listen.mjs` prints the WebSocket events another
+user receives (Node 22+ has `WebSocket` built in; the VM has Node 24), e.g. alice's typing and
+posts as bob sees them, with the seconds since the start. `typing.mjs` sends `user_typing` every
+2 s over the WebSocket, like a real client:
+
+```sh
+scp script/test-server/*.mjs andrew@ubuntu:mm-test-server/tools/
+ssh andrew@ubuntu 'source ~/mm-test-server/credentials.env; MM_TOKEN=$MM_BOB_TOKEN node ~/mm-test-server/tools/listen.mjs 20 typing posted'
+ssh andrew@ubuntu 'source ~/mm-test-server/credentials.env; MM_TOKEN=$MM_BOB_TOKEN node ~/mm-test-server/tools/typing.mjs <channel id> 8'
+```
+
 This snippet was run against the server: every call succeeds. The same works for carol and the
 others: log in by password (`POST /users/login`, `Token` header) or create a token with the
 admin token (`POST /users/{id}/tokens`).

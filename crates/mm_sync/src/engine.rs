@@ -997,6 +997,37 @@ impl Engine {
                 category,
                 collapsed,
             } => self.set_category_collapsed(team, category, collapsed).await,
+            Command::SaveDraft {
+                channel,
+                root,
+                message,
+            } => {
+                let op = if message.is_empty() {
+                    Op::DeleteDraft { channel, root }
+                } else {
+                    Op::PutDraft {
+                        channel,
+                        root,
+                        message,
+                        updated_at: now_ms(),
+                    }
+                };
+                if let Some(writer) = &self.writer
+                    && let Err(error) = writer.send(vec![op])
+                {
+                    log::error!("cache: {error}");
+                }
+            }
+            Command::Typing { channel, root } => {
+                if self.online
+                    && let Some(ws) = &self.ws
+                {
+                    ws.send(mm_model::ws::ClientAction::UserTyping {
+                        channel_id: channel,
+                        parent_id: root,
+                    });
+                }
+            }
             Command::SetUiState { key, value } => {
                 if let Some(writer) = &self.writer
                     && let Err(error) =

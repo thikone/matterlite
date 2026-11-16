@@ -135,6 +135,7 @@ impl RootView {
                 me.drop_gone_tabs(ctx);
                 me.sync_tabs(ctx);
             }
+            SessionEvent::TypingChanged => me.sync_tabs(ctx),
             SessionEvent::Changed(deltas) => {
                 if deltas
                     .iter()
@@ -375,16 +376,20 @@ impl RootView {
         let palette = theme.chat();
         let offline = theme.sub_text_color(theme.background()).into_solid();
         let active = self.tabs.active();
-        let specs: Vec<TabSpec> = match Session::as_ref(ctx)
-            .store()
-            .and_then(|store| store.read().ok())
-        {
+        let session = Session::as_ref(ctx);
+        let specs: Vec<TabSpec> = match session.store().and_then(|store| store.read().ok()) {
             Some(store) => self
                 .tabs
                 .tabs()
                 .iter()
                 .enumerate()
-                .map(|(index, tab)| tab_spec(&store, tab, Some(index) == active, &palette, offline))
+                .map(|(index, tab)| {
+                    let mut spec = tab_spec(&store, tab, Some(index) == active, &palette, offline);
+                    spec.typing = session.active().is_some_and(|session| {
+                        !session.typing(&tab.channel, &Default::default()).is_empty()
+                    });
+                    spec
+                })
                 .collect(),
             None => Vec::new(),
         };
@@ -763,6 +768,7 @@ fn tab_spec(
         badge,
         unread: !active && unread.is_unread(),
         pinned: tab.pinned,
+        typing: false,
     }
 }
 

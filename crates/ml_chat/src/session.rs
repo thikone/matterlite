@@ -9,17 +9,21 @@
 //! removed and the session returns to the login screen, keeping the account's local data
 //! unless the user asked to delete it.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use mm_api::{LoginResponse, ServerUrl};
 use mm_cache::StoredAccount;
-use mm_model::User;
+use mm_model::{ChannelId, PostId, User, UserId};
 use mm_store::StoreDelta;
 use mm_sync::{
     Auth, Command, ConnectionState, EngineConfig, EngineHandle, Event, ServerChange, SharedStore,
     SyncStatus,
 };
 use warpui::{Entity, ModelContext, SingletonEntity};
+
+use crate::composer::TypingUsers;
 use warpui_extras::secure_storage::AppContextExt as _;
 
 /// The secure-storage key of an account's session token. No `:` in it: on Windows the key is
@@ -59,11 +63,29 @@ pub struct Active {
     pub notices: Vec<String>,
     pub last_error: Option<String>,
     account_dir: PathBuf,
+    /// Unsent composer texts by chat and thread root (saved in the cache).
+    drafts: HashMap<(ChannelId, PostId), String>,
+    /// Who is typing where (`typing` events, live only).
+    typing: TypingUsers,
+    /// An expiry check of `typing` is scheduled.
+    typing_timer: bool,
     /// UI state saved in the account's cache (last team, collapsed groups, …).
     ui_state: std::collections::HashMap<String, String>,
 }
 
 impl Active {
+    /// The unsent text of a chat's composer (`root` empty) or a thread's.
+    pub fn draft(&self, channel: &ChannelId, root: &PostId) -> Option<&str> {
+        self.drafts
+            .get(&(channel.clone(), root.clone()))
+            .map(String::as_str)
+    }
+
+    /// Who is typing in a chat's composer (`root` empty) or a thread, oldest first.
+    pub fn typing(&self, channel: &ChannelId, root: &PostId) -> Vec<UserId> {
+        self.typing.users(channel, root)
+    }
+
     /// The account's folder (cache, images).
     pub fn account_dir(&self) -> &Path {
         &self.account_dir
@@ -95,6 +117,8 @@ pub enum SessionEvent {
     },
     /// An image asked for with `Command::FetchImage` is on disk.
     ImageReady(mm_sync::ImageKey),
+    /// Someone started or stopped typing somewhere.
+    TypingChanged,
     Error(String),
 }
 
@@ -162,6 +186,32 @@ impl Session {
                 value,
             });
         }
+    }
+
+    /// Saves the unsent text of a composer (empty: deletes it); the cache write is the
+    /// engine's.
+    pub fn set_draft(&mut self, channel: &ChannelId, root: &PostId, message: String) {
+        let Some(active) = self.active_mut() else {
+            return;
+        };
+        let key = (channel.clone(), root.clone());
+        if active
+            .drafts
+            .get(&key)
+            .map_or(message.is_empty(), |old| *old == message)
+        {
+            return;
+        }
+        if message.is_empty() {
+            active.drafts.remove(&key);
+        } else {
+            active.drafts.insert(key, message.clone());
+        }
+        active.engine.send(Command::SaveDraft {
+            channel: channel.clone(),
+            root: root.clone(),
+            message,
+        });
     }
 
     pub fn auth(&self) -> &Auth {
@@ -325,6 +375,10 @@ impl Session {
         let mut config = EngineConfig::new(server.clone(), token, self.servers_dir.clone());
         let account_dir = self.servers_dir.join(&account_id);
         let ui_state = mm_cache::ui_state(&account_dir);
+        let drafts = mm_cache::drafts(&account_dir)
+            .into_iter()
+            .map(|draft| ((draft.channel, draft.root), draft.message))
+            .collect();
         if account_dir.is_dir() {
             config.user_id = Some(user.id.clone());
         }
@@ -350,6 +404,9 @@ impl Session {
             notices,
             last_error: None,
             account_dir,
+            drafts,
+            typing: TypingUsers::default(),
+            typing_timer: false,
             ui_state,
         }));
         ctx.emit(SessionEvent::StateChanged);
@@ -420,7 +477,13 @@ impl Session {
                 active.server_changed = true;
                 ctx.emit(SessionEvent::StatusChanged);
             }
-            Event::Changed(deltas) => ctx.emit(SessionEvent::Changed(deltas)),
+            Event::Changed(deltas) => {
+                if update_typing(active, &deltas) {
+                    ctx.emit(SessionEvent::TypingChanged);
+                    self.schedule_typing_expiry(ctx);
+                }
+                ctx.emit(SessionEvent::Changed(deltas));
+            }
             Event::ChannelOpened {
                 channel,
                 last_viewed_at,
@@ -464,6 +527,41 @@ impl Session {
         }
     }
 
+    /// Drops typing entries once they are an interval old, checking again while any are left.
+    fn schedule_typing_expiry(&mut self, ctx: &mut ModelContext<Self>) {
+        let Some(active) = self.active_mut() else {
+            return;
+        };
+        if active.typing_timer || active.typing.is_empty() {
+            return;
+        }
+        active.typing_timer = true;
+        let generation = self.generation;
+        let _ = ctx.spawn(
+            async { warpui::r#async::Timer::after(TYPING_CHECK).await },
+            move |me, _, ctx| {
+                if generation != me.generation {
+                    return;
+                }
+                let Some(active) = me.active_mut() else {
+                    return;
+                };
+                active.typing_timer = false;
+                let interval = active
+                    .engine
+                    .store()
+                    .read()
+                    .map_or(crate::composer::DEFAULT_TYPING_INTERVAL, |store| {
+                        crate::composer::typing_interval(&store)
+                    });
+                if active.typing.expire(Instant::now(), interval) {
+                    ctx.emit(SessionEvent::TypingChanged);
+                }
+                me.schedule_typing_expiry(ctx);
+            },
+        );
+    }
+
     /// The engine stopped without a logout (a fatal error).
     fn on_engine_gone(&mut self, generation: u64, ctx: &mut ModelContext<Self>) {
         if generation != self.generation {
@@ -488,6 +586,39 @@ impl Session {
         self.generation += 1;
         self.end(signed_out, ctx);
     }
+}
+
+/// How often typing entries are checked for expiry.
+const TYPING_CHECK: Duration = Duration::from_millis(500);
+
+/// Typing events add entries; a post by someone typing ends theirs. Whether anything changed.
+fn update_typing(active: &mut Active, deltas: &[StoreDelta]) -> bool {
+    let mut changed = false;
+    let now = Instant::now();
+    let Ok(store) = active.engine.store().read() else {
+        return false;
+    };
+    for delta in deltas {
+        match delta {
+            StoreDelta::Typing {
+                channel,
+                root,
+                user,
+            } if *user != store.me => {
+                active
+                    .typing
+                    .add(channel.clone(), root.clone(), user.clone(), now);
+                changed = true;
+            }
+            StoreDelta::PostsChanged(ids) if !active.typing.is_empty() => {
+                for post in ids.iter().filter_map(|id| store.posts.get(id)) {
+                    changed |= active.typing.posted(&post.channel_id, &post.user_id);
+                }
+            }
+            _ => {}
+        }
+    }
+    changed
 }
 
 /// The login fields for a stored account.

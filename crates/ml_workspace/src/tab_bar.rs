@@ -42,6 +42,8 @@ pub struct TabSpec {
     /// Drawn bold.
     pub unread: bool,
     pub pinned: bool,
+    /// Someone is typing in the chat: "typing…" after the title.
+    pub typing: bool,
 }
 
 /// The mark left of the title.
@@ -265,6 +267,18 @@ fn render_tab(
             )
             .finish(),
         );
+        if spec.typing {
+            content.add_child(
+                Container::new(
+                    Text::new_inline("typing…", font, font_size - 2.)
+                        .with_color(sub_color)
+                        .with_style(Properties::default().style(warpui::fonts::Style::Italic))
+                        .finish(),
+                )
+                .with_margin_left(6.)
+                .finish(),
+            );
+        }
         match spec.badge {
             TabBadge::Mentions(count) => {
                 let label = if count > 99 {

@@ -28,6 +28,7 @@ use warp_core::ui::appearance::Appearance;
 use warp_core::ui::icons::Icon;
 use warpui::assets::asset_cache::AssetSource;
 use warpui::color::ColorU;
+use warpui::elements::ChildView;
 use warpui::elements::{
     Align, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
     DispatchEventResult, Empty, EventHandler, Expanded, Flex, Highlight, HighlightedRange,
@@ -40,11 +41,14 @@ use warpui::image_cache::CacheOption;
 use warpui::keymap::FixedBinding;
 use warpui::platform::Cursor;
 use warpui::{
-    AppContext, Element, Entity, SingletonEntity as _, TypedActionView, View, ViewContext,
+    AppContext, Element, Entity, FocusContext, SingletonEntity as _, TypedActionView, View,
+    ViewContext, ViewHandle,
 };
 
 use crate::chats::{ChannelIcon, channel_icon as icon_kind};
 use crate::chats_view::{channel_icon, fade, icon};
+use crate::composer;
+use crate::composer_view::{ComposerEvent, ComposerView};
 use crate::message::{
     CustomEmoji, MessageRenderer, OnClick, Palette, SyntaxColors, Target, emoji_image, fixed_width,
 };
@@ -176,6 +180,10 @@ pub struct ChannelView {
     theme_generation: u64,
     scroll_state: ScrollStateHandle,
     jump_mouse_state: MouseStateHandle,
+    composer: ViewHandle<ComposerView>,
+    /// The next focus of this view stays on the timeline (a click in it) instead of moving
+    /// on to the composer.
+    focus_timeline: bool,
 }
 
 impl ChannelView {
@@ -207,11 +215,27 @@ impl ChannelView {
                 }
             }
             SessionEvent::ImageReady(key) => me.on_image_ready(key.clone(), ctx),
+            SessionEvent::TypingChanged => ctx.notify(),
             _ => {}
         });
         let account_dir = Session::as_ref(ctx)
             .active()
             .map(|active| active.account_dir().to_owned());
+        let composer = ctx.add_typed_action_view(ComposerView::new);
+        ctx.subscribe_to_view(&composer, |me, _, event, ctx| match event {
+            ComposerEvent::Sent => {
+                // My post shows at the bottom, as in the webapp.
+                if let Some(chat) = me
+                    .channel
+                    .as_ref()
+                    .and_then(|channel| me.chats.get(channel))
+                {
+                    chat.list.scroll_to_bottom();
+                }
+                ctx.notify();
+            }
+            ComposerEvent::Escape => me.handle_action(&ChannelAction::MarkRead, ctx),
+        });
         let lookup = Rc::new(ChatLookup::default());
         let docs = Rc::new(RefCell::new(Docs::default()));
         let custom_emoji = Rc::new(CustomEmoji::new());
@@ -238,6 +262,8 @@ impl ChannelView {
             theme_generation: 0,
             scroll_state: ScrollStateHandle::default(),
             jump_mouse_state: MouseStateHandle::default(),
+            composer,
+            focus_timeline: false,
         }
     }
 
@@ -268,8 +294,10 @@ impl ChannelView {
                 },
             );
         }
-        self.channel = channel;
+        self.channel = channel.clone();
         self.lookup_dirty = true;
+        self.composer
+            .update(ctx, |composer, ctx| composer.set_channel(channel, ctx));
         self.refresh(ctx);
     }
 
@@ -297,6 +325,10 @@ impl ChannelView {
                 StoreDelta::PostsChanged(_)
                 | StoreDelta::PostsRemoved(_)
                 | StoreDelta::PendingChanged(_) => relevant = true,
+                StoreDelta::RolesChanged => {
+                    self.composer
+                        .update(ctx, |composer, ctx| composer.update_state(ctx));
+                }
                 StoreDelta::ChannelChanged(_)
                 | StoreDelta::MemberChanged(_)
                 | StoreDelta::UserChanged(_)
@@ -312,6 +344,8 @@ impl ChannelView {
             }
         }
         if relevant {
+            self.composer
+                .update(ctx, |composer, ctx| composer.update_state(ctx));
             self.refresh(ctx);
         }
     }
@@ -617,6 +651,43 @@ impl ChannelView {
                 .finish(),
         )
         .with_height(HEADER_HEIGHT)
+        .finish()
+    }
+}
+
+impl ChannelView {
+    /// "carol is typing..." between the timeline and the composer; the line keeps its height
+    /// so the composer doesn't move.
+    fn render_typing(&self, style: &RowStyle, app: &AppContext) -> Box<dyn Element> {
+        let session = Session::as_ref(app);
+        let text = self
+            .channel
+            .as_ref()
+            .zip(session.active())
+            .and_then(|(channel, active)| {
+                let users = active.typing(channel, &PostId::default());
+                let store = session.store()?.read().ok()?;
+                let names: Vec<String> = users
+                    .iter()
+                    .map(|user| {
+                        store
+                            .user_name(user)
+                            .unwrap_or_else(|| "Someone".to_owned())
+                    })
+                    .collect();
+                composer::typing_text(&names)
+            })
+            .unwrap_or_default();
+        ConstrainedBox::new(
+            Container::new(
+                Text::new_inline(text, style.font, style.size - 2.)
+                    .with_color(style.muted)
+                    .finish(),
+            )
+            .with_horizontal_padding(SIDE_PADDING + 2.)
+            .finish(),
+        )
+        .with_height(style.size + 6.)
         .finish()
     }
 }
@@ -1153,6 +1224,15 @@ impl View for ChannelView {
         "ChannelView"
     }
 
+    fn on_focus(&mut self, focus_ctx: &FocusContext, ctx: &mut ViewContext<Self>) {
+        if focus_ctx.is_self_focused() {
+            if std::mem::take(&mut self.focus_timeline) {
+                return;
+            }
+            ctx.focus(&self.composer);
+        }
+    }
+
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
         let Some(chat) = self
@@ -1217,6 +1297,13 @@ impl View for ChannelView {
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_child(header)
             .with_child(Shrinkable::new(1., stack.finish()).finish())
+            .with_child(self.render_typing(&style, app))
+            .with_child(
+                Container::new(ChildView::new(&self.composer).finish())
+                    .with_horizontal_padding(SIDE_PADDING)
+                    .with_padding_bottom(14.)
+                    .finish(),
+            )
             .finish();
         EventHandler::new(column)
             .on_left_mouse_down(|ctx, _, _| {
@@ -1260,7 +1347,10 @@ impl TypedActionView for ChannelView {
                 ctx.notify();
             }
             ChannelAction::MarkRead => Session::as_ref(ctx).send(Command::MarkRead(channel)),
-            ChannelAction::Focus => ctx.focus_self(),
+            ChannelAction::Focus => {
+                self.focus_timeline = true;
+                ctx.focus_self();
+            }
             ChannelAction::Retry(pending) => {
                 Session::as_ref(ctx).send(Command::RetryPost(pending.clone()))
             }

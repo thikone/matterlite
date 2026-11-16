@@ -7,6 +7,8 @@ pub mod account_theme;
 mod channel_view;
 pub mod chats;
 mod chats_view;
+pub mod composer;
+mod composer_view;
 mod format;
 mod login_view;
 mod message;

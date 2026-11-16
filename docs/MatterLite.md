@@ -1497,10 +1497,11 @@ everywhere).
   by the composer.
 - Behaviour to implement around it (WebApp §15, §17), and the `EditorView` features that
   carry it:
-  - Enter sends, Shift+Enter newline: `EnterSettings` (Enter emits `Event::Enter`, the others
-    insert a newline). For the `advanced_settings/send_on_ctrl_enter` preference, Enter
-    inserts a newline and `CtrlEnter` / `CmdEnter` send. Code-block handling (Enter inside an
-    open ``` block inserts a newline) is decided by the composer before sending.
+  - Enter sends, Shift+Enter newline: `EnterSettings` (Enter and Ctrl+Enter emit, Shift and
+    Alt+Enter insert a newline). The composer decides what an emitted Enter does
+    (`ml_chat::composer::on_enter`, the webapp's `postMessageOnKeyPress`): the
+    `send_on_ctrl_enter` and `code_block_ctrl_enter` preferences and whether the caret is
+    inside an open ``` block; a newline it decides on is inserted with `user_insert`.
   - Autocomplete popovers: `@` → `GET /users/autocomplete?in_team&in_channel&name`;
     `~` → channels; `:` → emoji (local index + custom emoji search); `/` → commands
     (`/teams/{tid}/commands/autocomplete_suggestions`). Use `fuzzy_match` for local ranking.
@@ -1511,9 +1512,10 @@ everywhere).
   - Typing indicator: send WS `user_typing` at most every
     `TimeBetweenUserTypingUpdatesMilliseconds` (default 5000), on `Event::Edited` when
     `EditOrigin::is_user()`.
-  - Drafts: save per `(channel_id, root_id)` to SQLite on `Event::Edited` (debounced) and
-    restore on channel switch with `system_reset_buffer_text`, which also clears the undo
-    stack. Server-synced drafts later.
+  - Drafts: save per `(channel_id, root_id)` to SQLite on `Event::Edited` (debounced by
+    0.5 s, and when the chat changes) through the engine's cache writer, read at sign-in
+    (`mm_cache::drafts`), and restore on channel switch with `system_reset_buffer_text`,
+    which also clears the undo stack. Server-synced drafts later.
   - ↑ in an empty composer edits the last own post: `propagate_and_no_op_vertical_navigation_keys:
     AtBoundary` delivers `Event::Navigate(Up)` on the first row; act on it when the editor
     `is_empty`.

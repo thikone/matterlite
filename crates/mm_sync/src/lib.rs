@@ -162,6 +162,19 @@ pub enum Command {
         root: PostId,
         message: String,
     },
+    /// Saves the unsent text of a composer in the cache (`message` empty: deletes it).
+    SaveDraft {
+        channel: ChannelId,
+        /// Empty for the channel's composer.
+        root: PostId,
+        message: String,
+    },
+    /// Tells the server I'm typing (WebSocket `user_typing`); the caller throttles it to
+    /// `TimeBetweenUserTypingUpdatesMilliseconds`. Dropped while offline.
+    Typing {
+        channel: ChannelId,
+        root: PostId,
+    },
     /// Sends a failed post again with the same `pending_post_id`.
     RetryPost(String),
     DiscardPost(String),

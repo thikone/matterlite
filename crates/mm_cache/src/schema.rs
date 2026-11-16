@@ -140,6 +140,15 @@ diesel::table! {
 }
 
 diesel::table! {
+    drafts (channel_id, root_id) {
+        channel_id -> Text,
+        root_id -> Text,
+        message -> Text,
+        updated_at -> BigInt,
+    }
+}
+
+diesel::table! {
     former_chats (channel_id) {
         channel_id -> Text,
         left_at -> BigInt,
