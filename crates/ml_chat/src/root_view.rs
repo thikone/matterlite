@@ -40,7 +40,7 @@ use crate::login_view::LoginView;
 use crate::session::{Active, Session, SessionEvent, SessionState};
 use crate::settings::ChatSettings;
 use crate::switcher_view::{SwitcherEvent, SwitcherView};
-use crate::tabs::{ChatTabs, DEFAULT_MAX_TABS, Tab};
+use crate::tabs::{ChatKey, ChatTabs, DEFAULT_MAX_TABS, Tab, thread_title};
 
 const DIALOG_WIDTH: f32 = 600.;
 /// Errors shown at once, how long, and how wide.
@@ -188,10 +188,12 @@ impl RootView {
             SessionEvent::TypingChanged => me.sync_tabs(ctx),
             SessionEvent::Error(message) => me.show_error(message.clone(), ctx),
             SessionEvent::Changed(deltas) => {
-                if deltas
-                    .iter()
-                    .any(|delta| matches!(delta, StoreDelta::ChannelRemoved(_)))
-                {
+                if deltas.iter().any(|delta| {
+                    matches!(
+                        delta,
+                        StoreDelta::ChannelRemoved(_) | StoreDelta::PostsRemoved(_)
+                    )
+                }) {
                     me.drop_gone_tabs(ctx);
                 }
                 if deltas.iter().any(affects_tabs) {
@@ -372,6 +374,10 @@ impl RootView {
                 }
             }
             ChannelEvent::OpenThread(root) => self.open_thread(root.clone(), true, ctx),
+            ChannelEvent::OpenInTab(root) => {
+                self.close_thread(ctx);
+                self.open_key(ChatKey::Thread(root.clone()), ctx);
+            }
             ChannelEvent::Close => {
                 self.close_thread(ctx);
                 self.focus_chat(ctx);
@@ -379,8 +385,16 @@ impl RootView {
         }
     }
 
-    /// Shows a thread in the right panel (`focus`: with the keyboard in its composer).
+    /// Shows a thread in the right panel (`focus`: with the keyboard in its composer), or
+    /// focuses its tab if it has one.
     fn open_thread(&mut self, root: mm_model::PostId, focus: bool, ctx: &mut ViewContext<Self>) {
+        let key = ChatKey::Thread(root.clone());
+        if self.tabs.position(&key).is_some() {
+            if focus {
+                self.open_key(key, ctx);
+            }
+            return;
+        }
         let (Some(thread), Some(workspace)) = (self.thread.clone(), self.workspace.clone()) else {
             return;
         };
@@ -498,8 +512,13 @@ impl RootView {
 
     /// Focuses the chat's tab, or opens one (MatterLite.md §10.7).
     fn open_chat(&mut self, channel: ChannelId, ctx: &mut ViewContext<Self>) {
+        self.open_key(ChatKey::Channel(channel), ctx);
+    }
+
+    /// Focuses the tab of a chat or thread, or opens one.
+    fn open_key(&mut self, key: ChatKey, ctx: &mut ViewContext<Self>) {
         self.tabs.set_cap(max_tabs(ctx));
-        self.tabs.open(channel);
+        self.tabs.open(key);
         self.after_tabs_change(ctx);
         self.focus_chat(ctx);
     }
@@ -524,27 +543,29 @@ impl RootView {
     /// After any change to the tabs: tell the engine which chat is open, show it in the Chats
     /// tab, save the tabs and redraw them.
     fn after_tabs_change(&mut self, ctx: &mut ViewContext<Self>) {
-        let active = self.tabs.active_channel().cloned();
-        if active != self.open_channel {
-            Session::as_ref(ctx).send(match &active {
+        let active_key = self.tabs.active_key().cloned();
+        // The engine views (and marks read) a chat tab's channel; a thread tab views none.
+        let viewed = active_key.as_ref().and_then(ChatKey::channel).cloned();
+        if viewed != self.open_channel {
+            Session::as_ref(ctx).send(match &viewed {
                 Some(channel) => Command::OpenChannel(channel.clone()),
                 None => Command::CloseChannel,
             });
-            self.open_channel = active.clone();
+            self.open_channel = viewed;
         }
+        // The Chats, Channel and History tabs follow the chat, or the thread's chat.
+        let active = active_key.as_ref().and_then(|key| {
+            let store = Session::as_ref(ctx).store()?.read().ok()?;
+            key_channel(&store, key)
+        });
         if let Some(chats) = &self.chats {
             chats.update(ctx, |chats, ctx| chats.show_channel(active.as_ref(), ctx));
         }
         if let Some(view) = &self.channel {
-            let open: Vec<ChannelId> = self
-                .tabs
-                .tabs()
-                .iter()
-                .map(|tab| tab.channel.clone())
-                .collect();
+            let open: Vec<ChatKey> = self.tabs.tabs().iter().map(|tab| tab.key.clone()).collect();
             view.update(ctx, |view, ctx| {
                 view.retain(&open);
-                view.set_channel(active.clone(), ctx);
+                view.set_key(active_key.clone(), ctx);
             });
         }
         if let Some(pane) = &self.channel_pane {
@@ -580,11 +601,8 @@ impl RootView {
         if store.channels.is_empty() {
             return;
         }
-        let tabs = saved.map(|json| {
-            ChatTabs::from_json(&json, max_tabs(ctx), |channel| {
-                store.channel_members.contains_key(channel)
-            })
-        });
+        let tabs = saved
+            .map(|json| ChatTabs::from_json(&json, max_tabs(ctx), |key| key_exists(&store, key)));
         drop(store);
         self.tabs_restored = true;
         if let Some(tabs) = tabs {
@@ -593,20 +611,18 @@ impl RootView {
         self.after_tabs_change(ctx);
         self.restore_panel(ctx);
         // Back where the user left off, with the keyboard in the chat.
-        if self.tabs.active_channel().is_some() {
+        if self.tabs.active_key().is_some() {
             self.focus_chat(ctx);
         }
     }
 
-    /// Closes the tabs of chats I'm no longer in.
+    /// Closes the tabs of chats I'm no longer in and of deleted threads.
     fn drop_gone_tabs(&mut self, ctx: &mut ViewContext<Self>) {
         let removed = match Session::as_ref(ctx)
             .store()
             .and_then(|store| store.read().ok())
         {
-            Some(store) => self
-                .tabs
-                .retain(|channel| store.channel_members.contains_key(channel)),
+            Some(store) => self.tabs.retain(|key| key_exists(&store, key)),
             None => return,
         };
         if !removed.is_empty() {
@@ -632,9 +648,16 @@ impl RootView {
                 .enumerate()
                 .map(|(index, tab)| {
                     let mut spec = tab_spec(&store, tab, Some(index) == active, &palette, offline);
-                    spec.typing = session.active().is_some_and(|session| {
-                        !session.typing(&tab.channel, &Default::default()).is_empty()
-                    });
+                    let (channel, root) = match &tab.key {
+                        ChatKey::Channel(channel) => (Some(channel.clone()), Default::default()),
+                        ChatKey::Thread(root) => (key_channel(&store, &tab.key), root.clone()),
+                    };
+                    spec.typing =
+                        channel
+                            .zip(session.active())
+                            .is_some_and(|(channel, session)| {
+                                !session.typing(&channel, &root).is_empty()
+                            });
                     spec
                 })
                 .collect(),
@@ -1202,7 +1225,29 @@ fn affects_tabs(delta: &StoreDelta) -> bool {
             | StoreDelta::NamesChanged
             | StoreDelta::PreferencesChanged
             | StoreDelta::CrtChanged
+            | StoreDelta::ThreadChanged(_)
+            | StoreDelta::ThreadCountsChanged(_)
     )
+}
+
+/// Whether a tab's chat is still there: a channel I'm a member of, or a thread whose root is
+/// known in one.
+fn key_exists(store: &Store, key: &ChatKey) -> bool {
+    match key {
+        ChatKey::Channel(channel) => store.channel_members.contains_key(channel),
+        ChatKey::Thread(root) => store
+            .posts
+            .get(root)
+            .is_some_and(|post| store.channel_members.contains_key(&post.channel_id)),
+    }
+}
+
+/// The channel of a tab: its own, or its thread's.
+fn key_channel(store: &Store, key: &ChatKey) -> Option<ChannelId> {
+    match key {
+        ChatKey::Channel(channel) => Some(channel.clone()),
+        ChatKey::Thread(root) => store.posts.get(root).map(|post| post.channel_id.clone()),
+    }
 }
 
 /// What a chat's tab shows: icon, name, and a mention count or unread dot (not on the active
@@ -1214,7 +1259,11 @@ fn tab_spec(
     palette: &ml_themes::ChatColors,
     offline: warpui::color::ColorU,
 ) -> TabSpec {
-    let leading = match crate::chats::channel_icon(store, &tab.channel) {
+    let channel = match &tab.key {
+        ChatKey::Channel(channel) => channel,
+        ChatKey::Thread(root) => return thread_tab_spec(store, tab, root, active),
+    };
+    let leading = match crate::chats::channel_icon(store, channel) {
         ChannelIcon::Public => TabLeading::Icon(Icon::Hash),
         ChannelIcon::Private => TabLeading::Icon(Icon::Lock),
         ChannelIcon::Archived => TabLeading::Icon(Icon::Archive),
@@ -1238,7 +1287,7 @@ fn tab_spec(
             },
         },
     };
-    let unread = store.channel_unread(&tab.channel).unwrap_or_default();
+    let unread = store.channel_unread(channel).unwrap_or_default();
     let badge = if active {
         TabBadge::None
     } else if unread.mentions > 0 {
@@ -1250,11 +1299,40 @@ fn tab_spec(
     };
     TabSpec {
         title: store
-            .channel_name(&tab.channel)
-            .unwrap_or_else(|| tab.channel.to_string()),
+            .channel_name(channel)
+            .unwrap_or_else(|| channel.to_string()),
         leading,
         badge,
         unread: !active && unread.is_unread(),
+        pinned: tab.pinned,
+        typing: false,
+    }
+}
+
+/// A thread's tab: the thread icon, the start of its root post, and its unread replies and
+/// mentions (CRT, followed threads).
+fn thread_tab_spec(store: &Store, tab: &Tab, root: &mm_model::PostId, active: bool) -> TabSpec {
+    let title = store
+        .posts
+        .get(root)
+        .map_or_else(|| "Thread".to_owned(), |post| thread_title(&post.message));
+    let (mentions, unread) = store.thread_states.get(root).map_or((0, false), |state| {
+        (state.unread_mentions, state.unread_replies > 0)
+    });
+    let badge = if active {
+        TabBadge::None
+    } else if mentions > 0 {
+        TabBadge::Mentions(mentions)
+    } else if unread {
+        TabBadge::Dot
+    } else {
+        TabBadge::None
+    };
+    TabSpec {
+        title,
+        leading: TabLeading::Icon(Icon::MessageChatSquare),
+        badge,
+        unread: !active && unread,
         pinned: tab.pinned,
         typing: false,
     }

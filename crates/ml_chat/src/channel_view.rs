@@ -67,6 +67,7 @@ use crate::post_menu::{
     render_toolbar,
 };
 use crate::session::{Session, SessionEvent};
+use crate::tabs::ChatKey;
 use crate::timeline::{self, Author, ChatLookup, Clock, HoleKind, Pending, ReactionChip, Row};
 use crate::timeline_list::{TimelineList, TimelineState, Viewport};
 use mm_render::EmojiRef;
@@ -97,12 +98,6 @@ pub enum ChatMode {
     Panel,
 }
 
-/// What a chat view shows: a channel or a thread (by its root post).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum ChatKey {
-    Channel(ChannelId),
-    Thread(PostId),
-}
 const SCROLLBAR: warpui::elements::ScrollbarWidth = warpui::elements::ScrollbarWidth::Auto;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -126,6 +121,8 @@ pub enum ChannelAction {
     ToggleFollow,
     /// The right panel's close button.
     Close,
+    /// The right panel's "Open in tab".
+    OpenInTab,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -142,6 +139,8 @@ pub enum ChannelEvent {
     OpenThread(PostId),
     /// The right panel's thread view closes (its close button or Esc).
     Close,
+    /// "Open in tab": the right panel's thread moves to a chat tab.
+    OpenInTab(PostId),
 }
 
 pub(crate) fn init(app: &mut AppContext) {
@@ -258,6 +257,7 @@ pub struct ChannelView {
     /// The thread last marked read, and its last reply then.
     thread_read: Option<(PostId, i64)>,
     follow_state: MouseStateHandle,
+    open_in_tab_state: MouseStateHandle,
     close_state: MouseStateHandle,
     shared: Rc<Shared>,
     /// The channel's name, icon and header line, and its member count.
@@ -399,6 +399,7 @@ impl ChannelView {
             following: None,
             thread_read: None,
             follow_state: MouseStateHandle::default(),
+            open_in_tab_state: MouseStateHandle::default(),
             close_state: MouseStateHandle::default(),
             shared: Rc::new(Shared {
                 rows: Vec::new(),
@@ -510,11 +511,6 @@ impl ChannelView {
         true
     }
 
-    /// Shows a chat (the active tab's), or nothing.
-    pub fn set_channel(&mut self, channel: Option<ChannelId>, ctx: &mut ViewContext<Self>) {
-        self.set_key(channel.map(ChatKey::Channel), ctx);
-    }
-
     /// Shows a thread (the right panel's), or nothing.
     pub fn set_thread(&mut self, root: Option<PostId>, ctx: &mut ViewContext<Self>) {
         self.set_key(root.map(ChatKey::Thread), ctx);
@@ -525,7 +521,8 @@ impl ChannelView {
         self.root()
     }
 
-    fn set_key(&mut self, key: Option<ChatKey>, ctx: &mut ViewContext<Self>) {
+    /// Shows a chat or a thread (the active tab's), or nothing.
+    pub fn set_key(&mut self, key: Option<ChatKey>, ctx: &mut ViewContext<Self>) {
         if key == self.key {
             return;
         }
@@ -577,12 +574,9 @@ impl ChannelView {
         self.refresh(ctx);
     }
 
-    /// Forgets the chats whose tabs closed.
-    pub fn retain(&mut self, open: &[ChannelId]) {
-        self.chats.retain(|key, _| match key {
-            ChatKey::Channel(channel) => open.contains(channel),
-            ChatKey::Thread(_) => true,
-        });
+    /// Forgets the chats and threads whose tabs closed.
+    pub fn retain(&mut self, open: &[ChatKey]) {
+        self.chats.retain(|key, _| open.contains(key));
     }
 
     fn on_changes(&mut self, deltas: &[StoreDelta], ctx: &mut ViewContext<Self>) {
@@ -1107,6 +1101,25 @@ impl ChannelView {
             );
         }
         if self.mode == ChatMode::Panel {
+            let tooltip = appearance
+                .ui_builder()
+                .tool_tip("Open in tab".to_owned())
+                .build()
+                .finish();
+            row.add_child(
+                icon_button_with_color(
+                    appearance,
+                    Icon::LinkExternal,
+                    false,
+                    self.open_in_tab_state.clone(),
+                    theme.sub_text_color(theme.background()),
+                )
+                .with_tooltip(move || tooltip)
+                .build()
+                .on_click(|ctx, _, _| ctx.dispatch_typed_action(ChannelAction::OpenInTab))
+                .with_cursor(Cursor::PointingHand)
+                .finish(),
+            );
             let tooltip = appearance
                 .ui_builder()
                 .tool_tip("Close (Esc)".to_owned())
@@ -2172,6 +2185,11 @@ impl TypedActionView for ChannelView {
                 }
             }
             ChannelAction::Close => ctx.emit(ChannelEvent::Close),
+            ChannelAction::OpenInTab => {
+                if let Some(root) = self.root().cloned() {
+                    ctx.emit(ChannelEvent::OpenInTab(root));
+                }
+            }
             ChannelAction::ToggleFollow => {
                 if let (Some(root), Some(following)) = (self.root().cloned(), self.following) {
                     Session::as_ref(ctx).send(Command::FollowThread {

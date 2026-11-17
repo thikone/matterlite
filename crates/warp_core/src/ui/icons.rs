@@ -48,6 +48,7 @@ pub enum Icon {
     // MatterLite: post actions.
     Reply,
     DotsHorizontal,
+    LinkExternal,
     FaceSmile,
 }
 
@@ -84,6 +85,7 @@ impl From<Icon> for &'static str {
             Icon::Menu => "bundled/svg/layout-left.svg",
             Icon::Reply => "bundled/svg/reverse-left.svg",
             Icon::DotsHorizontal => "bundled/svg/dots-horizontal.svg",
+            Icon::LinkExternal => "bundled/svg/link-external-02.svg",
             // Drawn for MatterLite (Warp has no lock or archive icon).
             Icon::Lock => "matterlite/svg/lock.svg",
             Icon::Archive => "matterlite/svg/archive.svg",
