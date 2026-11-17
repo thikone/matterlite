@@ -153,10 +153,11 @@ pub(crate) struct TabBar<'a> {
     pub tabs: &'a [ChatTab],
     pub active: Option<usize>,
     pub menu: Option<&'a TabMenu>,
-    /// While the pointer is on a tab's close button, every unpinned tab keeps that tab's width,
-    /// so after a close the next tab's button slides under the pointer (Warp's
-    /// `hover_fixed_width`).
-    pub fixed_tab_width: Option<f32>,
+    /// While the pointer is on a tab's close button, the tabs of its kind (pinned or not) keep
+    /// that tab's width, so after a close the next tab's button slides under the pointer
+    /// (Warp's `hover_fixed_width`). Pinned tabs are narrower and grouped on the left, so the
+    /// other kind keeps its own sizing.
+    pub fixed_tab_width: Option<(f32, bool)>,
     pub tool_panel_open: bool,
     pub tool_panel_mouse_state: &'a MouseStateHandle,
     pub new_tab_mouse_state: &'a MouseStateHandle,
@@ -241,8 +242,9 @@ pub(crate) fn render_tab_bar(bar: TabBar, appearance: &Appearance) -> Box<dyn El
             element = stack.finish();
         }
         let sized = match fixed_tab_width {
-            // Pinned tabs have no close button, so the width comes from an unpinned tab.
-            Some(width) if !tab.spec.pinned => ConstrainedBox::new(element).with_width(width),
+            Some((width, pinned)) if pinned == tab.spec.pinned => {
+                ConstrainedBox::new(element).with_width(width)
+            }
             _ => ConstrainedBox::new(element)
                 .with_min_width(TAB_MIN_WIDTH)
                 .with_max_width(if tab.spec.pinned {
@@ -347,6 +349,7 @@ fn render_close_button(
     appearance: &Appearance,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
+    let pinned = tab.spec.pinned;
     let surface = theme.surface_3().into_solid();
     let mut translucent = surface;
     translucent.a = (u16::from(surface.a) * u16::from(CLOSE_BUTTON_OPACITY) / 100) as u8;
@@ -371,6 +374,7 @@ fn render_close_button(
             if let Some(rect) = ctx.element_position_by_id(tab_position_id(index)) {
                 ctx.dispatch_typed_action(WorkspaceAction::TabHoverWidthStart {
                     width: rect.width(),
+                    pinned,
                 });
             }
         } else {
@@ -481,8 +485,8 @@ fn render_tab(
             TabBadge::None => {}
         }
         // As in Warp, the title is centred in the whole tab and the close button is laid over
-        // the tab's right end while the pointer is on the tab. Pinned tabs show a pin there
-        // instead and close from the menu.
+        // the tab's right end while the pointer is on the tab. A pinned tab shows a pin there,
+        // which turns into the close button under the pointer.
         let padding = if spec.pinned {
             PINNED_TAB_CONTENT_PADDING
         } else {
@@ -494,7 +498,9 @@ fn render_tab(
                 .with_vertical_padding(2.)
                 .finish(),
         );
-        let slot = if spec.pinned {
+        let slot = if is_hovered {
+            Some(close_button)
+        } else if spec.pinned {
             Some(
                 Align::new(
                     ConstrainedBox::new(
@@ -508,8 +514,6 @@ fn render_tab(
                 )
                 .finish(),
             )
-        } else if is_hovered {
-            Some(close_button)
         } else {
             None
         };

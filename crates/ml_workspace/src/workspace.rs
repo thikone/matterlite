@@ -74,9 +74,10 @@ pub enum WorkspaceAction {
     BannerAction,
     /// Minimize, maximize/restore or close the window.
     Window(WindowButton),
-    /// The pointer came onto a tab's close button: the unpinned tabs keep this width.
+    /// The pointer came onto a tab's close button: the tabs of its kind keep this width.
     TabHoverWidthStart {
         width: f32,
+        pinned: bool,
     },
     /// The pointer left the close button: the tabs size themselves again.
     TabHoverWidthEnd,
@@ -187,7 +188,7 @@ pub struct Workspace {
     window_buttons: WindowButtonStates,
     tool_panel_mouse_state: MouseStateHandle,
     /// See [`TabBar::fixed_tab_width`].
-    fixed_tab_width: Option<f32>,
+    fixed_tab_width: Option<(f32, bool)>,
 }
 
 impl Workspace {
@@ -597,8 +598,8 @@ impl TypedActionView for Workspace {
         match *action {
             WorkspaceAction::ShowToolPanelTab(tab) => self.show_tool_panel_tab(tab, ctx),
             WorkspaceAction::BannerAction => ctx.emit(WorkspaceEvent::BannerAction),
-            WorkspaceAction::TabHoverWidthStart { width } => {
-                self.fixed_tab_width = Some(width);
+            WorkspaceAction::TabHoverWidthStart { width, pinned } => {
+                self.fixed_tab_width = Some((width, pinned));
                 ctx.notify();
             }
             WorkspaceAction::TabHoverWidthEnd => {
