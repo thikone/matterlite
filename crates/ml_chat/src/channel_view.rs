@@ -5,6 +5,7 @@
 //! membership messages, posts with avatars, holes that load older or newer posts when they
 //! come near, pending and failed posts with Retry and Delete, and "Jump to newest". A post
 //! is edited in place: an editor takes the message's place until it is saved or cancelled.
+//! Reaction chips add or remove mine; React and the `+` chip open the emoji picker.
 //!
 //! Each open tab keeps its own scroll position. Rows are prepared from the store when it
 //! changes; messages are rendered (`mm_render`) only when they scroll into view and kept
@@ -42,6 +43,7 @@ use warpui::fonts::{FamilyId, Properties, Weight};
 use warpui::image_cache::CacheOption;
 use warpui::keymap::FixedBinding;
 use warpui::platform::Cursor;
+use warpui::ui_components::components::UiComponent as _;
 use warpui::{
     AppContext, Element, Entity, FocusContext, SingletonEntity as _, TypedActionView, View,
     ViewContext, ViewHandle,
@@ -51,15 +53,17 @@ use crate::chats::{ChannelIcon, channel_icon as icon_kind};
 use crate::chats_view::{channel_icon, fade, icon};
 use crate::composer::{self, EnterKey, EnterPrefs, OnEnter};
 use crate::composer_view::{ComposerEvent, ComposerView, editor_options};
+use crate::emoji_picker::{EmojiPickerView, PickerEvent};
 use crate::history_pane::ChatFilter;
 use crate::message::{
     CustomEmoji, MessageRenderer, OnClick, Palette, Target, emoji_image, fixed_width,
 };
 use crate::post_menu::{
-    PostAction, PostMenu, PostMenuHost, PostMenuItem, ToolbarStates, render_toolbar,
+    PickerAnchor, PostAction, PostMenu, PostMenuHost, PostMenuItem, ToolbarState, ToolbarStates,
+    render_toolbar,
 };
 use crate::session::{Session, SessionEvent};
-use crate::timeline::{self, Author, ChatLookup, Clock, HoleKind, Pending, Row};
+use crate::timeline::{self, Author, ChatLookup, Clock, HoleKind, Pending, ReactionChip, Row};
 use crate::timeline_list::{TimelineList, TimelineState, Viewport};
 use mm_render::EmojiRef;
 use warpui::text_layout::ClipConfig;
@@ -114,6 +118,8 @@ pub enum ChannelEvent {
     ClearFilter,
     /// Delete in the post menu: ask before deleting (a root post takes its replies).
     ConfirmDelete { post: PostId, replies: i64 },
+    /// A new emoji on a post with `UniqueEmojiReactionLimitPerPost` distinct ones already.
+    ReactionLimit,
 }
 
 pub(crate) fn init(app: &mut AppContext) {
@@ -160,8 +166,7 @@ struct PostData {
     author: Author,
     avatar: Option<PathBuf>,
     time: String,
-    /// Emoji name, count, and whether one of them is mine.
-    reactions: Vec<(String, usize, bool)>,
+    reactions: Vec<ReactionChip>,
     files: Vec<String>,
     /// Replies of a root post under Collapsed Reply Threads.
     replies: i64,
@@ -186,14 +191,17 @@ struct Shared {
     /// Hover states of the posts (kept across refreshes) and of the toolbar's buttons.
     hover: Rc<RefCell<HashMap<PostId, MouseStateHandle>>>,
     toolbar: Rc<ToolbarStates>,
+    /// Hover states of the reaction chips, by post and emoji (`+` for the add chip).
+    chips: Rc<RefCell<HashMap<(PostId, String), MouseStateHandle>>>,
 }
 
 /// What rows draw differently from one frame to the next.
 struct RowState {
     /// A post shown from elsewhere, highlighted for a moment.
     flash: Option<PostId>,
-    /// The post whose menu is open: it keeps its toolbar.
+    /// The post whose menu or emoji picker is open: it keeps its toolbar.
     menu: Option<PostId>,
+    picker: Option<PostId>,
     /// The post being edited, and the editor that takes its message's place.
     editing: Option<Editing>,
     editor: ViewHandle<EditorView>,
@@ -247,6 +255,10 @@ pub struct ChannelView {
     /// The editor of the post being edited (one per view; one post is edited at a time).
     edit_editor: ViewHandle<EditorView>,
     editing: Option<Editing>,
+    chips: Rc<RefCell<HashMap<(PostId, String), MouseStateHandle>>>,
+    /// The emoji picker, and the post it is open for (with where it is).
+    picker: ViewHandle<EmojiPickerView>,
+    picking: Option<(PostId, PickerAnchor, bool)>,
 }
 
 impl ChannelView {
@@ -311,6 +323,17 @@ impl ChannelView {
         ctx.subscribe_to_view(&edit_editor, |me, _, event, ctx| {
             me.on_edit_event(event, ctx)
         });
+        let picker = ctx.add_typed_action_view(EmojiPickerView::new);
+        ctx.subscribe_to_view(&picker, |me, _, event, ctx| match event {
+            PickerEvent::Picked(emoji) => {
+                if let Some((post, _, _)) = me.picking.clone() {
+                    me.add_reaction(&post, emoji, ctx);
+                }
+                me.close_picker(true, ctx);
+            }
+            PickerEvent::Closed => me.close_picker(true, ctx),
+        });
+        let chips = Rc::new(RefCell::new(HashMap::new()));
         let lookup = Rc::new(ChatLookup::default());
         let docs = Rc::new(RefCell::new(Docs::default()));
         let custom_emoji = Rc::new(CustomEmoji::new());
@@ -326,6 +349,7 @@ impl ChannelView {
                 custom_emoji: custom_emoji.clone(),
                 hover: hover.clone(),
                 toolbar: toolbar.clone(),
+                chips: chips.clone(),
             }),
             title: String::new(),
             icon: None,
@@ -351,6 +375,9 @@ impl ChannelView {
             menu: None,
             edit_editor,
             editing: None,
+            chips,
+            picker,
+            picking: None,
         }
     }
 
@@ -437,6 +464,7 @@ impl ChannelView {
         self.channel = channel.clone();
         self.editing = None;
         self.menu = None;
+        self.picking = None;
         self.lookup_dirty = true;
         self.composer
             .update(ctx, |composer, ctx| composer.set_channel(channel, ctx));
@@ -685,7 +713,10 @@ impl ChannelView {
                             .filter(|key| self.images.contains(key))
                             .and_then(|key| Some(key.path(self.account_dir.as_ref()?))),
                         time: clock.time(post.create_at),
-                        reactions: reactions(&store, post),
+                        reactions: {
+                            let actions = store.post_actions(&post.id, now);
+                            timeline::reaction_chips(&store, post, actions.react, actions.unreact)
+                        },
                         files: post
                             .metadata
                             .as_ref()
@@ -750,6 +781,14 @@ impl ChannelView {
                 .any(|row| matches!(row, RowData::Post(post) if post.post.id == *id))
         };
         self.hover.borrow_mut().retain(|id, _| shown(id));
+        self.chips.borrow_mut().retain(|(id, _), _| shown(id));
+        if self
+            .picking
+            .as_ref()
+            .is_some_and(|(post, _, _)| !shown(post))
+        {
+            self.picking = None;
+        }
         if self
             .editing
             .as_ref()
@@ -764,6 +803,7 @@ impl ChannelView {
             custom_emoji: self.custom_emoji.clone(),
             hover: self.hover.clone(),
             toolbar: self.toolbar.clone(),
+            chips: self.chips.clone(),
         });
         self.load_if_near_an_end(ctx);
         ctx.notify();
@@ -1002,30 +1042,6 @@ fn custom_emoji_names(message: &str) -> Vec<&str> {
     names
 }
 
-/// A post's reactions grouped by emoji name, in the order they were first added.
-fn reactions(store: &Store, post: &Post) -> Vec<(String, usize, bool)> {
-    let Some(metadata) = &post.metadata else {
-        return Vec::new();
-    };
-    let mut grouped: Vec<(String, usize, bool)> = Vec::new();
-    let mut sorted: Vec<_> = metadata.reactions.iter().collect();
-    sorted.sort_by_key(|reaction| reaction.create_at);
-    for reaction in sorted {
-        let mine = reaction.user_id == store.me;
-        match grouped
-            .iter_mut()
-            .find(|(name, _, _)| *name == reaction.emoji_name)
-        {
-            Some(entry) => {
-                entry.1 += 1;
-                entry.2 |= mine;
-            }
-            None => grouped.push((reaction.emoji_name.clone(), 1, mine)),
-        }
-    }
-    grouped.into_iter().collect()
-}
-
 /// Fonts and colours of the rows, from the theme.
 struct RowStyle {
     palette: Palette,
@@ -1167,6 +1183,7 @@ fn render_row(
                 .clone();
             let flashing = state.flash.as_ref() == Some(&id);
             let menu_open = state.menu.as_ref() == Some(&id);
+            let picker_open = state.picker.as_ref() == Some(&id);
             let editing = state
                 .editing
                 .as_ref()
@@ -1176,8 +1193,9 @@ fn render_row(
             let has_actions = data.actions.any() && editing.is_none();
             let menu_id = id.clone();
             Hoverable::new(mouse_state, |mouse| {
-                let highlighted = has_actions && (mouse.is_hovered() || menu_open);
-                let mut post = Container::new(render_post(shared, style, data, editing));
+                let highlighted = has_actions && (mouse.is_hovered() || menu_open || picker_open);
+                let mut post =
+                    Container::new(render_post(shared, style, data, editing, appearance));
                 if flashing {
                     post = post.with_background_color(fade(style.chat.mention_highlight_bg, 0.55));
                 } else if editing.is_some() {
@@ -1190,7 +1208,17 @@ fn render_row(
                 }
                 let mut stack = Stack::new().with_child(post.finish());
                 stack.add_positioned_child(
-                    render_toolbar(POSTS, &shared.toolbar, &id, menu_open, appearance),
+                    render_toolbar(
+                        POSTS,
+                        &shared.toolbar,
+                        &id,
+                        ToolbarState {
+                            react: data.actions.emoji_picker,
+                            menu_open,
+                            picker_open,
+                        },
+                        appearance,
+                    ),
                     warpui::elements::OffsetPositioning::offset_from_parent(
                         pathfinder_geometry::vector::vec2f(-SIDE_PADDING, 2.),
                         warpui::elements::ParentOffsetBounds::ParentByPosition,
@@ -1264,6 +1292,7 @@ fn render_post(
     style: &RowStyle,
     data: &PostData,
     editing: Option<(&Editing, &ViewHandle<EditorView>)>,
+    appearance: &Appearance,
 ) -> Box<dyn Element> {
     let post = &data.post;
     let small = style.size - 2.;
@@ -1371,51 +1400,15 @@ fn render_post(
             .finish(),
         );
     }
+    let add_chip = data.actions.emoji_picker && editing.is_none();
     if !data.reactions.is_empty() {
         let mut chips = Wrap::row().with_spacing(4.).with_run_spacing(4.);
-        for (name, count, mine) in &data.reactions {
-            let emoji = match mm_emoji::by_name(name) {
-                Some(emoji) => EmojiRef::System {
-                    name: name.clone(),
-                    image: emoji.image(),
-                },
-                None => EmojiRef::Custom { name: name.clone() },
-            };
-            let side = (small * 1.3).round();
-            let image = emoji_image(&emoji, &shared.custom_emoji)
-                .map(|image| {
-                    ConstrainedBox::new(image)
-                        .with_width(side)
-                        .with_height(side)
-                        .finish()
-                })
-                .unwrap_or_else(|| {
-                    Text::new_inline(format!(":{name}:"), style.font, small)
-                        .with_color(style.text)
-                        .finish()
-                });
-            let mut chip = Container::new(
-                Flex::row()
-                    .with_spacing(4.)
-                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_child(image)
-                    .with_child(
-                        Text::new_inline(count.to_string(), style.font, small)
-                            .with_color(if *mine { style.chat.link } else { style.text })
-                            .finish(),
-                    )
-                    .finish(),
-            )
-            .with_horizontal_padding(6.)
-            .with_vertical_padding(2.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
-            chip = if *mine {
-                chip.with_background_color(fade(style.chat.link, 0.12))
-                    .with_border(Border::all(1.).with_border_color(style.chat.link))
-            } else {
-                chip.with_background_color(fade(style.text, 0.06))
-            };
-            chips.add_child(chip.finish());
+        let side = (small * 1.3).round();
+        for chip in &data.reactions {
+            chips.add_child(reaction_chip(shared, style, data, chip, side, appearance));
+        }
+        if add_chip {
+            chips.add_child(add_reaction_chip(shared, style, &post.id, side));
         }
         content.add_child(chips.finish());
     }
@@ -1494,6 +1487,150 @@ fn edit_box(
                 .finish(),
         )
         .finish()
+}
+
+/// A reaction chip: the emoji and its count, marked when one is mine; a click adds or
+/// removes mine, hovering shows who reacted.
+fn reaction_chip(
+    shared: &Shared,
+    style: &RowStyle,
+    data: &PostData,
+    chip: &ReactionChip,
+    side: f32,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let small = style.size - 2.;
+    let name = &chip.name;
+    let emoji = match mm_emoji::by_name(name) {
+        Some(emoji) => EmojiRef::System {
+            name: name.clone(),
+            image: emoji.image(),
+        },
+        None => EmojiRef::Custom { name: name.clone() },
+    };
+    let image = emoji_image(&emoji, &shared.custom_emoji)
+        .map(|image| {
+            ConstrainedBox::new(image)
+                .with_width(side)
+                .with_height(side)
+                .finish()
+        })
+        .unwrap_or_else(|| {
+            Text::new_inline(format!(":{name}:"), style.font, small)
+                .with_color(style.text)
+                .finish()
+        });
+    let clickable = if chip.mine {
+        data.actions.unreact
+    } else {
+        data.actions.react
+    };
+    let state = shared
+        .chips
+        .borrow_mut()
+        .entry((data.post.id.clone(), name.clone()))
+        .or_default()
+        .clone();
+    let (mine, count) = (chip.mine, chip.count);
+    let tooltip = appearance
+        .ui_builder()
+        .tool_tip(chip.tooltip.clone())
+        .build()
+        .finish();
+    let (link, text) = (style.chat.link, style.text);
+    let font = style.font;
+    let mut hoverable = Hoverable::new(state, move |state| {
+        let (background, border) = match (mine, clickable && state.is_hovered()) {
+            (true, false) => (fade(link, 0.12), link),
+            (true, true) => (fade(link, 0.2), link),
+            (false, false) => (fade(text, 0.06), fade(text, 0.06)),
+            (false, true) => (fade(text, 0.1), fade(text, 0.3)),
+        };
+        let chip = Container::new(
+            Flex::row()
+                .with_spacing(4.)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_child(image)
+                .with_child(
+                    Text::new_inline(count.to_string(), font, small)
+                        .with_color(if mine { link } else { text })
+                        .finish(),
+                )
+                .finish(),
+        )
+        .with_horizontal_padding(6.)
+        .with_vertical_padding(2.)
+        .with_background_color(background)
+        .with_border(Border::all(1.).with_border_color(border))
+        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+        .finish();
+        if !state.is_hovered() {
+            return chip;
+        }
+        let mut stack = Stack::new().with_child(chip);
+        stack.add_positioned_overlay_child(
+            tooltip,
+            warpui::elements::OffsetPositioning::offset_from_parent(
+                pathfinder_geometry::vector::vec2f(0., -4.),
+                warpui::elements::ParentOffsetBounds::WindowByPosition,
+                warpui::elements::ParentAnchor::TopLeft,
+                warpui::elements::ChildAnchor::BottomLeft,
+            ),
+        );
+        stack.finish()
+    });
+    if clickable {
+        let (post, emoji) = (data.post.id.clone(), name.clone());
+        hoverable = hoverable
+            .with_cursor(Cursor::PointingHand)
+            .on_click(move |ctx, _, _| {
+                ctx.dispatch_typed_action(ChannelAction::Post(PostAction::ToggleReaction {
+                    post: post.clone(),
+                    emoji: emoji.clone(),
+                }))
+            });
+    }
+    hoverable.finish()
+}
+
+/// The `+` chip after a post's reactions: opens the emoji picker.
+fn add_reaction_chip(
+    shared: &Shared,
+    style: &RowStyle,
+    post: &PostId,
+    side: f32,
+) -> Box<dyn Element> {
+    let state = shared
+        .chips
+        .borrow_mut()
+        .entry((post.clone(), "+".to_owned()))
+        .or_default()
+        .clone();
+    let (text, muted) = (style.text, style.muted);
+    let chip = Hoverable::new(state, move |state| {
+        let (background, border, color) = if state.is_hovered() {
+            (fade(text, 0.1), fade(text, 0.3), text)
+        } else {
+            (fade(text, 0.06), fade(text, 0.06), muted)
+        };
+        Container::new(icon(Icon::FaceSmile, color, side))
+            .with_horizontal_padding(6.)
+            .with_vertical_padding(2.)
+            .with_background_color(background)
+            .with_border(Border::all(1.).with_border_color(border))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+            .finish()
+    })
+    .with_cursor(Cursor::PointingHand)
+    .on_click({
+        let post = post.clone();
+        move |ctx, _, _| {
+            let action = POSTS.open_picker(ctx, post.clone(), PickerAnchor::Chip);
+            ctx.dispatch_typed_action(action)
+        }
+    })
+    .finish();
+    warpui::elements::SavePosition::new(chip, &POSTS.add_reaction_position(post)).finish()
 }
 
 /// "Message not sent. Retry · Delete" with the two links.
@@ -1591,6 +1728,7 @@ impl View for ChannelView {
         let row_state = RowState {
             flash: self.flash.clone(),
             menu: self.menu.as_ref().map(|menu| menu.post.clone()),
+            picker: self.picking.as_ref().map(|(post, _, _)| post.clone()),
             editing: self.editing.clone(),
             editor: self.edit_editor.clone(),
         };
@@ -1667,6 +1805,15 @@ impl View for ChannelView {
                 menu.positioning(POSTS),
             );
         }
+        if let Some((post, anchor, up)) = &self.picking {
+            let picker = warpui::elements::Dismiss::new(ChildView::new(&self.picker).finish())
+                .on_dismiss(|ctx, _| {
+                    ctx.dispatch_typed_action(ChannelAction::Post(PostAction::ClosePicker))
+                })
+                .finish();
+            stack
+                .add_positioned_overlay_child(picker, POSTS.picker_positioning(post, *anchor, *up));
+        }
         let timeline =
             warpui::elements::SavePosition::new(stack.finish(), &POSTS.root_position()).finish();
         let column = Flex::column()
@@ -1725,8 +1872,9 @@ impl TypedActionView for ChannelView {
                 ctx.notify();
             }
             // `Esc` closes the post menu first.
-            ChannelAction::MarkRead if self.menu.is_some() => {
+            ChannelAction::MarkRead if self.menu.is_some() || self.picking.is_some() => {
                 self.menu = None;
+                self.close_picker(false, ctx);
                 ctx.notify();
             }
             ChannelAction::MarkRead => Session::as_ref(ctx).send(Command::MarkRead(channel)),
@@ -1782,6 +1930,38 @@ impl ChannelView {
             PostAction::CloseMenu => {
                 self.menu = None;
                 ctx.notify();
+            }
+            PostAction::OpenPicker { post, anchor, up } => {
+                self.menu = None;
+                self.picking = Some((post.clone(), *anchor, *up));
+                self.picker.update(ctx, |picker, ctx| picker.open(ctx));
+                ctx.focus(&self.picker);
+                ctx.notify();
+            }
+            PostAction::ClosePicker => self.close_picker(false, ctx),
+            PostAction::ToggleReaction { post, emoji } => {
+                let Ok(store) = store.read() else { return };
+                let actions = store.post_actions(post, now_ms());
+                let mine = store
+                    .posts
+                    .get(post)
+                    .and_then(|post| post.metadata.as_ref())
+                    .is_some_and(|metadata| {
+                        metadata
+                            .reactions
+                            .iter()
+                            .any(|r| r.user_id == store.me && r.emoji_name == *emoji)
+                    });
+                drop(store);
+                if mine && actions.unreact {
+                    Session::as_ref(ctx).send(Command::React {
+                        post: post.clone(),
+                        emoji: emoji.clone(),
+                        add: false,
+                    });
+                } else if !mine && actions.react {
+                    self.add_reaction(post, emoji, ctx);
+                }
             }
             PostAction::Choose(item) => {
                 let Some(menu) = self.menu.take() else { return };
@@ -1841,6 +2021,58 @@ impl ChannelView {
 }
 
 impl ChannelView {
+    /// Adds my reaction (`addReaction`): nothing if it is there already, the limit dialog if
+    /// the post has as many distinct emoji as the server allows.
+    fn add_reaction(&mut self, post: &PostId, emoji: &str, ctx: &mut ViewContext<Self>) {
+        let Some(store) = Session::as_ref(ctx).store().cloned() else {
+            return;
+        };
+        let Ok(store) = store.read() else { return };
+        if !store.post_actions(post, now_ms()).react {
+            return;
+        }
+        let mine = store
+            .posts
+            .get(post)
+            .and_then(|post| post.metadata.as_ref())
+            .is_some_and(|metadata| {
+                metadata
+                    .reactions
+                    .iter()
+                    .any(|r| r.user_id == store.me && r.emoji_name == emoji)
+            });
+        let allowed = store.reaction_allowed(post, emoji);
+        drop(store);
+        if mine {
+            return;
+        }
+        if !allowed {
+            ctx.emit(ChannelEvent::ReactionLimit);
+            return;
+        }
+        Session::as_ref(ctx).send(Command::React {
+            post: post.clone(),
+            emoji: emoji.to_owned(),
+            add: true,
+        });
+    }
+
+    /// Closes the emoji picker; `refocus`: the keyboard goes back to the edit or the composer
+    /// (after a pick or Esc; a click elsewhere puts it where the click was).
+    fn close_picker(&mut self, refocus: bool, ctx: &mut ViewContext<Self>) {
+        if self.picking.take().is_none() {
+            return;
+        }
+        if refocus {
+            if self.editing.is_some() {
+                ctx.focus(&self.edit_editor);
+            } else {
+                ctx.focus(&self.composer);
+            }
+        }
+        ctx.notify();
+    }
+
     /// `↑` in the empty composer: edits my newest post in the chat, if I still may.
     fn edit_last(&mut self, ctx: &mut ViewContext<Self>) {
         let Some(me) = Session::as_ref(ctx)

@@ -1023,6 +1023,7 @@ impl Engine {
                     self.request_failed("Deleting the message", &error).await;
                 }
             }
+            Command::React { post, emoji, add } => self.react(post, emoji, add).await,
             Command::EditPost { post, message } => {
                 self.limiter.acquire().await;
                 match self.client.patch_post(&post, &message).await {
@@ -1192,6 +1193,59 @@ impl Engine {
             crate::auth::describe(error)
         )))
         .await;
+    }
+
+    async fn react(&mut self, post: PostId, emoji: String, add: bool) {
+        let me = self.store.read().expect("store lock").me.clone();
+        if add {
+            let preference = self
+                .store
+                .read()
+                .expect("store lock")
+                .recent_emojis_after(&emoji);
+            let preferences = std::slice::from_ref(&preference);
+            let deltas = self
+                .store
+                .write()
+                .expect("store lock")
+                .put_preferences(preferences);
+            self.emit_changes(deltas).await;
+            self.limiter.acquire().await;
+            if let Err(error) = self.client.save_preferences(&me, preferences).await {
+                log::warn!("saving the recent emoji: {error}");
+            }
+            self.limiter.acquire().await;
+            match self.client.add_reaction(&me, &post, &emoji).await {
+                Ok(reaction) => {
+                    let deltas = self
+                        .store
+                        .write()
+                        .expect("store lock")
+                        .put_reaction(&reaction, true);
+                    self.emit_changes(deltas).await;
+                }
+                Err(error) => self.request_failed("Adding the reaction", &error).await,
+            }
+        } else {
+            self.limiter.acquire().await;
+            match self.client.remove_reaction(&me, &post, &emoji).await {
+                Ok(()) => {
+                    let reaction = mm_model::Reaction {
+                        user_id: me,
+                        post_id: post,
+                        emoji_name: emoji,
+                        ..mm_model::Reaction::default()
+                    };
+                    let deltas = self
+                        .store
+                        .write()
+                        .expect("store lock")
+                        .put_reaction(&reaction, false);
+                    self.emit_changes(deltas).await;
+                }
+                Err(error) => self.request_failed("Removing the reaction", &error).await,
+            }
+        }
     }
 
     async fn pin_post(&mut self, post: PostId, pinned: bool) {

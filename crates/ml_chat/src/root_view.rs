@@ -109,6 +109,7 @@ pub(crate) fn init(app: &mut AppContext) {
 enum Dialog {
     Account,
     DeletePost { post: PostId, replies: i64 },
+    ReactionLimit,
 }
 
 #[derive(Default)]
@@ -259,6 +260,10 @@ impl RootView {
                         post: post.clone(),
                         replies: *replies,
                     });
+                    ctx.notify();
+                }
+                ChannelEvent::ReactionLimit => {
+                    me.dialog = Some(Dialog::ReactionLimit);
                     ctx.notify();
                 }
                 ChannelEvent::ClearFilter => {
@@ -725,6 +730,7 @@ impl RootView {
             Dialog::DeletePost { replies, .. } => {
                 Some(self.render_delete_post(*replies, appearance))
             }
+            Dialog::ReactionLimit => Some(self.render_reaction_limit(appearance)),
         }
     }
 
@@ -863,6 +869,29 @@ impl RootView {
             ),
         ];
         self.dialog("Delete message", lines, buttons, true, appearance)
+    }
+
+    /// The webapp's `ReactionLimitReachedModal` (the end-user text).
+    fn render_reaction_limit(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let buttons = vec![self.button(
+            &self.buttons.ok,
+            "OK",
+            true,
+            false,
+            RootAction::CloseDialog,
+            appearance,
+        )];
+        self.dialog(
+            "You've reached the reaction limit",
+            vec![
+                "Oops! It looks like we've hit a ceiling on emoji reactions for this message. \
+                 Please contact your system administrator for any adjustments to this limit."
+                    .to_owned(),
+            ],
+            buttons,
+            true,
+            appearance,
+        )
     }
 
     fn render_notice(&self, notice: &str, appearance: &Appearance) -> Box<dyn Element> {

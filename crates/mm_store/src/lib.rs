@@ -15,6 +15,7 @@ mod apply;
 mod delta;
 mod items;
 mod names;
+mod reactions;
 mod sidebar;
 mod store;
 mod timeline;
@@ -27,6 +28,7 @@ pub use items::{
     USER_ACTIVITY_POST_TYPES, Zone, consecutive,
 };
 pub use names::{NameFormat, dm_partner, full_name};
+pub use reactions::{MAX_RECENT_EMOJIS, RECENT_EMOJIS};
 pub use sidebar::{
     DEFAULT_DM_GM_LIMIT, Sidebar, SidebarCategoryView, SidebarChannel, compare_names,
 };

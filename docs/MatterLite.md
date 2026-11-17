@@ -1067,6 +1067,10 @@ plus the chat palette `ChatColors` that comes with the active theme.
   hovered post's top right (React, Reply, More) and the post menu (More or right-click):
   Reply, Follow thread, Mark as unread, Save, Pin, Copy link, Copy text, Edit, Delete, as the
   webapp's dot menu offers them. Pinned and saved posts carry a small "Pinned · Saved" line.
+- Reactions: chips under the message (a click adds or removes mine, hovering names who
+  reacted), and the emoji picker (`ml_chat::emoji_picker`) from React in the toolbar or the
+  `+` chip: search, category tabs, a virtualized grid (`UniformList`), Recently Used from the
+  `recent_emojis` preference, custom emoji, the `emoji_skintone` preference.
 - Editing a post: an `ml_editor::EditorView` (the composer's options) takes the message's
   place in its row, drawn as a `ChildView` inside the timeline's row (the visible rows are
   laid out every frame, so it grows freely); Enter keys as in the composer, Esc cancels,

@@ -11,6 +11,7 @@ pub mod chats;
 mod chats_view;
 pub mod composer;
 mod composer_view;
+mod emoji_picker;
 mod format;
 pub mod history;
 mod history_pane;

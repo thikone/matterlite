@@ -85,6 +85,104 @@ impl Row {
     }
 }
 
+/// Names listed in a reaction's tooltip before "and N other users".
+const MAX_REACTION_NAMES: usize = 20;
+
+/// One emoji's reactions to a post, as its chip shows them.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ReactionChip {
+    pub name: String,
+    pub count: usize,
+    /// One of them is mine.
+    pub mine: bool,
+    /// Who reacted, and what a click does.
+    pub tooltip: String,
+}
+
+/// A post's reactions grouped by emoji, in the order each emoji was first added.
+/// `can_add`/`can_remove`: whether a click adds or removes mine (for the tooltip's hint).
+pub fn reaction_chips(
+    store: &Store,
+    post: &Post,
+    can_add: bool,
+    can_remove: bool,
+) -> Vec<ReactionChip> {
+    let Some(metadata) = &post.metadata else {
+        return Vec::new();
+    };
+    let mut sorted: Vec<_> = metadata.reactions.iter().collect();
+    sorted.sort_by_key(|reaction| reaction.create_at);
+    // Emoji name, whether one is mine, and the others' names.
+    let mut groups: Vec<(String, bool, Vec<String>)> = Vec::new();
+    for reaction in sorted {
+        let index = match groups
+            .iter()
+            .position(|(name, _, _)| *name == reaction.emoji_name)
+        {
+            Some(index) => index,
+            None => {
+                groups.push((reaction.emoji_name.clone(), false, Vec::new()));
+                groups.len() - 1
+            }
+        };
+        let group = &mut groups[index];
+        if reaction.user_id == store.me {
+            group.1 = true;
+        } else {
+            group.2.push(
+                store
+                    .user_name(&reaction.user_id)
+                    .unwrap_or_else(|| "Someone".to_owned()),
+            );
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(name, mine, others)| {
+            let hint = match mine {
+                true if can_remove => Some("(click to remove)"),
+                false if can_add => Some("(click to add)"),
+                _ => None,
+            };
+            ReactionChip {
+                tooltip: reaction_tooltip(mine, &others, &name, hint),
+                count: others.len() + usize::from(mine),
+                name,
+                mine,
+            }
+        })
+        .collect()
+}
+
+/// "You, bob and carol reacted with :smile: (click to remove)" (`reaction.reacted`,
+/// `reaction.usersReacted`, `reaction.usersAndOthersReacted`).
+pub fn reaction_tooltip(mine: bool, others: &[String], emoji: &str, hint: Option<&str>) -> String {
+    let mut users: Vec<&str> = Vec::new();
+    if mine {
+        users.push("You");
+    }
+    users.extend(others.iter().map(String::as_str));
+    let names = if users.len() > MAX_REACTION_NAMES {
+        let rest = users.len() - MAX_REACTION_NAMES;
+        let unit = if rest == 1 { "user" } else { "users" };
+        format!(
+            "{} and {rest} other {unit}",
+            users[..MAX_REACTION_NAMES].join(", ")
+        )
+    } else if let [first @ .., last] = users.as_slice()
+        && !first.is_empty()
+    {
+        format!("{} and {last}", first.join(", "))
+    } else {
+        users.first().copied().unwrap_or_default().to_owned()
+    };
+    let text = format!("{names} reacted with :{emoji}:");
+    match hint {
+        Some(hint) => format!("{text} {hint}"),
+        None => text,
+    }
+}
+
 /// `isPostInteractable`: not pending or failed, deleted, or a system or ephemeral message.
 pub fn interactable(post: &Post, pending: bool) -> bool {
     !pending && !post.is_deleted() && !post.is_system()

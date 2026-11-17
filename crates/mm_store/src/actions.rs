@@ -13,7 +13,11 @@ use crate::Store;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PostActions {
     pub reply: bool,
+    /// Add a reaction (a chip, or the picker when `emoji_picker`) and remove mine.
     pub react: bool,
+    pub unreact: bool,
+    /// The emoji picker is on (`EnableEmojiPicker`): React in the toolbar and the `+` chip.
+    pub emoji_picker: bool,
     /// Follow or unfollow the post's thread (CRT only); `following` is the current state.
     pub follow: bool,
     pub following: bool,
@@ -83,11 +87,12 @@ impl Store {
             } else {
                 can("delete_others_posts")
             };
+        let react = !archived && can("add_reaction");
         PostActions {
             reply: !archived && can("create_post"),
-            react: !archived
-                && can("add_reaction")
-                && self.config.get("EnableEmojiPicker") != Some("false"),
+            react,
+            unreact: !archived && can("remove_reaction"),
+            emoji_picker: react && self.config.get("EnableEmojiPicker") != Some("false"),
             follow: self.crt_enabled(),
             following,
             mark_unread: !archived,

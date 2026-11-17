@@ -11,7 +11,5 @@ publish.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 mm_model.workspace = true
-serde_json.workspace = true
-
-[dev-dependencies]
 serde.workspace = true
+serde_json.workspace = true

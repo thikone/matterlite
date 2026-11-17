@@ -471,7 +471,12 @@ impl Store {
         deltas.push(StoreDelta::PostsRemoved(removed));
     }
 
-    fn reaction(&mut self, reaction: &Reaction, added: bool, deltas: &mut Vec<StoreDelta>) {
+    pub(crate) fn reaction(
+        &mut self,
+        reaction: &Reaction,
+        added: bool,
+        deltas: &mut Vec<StoreDelta>,
+    ) {
         let Some(post) = self.posts.get_mut(&reaction.post_id) else {
             return;
         };

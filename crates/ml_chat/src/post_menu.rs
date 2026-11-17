@@ -3,7 +3,9 @@
 //! The post toolbar, shown at a post's top right while the pointer is over it, and the post
 //! menu it opens (More, or a right-click on the post): the webapp's post hover menu and dot
 //! menu (`components/post/post_options.tsx`, `components/dot_menu/dot_menu.tsx`). The entries
-//! follow [`PostActions`]; the view showing the posts handles what they do.
+//! follow [`PostActions`]; the view showing the posts handles what they do. React in the
+//! toolbar and the `+` chip after a post's reactions open the emoji picker
+//! ([`crate::emoji_picker`]) next to them.
 
 use std::rc::Rc;
 
@@ -37,6 +39,28 @@ pub enum PostAction {
     },
     CloseMenu,
     Choose(PostMenuItem),
+    /// Opens the emoji picker for a post, next to the toolbar's React button or the post's
+    /// `+` chip.
+    OpenPicker {
+        post: PostId,
+        anchor: PickerAnchor,
+        up: bool,
+    },
+    ClosePicker,
+    /// A click on a reaction chip: add or remove mine.
+    ToggleReaction {
+        post: PostId,
+        emoji: String,
+    },
+}
+
+/// What the emoji picker opens next to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickerAnchor {
+    /// React in the toolbar (the picker's right edge at the button's).
+    Toolbar,
+    /// The `+` chip after the reactions (left edges aligned).
+    Chip,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +122,74 @@ impl<A: Action + Clone> PostMenuHost<A> {
 
     fn more_position(&self) -> String {
         format!("{}:post_more", self.prefix)
+    }
+
+    fn react_position(&self) -> String {
+        format!("{}:post_react", self.prefix)
+    }
+
+    /// The saved position of a post's `+` chip (one per post on screen).
+    pub fn add_reaction_position(&self, post: &PostId) -> String {
+        format!("{}:add_reaction:{post}", self.prefix)
+    }
+
+    fn anchor_position(&self, post: &PostId, anchor: PickerAnchor) -> String {
+        match anchor {
+            PickerAnchor::Toolbar => self.react_position(),
+            PickerAnchor::Chip => self.add_reaction_position(post),
+        }
+    }
+
+    /// The action of React or the `+` chip: the picker opens upwards from the lower half.
+    pub fn open_picker(&self, ctx: &EventContext, post: PostId, anchor: PickerAnchor) -> A {
+        let root = ctx.element_position_by_id(self.root_position());
+        let button = ctx.element_position_by_id(self.anchor_position(&post, anchor));
+        let up = match (root, button) {
+            (Some(root), Some(button)) => button.center().y() > root.center().y(),
+            _ => false,
+        };
+        (self.wrap)(PostAction::OpenPicker { post, anchor, up })
+    }
+
+    /// Where the picker goes: under or over its button, aligned with it.
+    pub fn picker_positioning(
+        &self,
+        post: &PostId,
+        anchor: PickerAnchor,
+        up: bool,
+    ) -> warpui::elements::OffsetPositioning {
+        use warpui::elements::{
+            ChildAnchor, OffsetPositioning, PositionedElementAnchor, PositionedElementOffsetBounds,
+        };
+        let (button, child, offset) = match (anchor, up) {
+            (PickerAnchor::Toolbar, false) => (
+                PositionedElementAnchor::BottomRight,
+                ChildAnchor::TopRight,
+                4.,
+            ),
+            (PickerAnchor::Toolbar, true) => (
+                PositionedElementAnchor::TopRight,
+                ChildAnchor::BottomRight,
+                -4.,
+            ),
+            (PickerAnchor::Chip, false) => (
+                PositionedElementAnchor::BottomLeft,
+                ChildAnchor::TopLeft,
+                4.,
+            ),
+            (PickerAnchor::Chip, true) => (
+                PositionedElementAnchor::TopLeft,
+                ChildAnchor::BottomLeft,
+                -4.,
+            ),
+        };
+        OffsetPositioning::offset_from_save_position_element(
+            self.anchor_position(post, anchor),
+            vec2f(0., offset),
+            PositionedElementOffsetBounds::WindowByPosition,
+            button,
+            child,
+        )
     }
 }
 
@@ -301,7 +393,16 @@ impl PostMenu {
 /// The toolbar's buttons' hover states; one set per view (one post is hovered at a time).
 #[derive(Default)]
 pub struct ToolbarStates {
+    react: MouseStateHandle,
     more: MouseStateHandle,
+}
+
+/// What the toolbar of a post shows.
+pub struct ToolbarState {
+    /// React (the emoji picker is on and I may react).
+    pub react: bool,
+    pub menu_open: bool,
+    pub picker_open: bool,
 }
 
 /// The toolbar of a post: icon buttons in a small card.
@@ -309,7 +410,7 @@ pub fn render_toolbar<A: Action + Clone>(
     host: PostMenuHost<A>,
     states: &Rc<ToolbarStates>,
     post: &PostId,
-    menu_open: bool,
+    toolbar: ToolbarState,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
@@ -322,11 +423,37 @@ pub fn render_toolbar<A: Action + Clone>(
             .finish();
         move || tooltip
     };
+    let mut row = Flex::row()
+        .with_spacing(2.)
+        .with_cross_axis_alignment(CrossAxisAlignment::Center);
+    if toolbar.react {
+        let post = post.clone();
+        let mut react = icon_button_with_color(
+            appearance,
+            Icon::FaceSmile,
+            toolbar.picker_open,
+            states.react.clone(),
+            color,
+        );
+        // Not over the open picker.
+        if !toolbar.picker_open {
+            react = react.with_tooltip(tooltip("Add Reaction"));
+        }
+        let react = react
+            .build()
+            .on_click(move |ctx, _, _| {
+                let action = host.open_picker(ctx, post.clone(), PickerAnchor::Toolbar);
+                ctx.dispatch_typed_action(action)
+            })
+            .with_cursor(Cursor::PointingHand)
+            .finish();
+        row.add_child(SavePosition::new(react, &host.react_position()).finish());
+    }
     let post = post.clone();
     let more = icon_button_with_color(
         appearance,
         Icon::DotsHorizontal,
-        menu_open,
+        toolbar.menu_open,
         states.more.clone(),
         color,
     )
@@ -338,12 +465,8 @@ pub fn render_toolbar<A: Action + Clone>(
     })
     .with_cursor(Cursor::PointingHand)
     .finish();
-    let row = Flex::row()
-        .with_spacing(2.)
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_child(SavePosition::new(more, &host.more_position()).finish())
-        .finish();
-    Container::new(row)
+    row.add_child(SavePosition::new(more, &host.more_position()).finish());
+    Container::new(row.finish())
         .with_uniform_padding(2.)
         .with_background(theme.surface_1())
         .with_border(Border::all(1.).with_border_fill(theme.surface_3()))

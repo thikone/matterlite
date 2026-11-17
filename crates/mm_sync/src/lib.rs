@@ -179,6 +179,13 @@ pub enum Command {
     },
     /// Deletes a post; the server's `post_deleted` removes it (with its replies for a root).
     DeletePost(PostId),
+    /// Adds or removes my reaction; adding also moves the emoji up in my recently used
+    /// ones (`recent_emojis`), as the webapp's `addReaction`.
+    React {
+        post: PostId,
+        emoji: String,
+        add: bool,
+    },
     /// Changes a post's message (`PUT /posts/{id}/patch`); the response updates the store.
     EditPost {
         post: PostId,

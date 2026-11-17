@@ -349,3 +349,33 @@ async fn post_actions_use_the_webapp_routes() {
         "fixed"
     );
 }
+
+#[tokio::test]
+async fn reactions_use_the_webapp_routes() {
+    let (mock, client) = server().await;
+    let client = logged_in(client);
+    Mock::given(method("POST"))
+        .and(path("/api/v4/reactions"))
+        .and(body_json(
+            json!({"user_id": "u1", "post_id": "p1", "emoji_name": "+1"}),
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(
+            json!({"user_id": "u1", "post_id": "p1", "emoji_name": "+1", "create_at": 5}),
+        ))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v4/users/u1/posts/p1/reactions/+1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "OK"})))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    let (user, post) = (UserId::from("u1"), PostId::from("p1"));
+    let reaction = client.add_reaction(&user, &post, "+1").await.unwrap();
+    assert_eq!(
+        (reaction.emoji_name.as_str(), reaction.create_at),
+        ("+1", 5)
+    );
+    client.remove_reaction(&user, &post, "+1").await.unwrap();
+}

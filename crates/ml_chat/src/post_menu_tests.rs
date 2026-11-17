@@ -15,6 +15,8 @@ fn entries_follow_the_actions_in_the_webapp_order() {
     let all = PostActions {
         reply: true,
         react: true,
+        unreact: true,
+        emoji_picker: true,
         follow: true,
         following: false,
         mark_unread: true,

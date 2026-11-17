@@ -7,7 +7,7 @@ use std::time::Duration;
 use mm_model::error::ids;
 use mm_model::{
     AppError, Channel, ChannelId, ChannelMember, ChannelStats, ClientConfig, Emoji, EmojiId,
-    OrderedSidebarCategories, Post, PostId, PostList, Preference, Role, ServerVersion,
+    OrderedSidebarCategories, Post, PostId, PostList, Preference, Reaction, Role, ServerVersion,
     SessionToken, SidebarCategory, Status, Team, TeamId, TeamMember, TeamUnread, ThreadList, User,
     UserId,
 };
@@ -689,6 +689,40 @@ impl Client {
             self.put(&["posts", post_id.as_str(), "patch"])
                 .json(&json!({ "message": message })),
         )
+        .await
+    }
+
+    /// `POST /reactions`: my reaction to a post; the server answers with it (and sends
+    /// `reaction_added`).
+    pub async fn add_reaction(
+        &self,
+        user_id: &UserId,
+        post_id: &PostId,
+        emoji_name: &str,
+    ) -> Result<Reaction, ApiError> {
+        self.json(self.post(&["reactions"]).json(&json!({
+            "user_id": user_id,
+            "post_id": post_id,
+            "emoji_name": emoji_name,
+        })))
+        .await
+    }
+
+    /// `DELETE /users/{uid}/posts/{pid}/reactions/{name}`.
+    pub async fn remove_reaction(
+        &self,
+        user_id: &UserId,
+        post_id: &PostId,
+        emoji_name: &str,
+    ) -> Result<(), ApiError> {
+        self.empty(self.delete(&[
+            "users",
+            user_id.as_str(),
+            "posts",
+            post_id.as_str(),
+            "reactions",
+            emoji_name,
+        ]))
         .await
     }
 

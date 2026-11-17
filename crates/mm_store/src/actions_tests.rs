@@ -39,9 +39,15 @@ fn store() -> Store {
     store.set_roles(vec![
         Role {
             name: "channel_user".into(),
-            permissions: ["create_post", "add_reaction", "edit_post", "delete_post"]
-                .map(String::from)
-                .to_vec(),
+            permissions: [
+                "create_post",
+                "add_reaction",
+                "remove_reaction",
+                "edit_post",
+                "delete_post",
+            ]
+            .map(String::from)
+            .to_vec(),
             ..Role::default()
         },
         Role {
@@ -73,6 +79,7 @@ fn my_post_can_be_edited_and_deleted_but_not_others() {
     let store = store();
     let mine = store.post_actions(&"mine".into(), NOW);
     assert!(mine.reply && mine.react && mine.edit && mine.delete && mine.copy);
+    assert!(mine.unreact && mine.emoji_picker);
     assert!(mine.pin && mine.save && mine.mark_unread);
     assert!(!mine.follow, "CRT is off");
     let theirs = store.post_actions(&"theirs".into(), NOW);

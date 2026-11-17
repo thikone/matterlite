@@ -280,3 +280,56 @@ fn up_edits_my_newest_post_that_can_be_interacted_with() {
         None
     );
 }
+
+#[test]
+fn reaction_tooltips_name_who_reacted() {
+    let others = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        reaction_tooltip(true, &[], "smile", Some("(click to remove)")),
+        "You reacted with :smile: (click to remove)"
+    );
+    assert_eq!(
+        reaction_tooltip(false, &others(&["bob"]), "+1", Some("(click to add)")),
+        "bob reacted with :+1: (click to add)"
+    );
+    assert_eq!(
+        reaction_tooltip(true, &others(&["bob", "carol"]), "tada", None),
+        "You, bob and carol reacted with :tada:"
+    );
+    let many: Vec<String> = (0..22).map(|i| format!("u{i}")).collect();
+    let text = reaction_tooltip(false, &many, "x", None);
+    assert!(
+        text.ends_with("u19 and 2 other users reacted with :x:"),
+        "{text}"
+    );
+}
+
+#[test]
+fn reaction_chips_group_by_emoji_in_order() {
+    let store = store();
+    let post: Post = serde_json::from_value(json!({
+        "id": "p", "channel_id": "c",
+        "metadata": {"reactions": [
+            {"user_id": "bob", "post_id": "p", "emoji_name": "tada", "create_at": 3},
+            {"user_id": ME, "post_id": "p", "emoji_name": "smile", "create_at": 1},
+            {"user_id": "carol", "post_id": "p", "emoji_name": "smile", "create_at": 2},
+        ]}
+    }))
+    .unwrap();
+    let chips = reaction_chips(&store, &post, true, true);
+    let summary: Vec<(&str, usize, bool)> = chips
+        .iter()
+        .map(|chip| (chip.name.as_str(), chip.count, chip.mine))
+        .collect();
+    assert_eq!(summary, [("smile", 2, true), ("tada", 1, false)]);
+    assert!(chips[0].tooltip.starts_with("You and "));
+    assert!(chips[0].tooltip.ends_with("(click to remove)"));
+    assert!(chips[1].tooltip.ends_with("(click to add)"));
+    let read_only = reaction_chips(&store, &post, false, false);
+    assert!(read_only[1].tooltip.ends_with(":tada:"));
+}
