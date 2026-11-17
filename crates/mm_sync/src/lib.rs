@@ -179,6 +179,11 @@ pub enum Command {
     },
     /// Deletes a post; the server's `post_deleted` removes it (with its replies for a root).
     DeletePost(PostId),
+    /// Changes a post's message (`PUT /posts/{id}/patch`); the response updates the store.
+    EditPost {
+        post: PostId,
+        message: String,
+    },
     SendPost {
         channel: ChannelId,
         /// Empty for a root post.

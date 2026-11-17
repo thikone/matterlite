@@ -678,6 +678,21 @@ impl Store {
         }
     }
 
+    /// The server's copy of a post I edited (the patch response), unless a newer version
+    /// (its `post_edited`, or a later edit) came first.
+    pub fn put_edited_post(&mut self, post: &Post) -> Vec<StoreDelta> {
+        if self
+            .posts
+            .get(&post.id)
+            .is_some_and(|known| known.update_at > post.update_at)
+        {
+            return Vec::new();
+        }
+        let mut deltas = Vec::new();
+        self.post_edited(post, &mut deltas);
+        deltas
+    }
+
     fn after_preferences(
         &self,
         crt_before: bool,

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use ml_editor::{
     EditOrigin, EditorOptions, EditorView, EnterAction, EnterSettings, Event as EditorEvent,
-    InteractionState, TextOptions,
+    InteractionState, NavigationKey, PropagateAndNoOpNavigationKeys, TextOptions,
 };
 use mm_model::{ChannelId, PostId};
 use mm_sync::Command;
@@ -43,6 +43,8 @@ pub enum ComposerEvent {
     Sent,
     /// Esc in the composer.
     Escape,
+    /// `↑` in the empty composer: edit my last post (§13).
+    EditLast,
 }
 
 /// Why the chat takes no posts.
@@ -67,15 +69,7 @@ pub struct ComposerView {
 
 impl ComposerView {
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
-        let appearance = Appearance::as_ref(ctx);
-        let options = EditorOptions {
-            text: TextOptions::ui_text(Some(appearance.ui_font_size() + 1.), appearance),
-            autogrow: true,
-            soft_wrap: true,
-            placeholder_soft_wrap: true,
-            enter_settings: enter_settings(),
-            ..EditorOptions::default()
-        };
+        let options = editor_options(Appearance::as_ref(ctx));
         let editor = ctx.add_typed_action_view(|ctx| EditorView::new(options, ctx));
         ctx.subscribe_to_view(&editor, |me, _, event, ctx| me.on_editor_event(event, ctx));
         ctx.subscribe_to_model(&Appearance::handle(ctx), |me, _, _, ctx| {
@@ -122,6 +116,7 @@ impl ComposerView {
             editor.system_reset_buffer_text(&draft, ctx);
             editor.move_to_buffer_end(ctx);
         });
+        self.sync_up_key(ctx);
         self.update_state(ctx);
     }
 
@@ -183,11 +178,30 @@ impl ComposerView {
                 self.on_enter(EnterKey::CtrlOrCmd, ctx)
             }
             EditorEvent::Escape => ctx.emit(ComposerEvent::Escape),
+            EditorEvent::Navigate(NavigationKey::Up)
+                if self.blocked.is_none() && self.editor.as_ref(ctx).is_empty(ctx) =>
+            {
+                ctx.emit(ComposerEvent::EditLast)
+            }
             _ => {}
         }
     }
 
+    /// `↑` leaves the editor only while it is empty (then it edits my last post); with
+    /// text it moves the cursor.
+    fn sync_up_key(&self, ctx: &mut ViewContext<Self>) {
+        let mode = if self.editor.as_ref(ctx).is_empty(ctx) {
+            PropagateAndNoOpNavigationKeys::AtBoundary
+        } else {
+            PropagateAndNoOpNavigationKeys::Never
+        };
+        self.editor.update(ctx, |editor, _| {
+            editor.set_propagate_vertical_navigation_keys(mode)
+        });
+    }
+
     fn on_edited(&mut self, origin: EditOrigin, ctx: &mut ViewContext<Self>) {
+        self.sync_up_key(ctx);
         if !origin.is_user() {
             return;
         }
@@ -291,6 +305,7 @@ impl ComposerView {
         self.editor.update(ctx, |editor, ctx| {
             editor.clear_buffer_and_reset_undo_stack(ctx)
         });
+        self.sync_up_key(ctx);
         self.unsaved = false;
         self.edits += 1;
         Session::handle(ctx).update(ctx, |session, _| {
@@ -300,6 +315,19 @@ impl ComposerView {
         self.error = None;
         ctx.emit(ComposerEvent::Sent);
         ctx.notify();
+    }
+}
+
+/// A message editor (the composer's, and the one editing a post in place): multi-line,
+/// growing with its text.
+pub(crate) fn editor_options(appearance: &Appearance) -> EditorOptions {
+    EditorOptions {
+        text: TextOptions::ui_text(Some(appearance.ui_font_size() + 1.), appearance),
+        autogrow: true,
+        soft_wrap: true,
+        placeholder_soft_wrap: true,
+        enter_settings: enter_settings(),
+        ..EditorOptions::default()
     }
 }
 

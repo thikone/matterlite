@@ -1216,9 +1216,7 @@ impl TypedActionView for RootView {
                     return;
                 }
                 self.dialog = None;
-                if let Some(workspace) = &self.workspace {
-                    ctx.focus(workspace);
-                }
+                self.focus_chat(ctx);
                 ctx.notify();
             }
             RootAction::LogOut { delete_data } => {
@@ -1244,6 +1242,7 @@ impl TypedActionView for RootView {
                 if let Some(Dialog::DeletePost { post, .. }) = self.dialog.take() {
                     Session::as_ref(ctx).send(Command::DeletePost(post));
                 }
+                self.focus_chat(ctx);
                 ctx.notify();
             }
             RootAction::DismissNotice => {

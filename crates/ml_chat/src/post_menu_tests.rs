@@ -31,7 +31,7 @@ fn entries_follow_the_actions_in_the_webapp_order() {
         [
             vec!["Follow thread", "Mark as unread", "Save", "Pin to channel"],
             vec!["Copy link", "Copy text"],
-            vec!["Delete"],
+            vec!["Edit", "Delete"],
         ]
     );
     let toggled = PostActions {

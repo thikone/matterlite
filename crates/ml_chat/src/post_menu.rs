@@ -47,6 +47,7 @@ pub enum PostMenuItem {
     Pin,
     CopyLink,
     CopyText,
+    Edit,
     Delete,
 }
 
@@ -170,6 +171,9 @@ impl PostMenu {
             copy.push((PostMenuItem::CopyText, "Copy text"));
         }
         let mut change = Vec::new();
+        if a.edit {
+            change.push((PostMenuItem::Edit, "Edit"));
+        }
         if a.delete {
             change.push((PostMenuItem::Delete, "Delete"));
         }

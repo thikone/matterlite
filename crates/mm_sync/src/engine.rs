@@ -1023,6 +1023,20 @@ impl Engine {
                     self.request_failed("Deleting the message", &error).await;
                 }
             }
+            Command::EditPost { post, message } => {
+                self.limiter.acquire().await;
+                match self.client.patch_post(&post, &message).await {
+                    Ok(edited) => {
+                        let deltas = self
+                            .store
+                            .write()
+                            .expect("store lock")
+                            .put_edited_post(&edited);
+                        self.emit_changes(deltas).await;
+                    }
+                    Err(error) => self.request_failed("Editing the message", &error).await,
+                }
+            }
             Command::LeaveChannel(channel) => {
                 let me = self.store.read().expect("store lock").me.clone();
                 self.limiter.acquire().await;

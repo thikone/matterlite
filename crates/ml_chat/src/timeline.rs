@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{Datelike as _, NaiveDate, Timelike as _};
-use mm_model::{ChannelId, Post, PostId, TeamId, User};
+use mm_model::{ChannelId, Post, PostId, TeamId, User, UserId};
 use mm_render::{ChannelInfo, Context, Lookup, UserInfo};
 use mm_store::{ItemOptions, Store, TimelineItem, Zone};
 use mm_sync::ImageKey;
@@ -83,6 +83,24 @@ impl Row {
             _ => None,
         }
     }
+}
+
+/// `isPostInteractable`: not pending or failed, deleted, or a system or ephemeral message.
+pub fn interactable(post: &Post, pending: bool) -> bool {
+    !pending && !post.is_deleted() && !post.is_system()
+}
+
+/// The post `↑` in an empty composer edits (`getLatestPostToEdit`): my newest interactable
+/// post among the shown ones, given oldest first with whether each is pending. Whether I may
+/// still edit it is for [`Store::post_actions`] to say.
+pub fn latest_to_edit<'a>(
+    posts: impl DoubleEndedIterator<Item = (&'a Post, bool)>,
+    me: &UserId,
+) -> Option<PostId> {
+    posts
+        .rev()
+        .find(|(post, pending)| post.user_id == *me && interactable(post, *pending))
+        .map(|(post, _)| post.id.clone())
 }
 
 /// The rows of a channel, oldest first. `last_viewed_at` places the "New messages" line.

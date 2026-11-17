@@ -457,3 +457,21 @@ fn preferences_categories_and_threads() {
     let counts = store.thread_counts[&TeamId::from("t1")];
     assert_eq!((counts.unread_threads, counts.mentions), (0, 0));
 }
+
+#[test]
+fn an_edit_response_older_than_the_event_is_ignored() {
+    let mut store = new_store("off");
+    let edited = |message: &str, update_at: i64| {
+        post(
+            json!({"id": "root1", "channel_id": "c1", "user_id": "bob", "create_at": 100,
+                    "update_at": update_at, "edit_at": update_at, "message": message}),
+        )
+    };
+    let deltas = store.put_edited_post(&edited("first", 200));
+    assert_eq!(deltas, [StoreDelta::PostsChanged(vec!["root1".into()])]);
+    assert_eq!(store.posts[&PostId::from("root1")].message, "first");
+    // A later edit arrived by the WebSocket before the response of the first.
+    store.put_edited_post(&edited("second", 300));
+    assert!(store.put_edited_post(&edited("first", 200)).is_empty());
+    assert_eq!(store.posts[&PostId::from("root1")].message, "second");
+}

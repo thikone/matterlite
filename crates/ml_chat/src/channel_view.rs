@@ -3,7 +3,8 @@
 //! A chat tab's content (MatterLite.md §10.2, §10.4): the channel header and the timeline,
 //! anchored at the bottom, with date separators, the "New messages" line, combined
 //! membership messages, posts with avatars, holes that load older or newer posts when they
-//! come near, pending and failed posts with Retry and Delete, and "Jump to newest".
+//! come near, pending and failed posts with Retry and Delete, and "Jump to newest". A post
+//! is edited in place: an editor takes the message's place until it is saved or cancelled.
 //!
 //! Each open tab keeps its own scroll position. Rows are prepared from the store when it
 //! changes; messages are rendered (`mm_render`) only when they scroll into view and kept
@@ -19,6 +20,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use ml_editor::{EditorView, Event as EditorEvent};
 use ml_themes::ChatColors;
 use mm_model::{ChannelId, ChannelType, Post, PostId, TeamId};
 use mm_render::MessageDoc;
@@ -47,8 +49,8 @@ use warpui::{
 
 use crate::chats::{ChannelIcon, channel_icon as icon_kind};
 use crate::chats_view::{channel_icon, fade, icon};
-use crate::composer;
-use crate::composer_view::{ComposerEvent, ComposerView};
+use crate::composer::{self, EnterKey, EnterPrefs, OnEnter};
+use crate::composer_view::{ComposerEvent, ComposerView, editor_options};
 use crate::history_pane::ChatFilter;
 use crate::message::{
     CustomEmoji, MessageRenderer, OnClick, Palette, Target, emoji_image, fixed_width,
@@ -76,6 +78,8 @@ const NEW_LINE_OFFSET: f32 = 80.;
 /// A post shown from elsewhere: this far below the top, highlighted this long.
 const SHOW_POST_OFFSET: f32 = 120.;
 const FLASH: Duration = Duration::from_secs(3);
+/// The editor of a post being edited grows with its text up to this height, then scrolls.
+const MAX_EDIT_HEIGHT: f32 = 320.;
 /// The posts of the chat, for the post toolbar and menu.
 const POSTS: PostMenuHost<ChannelAction> = PostMenuHost {
     prefix: "ml_chat:channel",
@@ -190,6 +194,21 @@ struct RowState {
     flash: Option<PostId>,
     /// The post whose menu is open: it keeps its toolbar.
     menu: Option<PostId>,
+    /// The post being edited, and the editor that takes its message's place.
+    editing: Option<Editing>,
+    editor: ViewHandle<EditorView>,
+}
+
+/// A post being edited in place (the webapp's inline edit, `components/edit_post`).
+#[derive(Clone)]
+struct Editing {
+    post: PostId,
+    /// The message when editing started: saving it unchanged only closes the editor.
+    original: String,
+    /// "Enter to save · Esc to cancel", per the Enter preference.
+    hint: &'static str,
+    /// The text is too long to save.
+    error: Option<String>,
 }
 
 pub struct ChannelView {
@@ -225,6 +244,9 @@ pub struct ChannelView {
     hover: Rc<RefCell<HashMap<PostId, MouseStateHandle>>>,
     toolbar: Rc<ToolbarStates>,
     menu: Option<PostMenu>,
+    /// The editor of the post being edited (one per view; one post is edited at a time).
+    edit_editor: ViewHandle<EditorView>,
+    editing: Option<Editing>,
 }
 
 impl ChannelView {
@@ -234,6 +256,12 @@ impl ChannelView {
             for chat in me.chats.values() {
                 chat.list.clear_heights();
             }
+            let appearance = Appearance::as_ref(ctx);
+            let (font, size) = (appearance.ui_font_family(), appearance.ui_font_size() + 1.);
+            me.edit_editor.update(ctx, |editor, ctx| {
+                editor.set_font_family(font, ctx);
+                editor.set_font_size(size, ctx);
+            });
             ctx.notify();
         });
         ctx.subscribe_to_model(&Session::handle(ctx), |me, _, event, ctx| match event {
@@ -276,6 +304,12 @@ impl ChannelView {
                 ctx.notify();
             }
             ComposerEvent::Escape => me.handle_action(&ChannelAction::MarkRead, ctx),
+            ComposerEvent::EditLast => me.edit_last(ctx),
+        });
+        let options = editor_options(Appearance::as_ref(ctx));
+        let edit_editor = ctx.add_typed_action_view(|ctx| EditorView::new(options, ctx));
+        ctx.subscribe_to_view(&edit_editor, |me, _, event, ctx| {
+            me.on_edit_event(event, ctx)
         });
         let lookup = Rc::new(ChatLookup::default());
         let docs = Rc::new(RefCell::new(Docs::default()));
@@ -315,6 +349,8 @@ impl ChannelView {
             hover,
             toolbar,
             menu: None,
+            edit_editor,
+            editing: None,
         }
     }
 
@@ -399,6 +435,8 @@ impl ChannelView {
             );
         }
         self.channel = channel.clone();
+        self.editing = None;
+        self.menu = None;
         self.lookup_dirty = true;
         self.composer
             .update(ctx, |composer, ctx| composer.set_channel(channel, ctx));
@@ -706,11 +744,19 @@ impl ChannelView {
                 chat.jump_to_new = false;
             }
         }
-        // Hover states of posts no longer shown go.
-        self.hover.borrow_mut().retain(|id, _| {
+        // Hover states of posts no longer shown go, and so does the edit of a deleted post.
+        let shown = |id: &PostId| {
             data.iter()
                 .any(|row| matches!(row, RowData::Post(post) if post.post.id == *id))
-        });
+        };
+        self.hover.borrow_mut().retain(|id, _| shown(id));
+        if self
+            .editing
+            .as_ref()
+            .is_some_and(|editing| !shown(&editing.post))
+        {
+            self.stop_edit(ctx);
+        }
         self.shared = Rc::new(Shared {
             rows: data,
             lookup: self.lookup.clone(),
@@ -1121,13 +1167,21 @@ fn render_row(
                 .clone();
             let flashing = state.flash.as_ref() == Some(&id);
             let menu_open = state.menu.as_ref() == Some(&id);
-            let has_actions = data.actions.any();
+            let editing = state
+                .editing
+                .as_ref()
+                .filter(|editing| editing.post == id)
+                .map(|editing| (editing, &state.editor));
+            // The edited post has no toolbar or menu.
+            let has_actions = data.actions.any() && editing.is_none();
             let menu_id = id.clone();
             Hoverable::new(mouse_state, |mouse| {
                 let highlighted = has_actions && (mouse.is_hovered() || menu_open);
-                let mut post = Container::new(render_post(shared, style, data));
+                let mut post = Container::new(render_post(shared, style, data, editing));
                 if flashing {
                     post = post.with_background_color(fade(style.chat.mention_highlight_bg, 0.55));
+                } else if editing.is_some() {
+                    post = post.with_background_color(fade(style.chat.button_bg, 0.08));
                 } else if highlighted {
                     post = post.with_background_color(fade(style.text, 0.04));
                 }
@@ -1205,7 +1259,12 @@ fn separator(label: &str, color: ColorU, line: ColorU, style: &RowStyle) -> Box<
     .finish()
 }
 
-fn render_post(shared: &Shared, style: &RowStyle, data: &PostData) -> Box<dyn Element> {
+fn render_post(
+    shared: &Shared,
+    style: &RowStyle,
+    data: &PostData,
+    editing: Option<(&Editing, &ViewHandle<EditorView>)>,
+) -> Box<dyn Element> {
     let post = &data.post;
     let small = style.size - 2.;
     let mut content = Flex::column()
@@ -1272,15 +1331,19 @@ fn render_post(shared: &Shared, style: &RowStyle, data: &PostData) -> Box<dyn El
         }
         content.add_child(header.finish());
     }
-    let doc = post_doc(shared, post);
-    let renderer = MessageRenderer {
-        palette: &style.palette,
-        custom_emoji: &shared.custom_emoji,
-        on_click: click_handler(),
-        muted: post.is_system() || data.pending == Some(Pending::Sending),
-    };
-    content.add_child(renderer.render(&doc));
-    if post.edit_at != 0 && !post.is_deleted() {
+    if let Some((editing, editor)) = editing {
+        content.add_child(edit_box(editing, editor, style));
+    } else {
+        let doc = post_doc(shared, post);
+        let renderer = MessageRenderer {
+            palette: &style.palette,
+            custom_emoji: &shared.custom_emoji,
+            on_click: click_handler(),
+            muted: post.is_system() || data.pending == Some(Pending::Sending),
+        };
+        content.add_child(renderer.render(&doc));
+    }
+    if post.edit_at != 0 && !post.is_deleted() && editing.is_none() {
         content.add_child(
             Text::new_inline("(edited)", style.font, small)
                 .with_color(style.muted)
@@ -1396,6 +1459,43 @@ fn render_post(shared: &Shared, style: &RowStyle, data: &PostData) -> Box<dyn El
     )
 }
 
+/// The editor in place of a message being edited, with the keys to save and cancel under it
+/// (or why it can't be saved).
+fn edit_box(
+    editing: &Editing,
+    editor: &ViewHandle<EditorView>,
+    style: &RowStyle,
+) -> Box<dyn Element> {
+    let border = if editing.error.is_some() {
+        style.error
+    } else {
+        style.palette.link
+    };
+    let field = Container::new(
+        ConstrainedBox::new(ChildView::new(editor).finish())
+            .with_max_height(MAX_EDIT_HEIGHT)
+            .finish(),
+    )
+    .with_horizontal_padding(10.)
+    .with_vertical_padding(8.)
+    .with_border(Border::all(1.).with_border_color(border))
+    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)));
+    let (note, color) = match &editing.error {
+        Some(error) => (error.clone(), style.error),
+        None => (editing.hint.to_owned(), style.muted),
+    };
+    Flex::column()
+        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+        .with_spacing(4.)
+        .with_child(field.finish())
+        .with_child(
+            Text::new(note, style.font, style.size - 2.)
+                .with_color(color)
+                .finish(),
+        )
+        .finish()
+}
+
 /// "Message not sent. Retry · Delete" with the two links.
 fn failed_line(pending: String, style: &RowStyle) -> Box<dyn Element> {
     const LABEL: &str = "Message not sent. Retry · Delete";
@@ -1466,7 +1566,12 @@ impl View for ChannelView {
             if std::mem::take(&mut self.focus_timeline) {
                 return;
             }
-            ctx.focus(&self.composer);
+            // Back from a dialog (Delete, after saving empty text): to the open edit.
+            if self.editing.is_some() {
+                ctx.focus(&self.edit_editor);
+            } else {
+                ctx.focus(&self.composer);
+            }
         }
     }
 
@@ -1486,6 +1591,8 @@ impl View for ChannelView {
         let row_state = RowState {
             flash: self.flash.clone(),
             menu: self.menu.as_ref().map(|menu| menu.post.clone()),
+            editing: self.editing.clone(),
+            editor: self.edit_editor.clone(),
         };
         let list = TimelineList::new(chat.list.clone(), move |index, app| {
             render_row(
@@ -1713,6 +1820,10 @@ impl ChannelView {
                         }
                         None
                     }
+                    PostMenuItem::Edit => {
+                        self.start_edit(&post, ctx);
+                        None
+                    }
                     PostMenuItem::Delete => {
                         ctx.emit(ChannelEvent::ConfirmDelete {
                             post,
@@ -1726,6 +1837,175 @@ impl ChannelView {
                 }
             }
         }
+    }
+}
+
+impl ChannelView {
+    /// `↑` in the empty composer: edits my newest post in the chat, if I still may.
+    fn edit_last(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(me) = Session::as_ref(ctx)
+            .store()
+            .and_then(|store| Some(store.read().ok()?.me.clone()))
+        else {
+            return;
+        };
+        let posts = self.shared.rows.iter().filter_map(|row| match row {
+            RowData::Post(data) => Some((&*data.post, data.pending.is_some())),
+            _ => None,
+        });
+        if let Some(post) = timeline::latest_to_edit(posts, &me) {
+            self.start_edit(&post, ctx);
+        }
+    }
+
+    /// Opens the editor in place of a post's message, with the message (in Markdown) and
+    /// the cursor at its end, and scrolls to the post if it is off screen.
+    fn start_edit(&mut self, post: &PostId, ctx: &mut ViewContext<Self>) {
+        let Some(store) = Session::as_ref(ctx).store().cloned() else {
+            return;
+        };
+        let Ok(store) = store.read() else { return };
+        if !store.post_actions(post, now_ms()).edit {
+            return;
+        }
+        let Some(original) = store.posts.get(post).map(|known| known.message.clone()) else {
+            return;
+        };
+        let hint = match (
+            EnterPrefs::of(&store).send_on_ctrl_enter,
+            cfg!(target_os = "macos"),
+        ) {
+            (false, _) => "Enter to save · Esc to cancel",
+            (true, false) => "Ctrl+Enter to save · Esc to cancel",
+            (true, true) => "⌘+Enter to save · Esc to cancel",
+        };
+        drop(store);
+        self.menu = None;
+        self.edit_editor.update(ctx, |editor, ctx| {
+            editor.system_reset_buffer_text(&original, ctx);
+            editor.move_to_buffer_end(ctx);
+        });
+        self.editing = Some(Editing {
+            post: post.clone(),
+            original,
+            hint,
+            error: None,
+        });
+        if let Some(chat) = self
+            .channel
+            .as_ref()
+            .and_then(|channel| self.chats.get(channel))
+        {
+            let index = self
+                .shared
+                .rows
+                .iter()
+                .position(|row| matches!(row, RowData::Post(data) if data.post.id == *post));
+            let visible = chat.viewport.first..=chat.viewport.last;
+            if index.is_some_and(|index| !visible.contains(&index)) {
+                chat.list
+                    .scroll_to(timeline::RowKey::Post(post.clone()), SHOW_POST_OFFSET);
+            }
+        }
+        ctx.focus(&self.edit_editor);
+        ctx.notify();
+    }
+
+    fn on_edit_event(&mut self, event: &EditorEvent, ctx: &mut ViewContext<Self>) {
+        match event {
+            EditorEvent::Enter => self.save_edit(EnterKey::Plain, ctx),
+            EditorEvent::CtrlEnter | EditorEvent::CmdEnter => {
+                self.save_edit(EnterKey::CtrlOrCmd, ctx)
+            }
+            EditorEvent::Escape => self.stop_edit(ctx),
+            EditorEvent::Edited(origin) if origin.is_user() => {
+                let Some(editing) = &mut self.editing else {
+                    return;
+                };
+                let text = self.edit_editor.as_ref(ctx).buffer_text(ctx);
+                let Some(max) = Session::as_ref(ctx)
+                    .store()
+                    .and_then(|store| Some(composer::max_post_size(&*store.read().ok()?)))
+                else {
+                    return;
+                };
+                let error = composer::length_error(&text, max);
+                if error != editing.error {
+                    editing.error = error;
+                    ctx.notify();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Enter in the editor: a new line (inside a code block, or per the Enter preference),
+    /// or save. Empty text asks to delete the post instead; unchanged text only closes the
+    /// editor (as the webapp's `EditPost`).
+    fn save_edit(&mut self, key: EnterKey, ctx: &mut ViewContext<Self>) {
+        let Some(editing) = self.editing.clone() else {
+            return;
+        };
+        let editor = self.edit_editor.as_ref(ctx);
+        let text = editor.buffer_text(ctx);
+        let caret = editor.start_byte_index_of_first_selection(ctx).as_usize();
+        let Some(store) = Session::as_ref(ctx).store().cloned() else {
+            return;
+        };
+        let Ok(store) = store.read() else { return };
+        let prefs = EnterPrefs::of(&store);
+        let max = composer::max_post_size(&store);
+        let replies = store
+            .posts
+            .get(&editing.post)
+            .map_or(0, |post| thread_replies(&store, post));
+        drop(store);
+        let message = match composer::on_enter(&text, caret, key, prefs) {
+            OnEnter::NewLine => {
+                self.edit_editor
+                    .update(ctx, |editor, ctx| editor.user_insert("\n", ctx));
+                return;
+            }
+            OnEnter::Send(message) => message.trim_end().to_owned(),
+        };
+        if message.trim().is_empty() {
+            ctx.emit(ChannelEvent::ConfirmDelete {
+                post: editing.post,
+                replies,
+            });
+            return;
+        }
+        if message == editing.original.trim_end() {
+            self.stop_edit(ctx);
+            return;
+        }
+        if let Some(error) = composer::length_error(&message, max) {
+            if let Some(editing) = &mut self.editing {
+                editing.error = Some(error);
+            }
+            ctx.notify();
+            return;
+        }
+        Session::as_ref(ctx).send(Command::EditPost {
+            post: editing.post,
+            message,
+        });
+        self.stop_edit(ctx);
+    }
+
+    /// Closes the editor; the keyboard goes back to the composer if the editor had it.
+    fn stop_edit(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.editing.take().is_none() {
+            return;
+        }
+        let focused = self.edit_editor.is_focused(ctx);
+        self.edit_editor.update(ctx, |editor, ctx| {
+            editor.clear_buffer_and_reset_undo_stack(ctx)
+        });
+        if focused {
+            ctx.focus(&self.composer);
+        }
+        ctx.notify();
     }
 }
 

@@ -1067,6 +1067,12 @@ plus the chat palette `ChatColors` that comes with the active theme.
   hovered post's top right (React, Reply, More) and the post menu (More or right-click):
   Reply, Follow thread, Mark as unread, Save, Pin, Copy link, Copy text, Edit, Delete, as the
   webapp's dot menu offers them. Pinned and saved posts carry a small "Pinned · Saved" line.
+- Editing a post: an `ml_editor::EditorView` (the composer's options) takes the message's
+  place in its row, drawn as a `ChildView` inside the timeline's row (the visible rows are
+  laid out every frame, so it grows freely); Enter keys as in the composer, Esc cancels,
+  empty text asks to delete, unchanged text just closes. The patch response updates the store
+  (`Store::put_edited_post`, ignored when the server's `post_edited` already brought a newer
+  version).
 
 ### 10.5 Keyboard
 
@@ -1531,7 +1537,8 @@ everywhere).
     which also clears the undo stack. Server-synced drafts later.
   - ↑ in an empty composer edits the last own post: `propagate_and_no_op_vertical_navigation_keys:
     AtBoundary` delivers `Event::Navigate(Up)` on the first row; act on it when the editor
-    `is_empty`.
+    `is_empty`. The mode is `AtBoundary` only while the composer is empty (`Never` with text,
+    so ↑ keeps moving the cursor).
   - Max length: `MaxPostSize` from client config, as `max_buffer_len`.
   - Pasting files and images: `delegate_paste_handling` hands every paste to the composer,
     which uploads files (§14.2) and inserts text itself. Dropped files already reach the

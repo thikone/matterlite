@@ -251,3 +251,32 @@ fn authors_and_the_render_context() {
     assert_eq!(lookup.channel_id("dev"), Some(&"c".into()));
     assert_eq!(lookup.channel_id("ops"), None, "another team's channel");
 }
+
+#[test]
+fn up_edits_my_newest_post_that_can_be_interacted_with() {
+    let post = |id: &str, user: &str, extra: Value| -> Post {
+        let mut value = json!({"id": id, "user_id": user, "channel_id": "c"});
+        if let (Some(value), Some(extra)) = (value.as_object_mut(), extra.as_object()) {
+            value.extend(extra.clone());
+        }
+        serde_json::from_value(value).unwrap()
+    };
+    let posts = [
+        (post("old", ME, json!({})), false),
+        (post("mine", ME, json!({"edit_at": 5})), false),
+        (post("theirs", "bob", json!({})), false),
+        (
+            post("joined", ME, json!({"type": "system_join_channel"})),
+            false,
+        ),
+        (post("gone", ME, json!({"delete_at": 9})), false),
+        (post("me:123", ME, json!({})), true),
+    ];
+    let me = UserId::from(ME);
+    let latest = latest_to_edit(posts.iter().map(|(post, pending)| (post, *pending)), &me);
+    assert_eq!(latest, Some(PostId::from("mine")));
+    assert_eq!(
+        latest_to_edit(posts[2..].iter().map(|(p, b)| (p, *b)), &me),
+        None
+    );
+}
