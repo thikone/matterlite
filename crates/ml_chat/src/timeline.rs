@@ -33,6 +33,8 @@ pub enum Row {
         text: String,
     },
     Hole(HoleKind),
+    /// In a thread, between the root post and the replies: "3 replies".
+    ReplyCount(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +52,8 @@ pub enum HoleKind {
     Newer,
     /// Between two older stretches; the history backfill fills it.
     Gap,
+    /// A thread's replies (or its root) not loaded yet; `OpenThread` loads them.
+    Replies,
 }
 
 /// A row's identity across reloads: anchors the scroll position and keys the height cache.
@@ -62,6 +66,7 @@ pub enum RowKey {
     Activity(PostId),
     /// By the post right below it (`None`: at the bottom).
     Hole(Option<PostId>),
+    ReplyCount,
 }
 
 impl Row {
@@ -73,6 +78,7 @@ impl Row {
             Self::Post { post, .. } => RowKey::Post(post.id.clone()),
             Self::Activity { first, .. } => RowKey::Activity(first.clone()),
             Self::Hole(_) => RowKey::Hole(next.and_then(Row::post_id).cloned()),
+            Self::ReplyCount(_) => RowKey::ReplyCount,
         }
     }
 
@@ -199,6 +205,78 @@ pub fn latest_to_edit<'a>(
         .rev()
         .find(|(post, pending)| post.user_id == *me && interactable(post, *pending))
         .map(|(post, _)| post.id.clone())
+}
+
+/// The rows of a thread, oldest first (the webapp's RHS thread viewer): the root post, the
+/// reply count, then the replies with date separators, a reply right after another by the
+/// same author shown without its header. Without the thread loaded, a [`HoleKind::Replies`]
+/// row stands for what is missing.
+pub fn thread_rows(store: &Store, root: &PostId) -> Vec<Row> {
+    let Some(root_post) = store.posts.get(root) else {
+        return vec![Row::Hole(HoleKind::Replies)];
+    };
+    let zone = store
+        .users
+        .get(&store.me)
+        .map_or(Zone::Local, |me| Zone::of(me));
+    let pending = |post: &Post| {
+        store.pending.get(post.id.as_str()).map(|state| {
+            if state.failed {
+                Pending::Failed
+            } else {
+                Pending::Sending
+            }
+        })
+    };
+    let mut date = zone.date(root_post.create_at);
+    let mut rows = vec![
+        Row::Date(date),
+        Row::Post {
+            post: root_post.clone(),
+            consecutive: false,
+            pending: None,
+        },
+    ];
+    let Some(thread) = store.threads.get(root) else {
+        rows.push(Row::Hole(HoleKind::Replies));
+        return rows;
+    };
+    let replies: Vec<&Arc<Post>> = thread
+        .post_ids()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .filter_map(|id| store.posts.get(id))
+        .filter(|post| !post.is_deleted())
+        .collect();
+    if !replies.is_empty() {
+        rows.push(Row::ReplyCount(replies.len()));
+    }
+    let mut previous: Option<&Arc<Post>> = None;
+    for reply in replies {
+        let reply_date = zone.date(reply.create_at);
+        if reply_date != date {
+            rows.push(Row::Date(reply_date));
+            date = reply_date;
+            previous = None;
+        }
+        rows.push(Row::Post {
+            post: reply.clone(),
+            consecutive: previous.is_some_and(|previous| mm_store::consecutive(reply, previous)),
+            pending: pending(reply),
+        });
+        previous = Some(reply);
+    }
+    rows
+}
+
+/// "1 reply", "3 replies".
+pub fn replies_label(count: usize) -> String {
+    if count == 1 {
+        "1 reply".to_owned()
+    } else {
+        format!("{count} replies")
+    }
 }
 
 /// The rows of a channel, oldest first. `last_viewed_at` places the "New messages" line.

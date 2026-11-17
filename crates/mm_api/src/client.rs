@@ -825,6 +825,29 @@ impl Client {
         .await
     }
 
+    /// `PUT /users/{uid}/teams/{tid}/threads/{id}/read/{timestamp}`: I have read the thread up
+    /// to `timestamp` (CRT); the server answers with `thread_read_changed`.
+    pub async fn mark_thread_read(
+        &self,
+        user_id: &UserId,
+        team_id: &TeamId,
+        root_id: &PostId,
+        timestamp: i64,
+    ) -> Result<(), ApiError> {
+        let timestamp = timestamp.to_string();
+        self.empty(self.put(&[
+            "users",
+            user_id.as_str(),
+            "teams",
+            team_id.as_str(),
+            "threads",
+            root_id.as_str(),
+            "read",
+            &timestamp,
+        ]))
+        .await
+    }
+
     /// `GET /posts/{id}/thread`: the root and all replies.
     pub async fn post_thread(&self, root_id: &PostId) -> Result<PostList, ApiError> {
         self.json(self.get(&["posts", root_id.as_str(), "thread"]).query(&[

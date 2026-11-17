@@ -438,13 +438,18 @@ fn preferences_categories_and_threads() {
         event(
             "thread_updated",
             json!({"thread": json!({"id": "root1", "reply_count": 2, "unread_replies": 2,
-                "unread_mentions": 1}).to_string(),
+                "unread_mentions": 1, "last_reply_at": 300,
+                "post": {"id": "root1", "channel_id": "c1", "user_id": "bob", "create_at": 100,
+                         "reply_count": 0}}).to_string(),
                 "previous_unread_replies": 0, "previous_unread_mentions": 0}),
             json!({"team_id": "t1"}),
         ),
     );
     let counts = store.thread_counts[&TeamId::from("t1")];
     assert_eq!((counts.unread_threads, counts.mentions), (1, 1));
+    // The thread's copy of the root doesn't wipe its reply count.
+    let root = &store.posts[&PostId::from("root1")];
+    assert_eq!((root.reply_count, root.last_reply_at), (2, 300));
     apply(
         &mut store,
         event(
@@ -474,4 +479,26 @@ fn an_edit_response_older_than_the_event_is_ignored() {
     store.put_edited_post(&edited("second", 300));
     assert!(store.put_edited_post(&edited("first", 200)).is_empty());
     assert_eq!(store.posts[&PostId::from("root1")].message, "second");
+}
+
+#[test]
+fn the_threads_list_keeps_known_roots() {
+    let mut store = new_store("always_on");
+    let list: mm_model::ThreadList = serde_json::from_value(json!({
+        "total": 1, "total_unread_threads": 0, "total_unread_mentions": 0,
+        "threads": [{"id": "root1", "reply_count": 3, "last_reply_at": 400,
+                     "participants": [{"id": "bob"}],
+                     "post": {"id": "root1", "channel_id": "c1", "user_id": "bob",
+                              "create_at": 100, "reply_count": 0, "message": "root"}},
+                    {"id": "unknown", "reply_count": 1, "last_reply_at": 500,
+                     "post": {"id": "unknown", "channel_id": "c1", "user_id": "bob",
+                              "create_at": 200, "reply_count": 0}}]
+    }))
+    .unwrap();
+    store.set_threads(&"t1".into(), list);
+    let root = &store.posts[&PostId::from("root1")];
+    assert_eq!((root.reply_count, root.last_reply_at), (3, 400));
+    assert_eq!(root.participants.len(), 1);
+    // A root not known yet is stored with the thread's count.
+    assert_eq!(store.posts[&PostId::from("unknown")].reply_count, 1);
 }

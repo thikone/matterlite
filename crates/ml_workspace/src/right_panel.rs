@@ -2,7 +2,8 @@
 // Modelled on warp-terminal `app/src/workspace/view/right_panel.rs` @ 5bb7bcc6a (header with
 // close button, resizable from the left edge); the code is new.
 
-//! The right panel: reply threads and post edit history (MatterLite.md §10.2).
+//! The right panel: reply threads and post edit history (MatterLite.md §10.2). The app
+//! supplies the content, which draws its own header; without content a placeholder shows.
 
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::icons::Icon;
@@ -27,6 +28,7 @@ const MAX_WIDTH_RATIO: f32 = 0.6;
 pub struct RightPanel {
     close_mouse_state: MouseStateHandle,
     resizable_state: ResizableStateHandle,
+    content: Option<Box<dyn crate::ToolPane>>,
 }
 
 impl RightPanel {
@@ -35,7 +37,31 @@ impl RightPanel {
         Self {
             close_mouse_state: MouseStateHandle::default(),
             resizable_state: resizable_state_handle(DEFAULT_WIDTH),
+            content: None,
         }
+    }
+
+    pub fn set_content(
+        &mut self,
+        content: Option<Box<dyn crate::ToolPane>>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.content = content;
+        ctx.notify();
+    }
+
+    pub fn width(&self) -> f32 {
+        self.resizable_state
+            .lock()
+            .map_or(DEFAULT_WIDTH, |state| state.size())
+    }
+
+    /// A saved width (kept within the bounds when drawn).
+    pub fn set_width(&mut self, width: f32, ctx: &mut ViewContext<Self>) {
+        if let Ok(mut state) = self.resizable_state.lock() {
+            state.set_size(width.max(MIN_WIDTH));
+        }
+        ctx.notify();
     }
 }
 
@@ -99,15 +125,21 @@ impl View for RightPanel {
         .with_uniform_padding(12.)
         .finish();
 
-        let content = Flex::column()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_child(header)
-            .with_child(Shrinkable::new(1., Align::new(placeholder).top_left().finish()).finish())
-            .finish();
+        let content = match &self.content {
+            Some(content) => content.render(),
+            None => Flex::column()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_child(header)
+                .with_child(
+                    Shrinkable::new(1., Align::new(placeholder).top_left().finish()).finish(),
+                )
+                .finish(),
+        };
 
         Resizable::new(self.resizable_state.clone(), content)
             .with_dragbar_side(DragBarSide::Left)
             .on_resize(|ctx, _| ctx.notify())
+            .on_end_resizing(|ctx, _| ctx.dispatch_typed_action(WorkspaceAction::RightPanelResized))
             .with_bounds_callback(Box::new(|window_size| {
                 (
                     MIN_WIDTH,

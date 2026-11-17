@@ -1067,6 +1067,10 @@ plus the chat palette `ChatColors` that comes with the active theme.
   hovered post's top right (React, Reply, More) and the post menu (More or right-click):
   Reply, Follow thread, Mark as unread, Save, Pin, Copy link, Copy text, Edit, Delete, as the
   webapp's dot menu offers them. Pinned and saved posts carry a small "Pinned · Saved" line.
+- Threads: the right panel holds a second `ChannelView` (`ChatMode::Panel`) showing a
+  `ChatKey::Thread`: root, "N replies", replies, a composer that replies; Reply, the reply
+  count and "replied in a thread" open it; `Esc` or ✕ closes it; open thread and width are
+  saved per account.
 - Reactions: chips under the message (a click adds or removes mine, hovering names who
   reacted), and the emoji picker (`ml_chat::emoji_picker`) from React in the toolbar or the
   `+` chip: search, category tabs, a virtualized grid (`UniformList`), Recently Used from the

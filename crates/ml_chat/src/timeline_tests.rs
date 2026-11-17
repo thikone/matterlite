@@ -68,6 +68,7 @@ fn describe(rows: &[Row]) -> Vec<String> {
             } => format!("{}{}", post.id, if *consecutive { "+" } else { "" }),
             Row::Activity { text, .. } => format!("activity {text}"),
             Row::Hole(kind) => format!("hole {kind:?}"),
+            Row::ReplyCount(count) => replies_label(*count),
         })
         .collect()
 }
@@ -332,4 +333,62 @@ fn reaction_chips_group_by_emoji_in_order() {
     assert!(chips[1].tooltip.ends_with("(click to add)"));
     let read_only = reaction_chips(&store, &post, false, false);
     assert!(read_only[1].tooltip.ends_with(":tada:"));
+}
+
+#[test]
+fn thread_rows_show_the_root_the_count_and_the_replies() {
+    let mut store = store();
+    let root = PostId::from("root");
+    // Not loaded at all, then only the root.
+    assert_eq!(thread_rows(&store, &root), [Row::Hole(HoleKind::Replies)]);
+    let post = |id: &str, root: &str, user: &str, at: i64| {
+        json!({"id": id, "channel_id": "c", "root_id": root, "user_id": user, "create_at": at,
+               "message": id})
+    };
+    page(
+        &mut store,
+        vec![post("root", "", "bob", NOON)],
+        PageRequest::Newest,
+        "",
+        "",
+    );
+    let rows = thread_rows(&store, &root);
+    assert!(matches!(rows.last(), Some(Row::Hole(HoleKind::Replies))));
+
+    let list: mm_model::PostList = serde_json::from_value(json!({
+        "order": ["r3", "r2", "r1", "root"],
+        "posts": {
+            "root": post("root", "", "bob", NOON),
+            "r1": post("r1", "root", ME, NOON + MINUTE),
+            "r2": post("r2", "root", ME, NOON + 2 * MINUTE),
+            "r3": post("r3", "root", "bob", NOON + 24 * 60 * MINUTE),
+        },
+        "next_post_id": "", "prev_post_id": ""
+    }))
+    .unwrap();
+    store.add_thread(&root, &list);
+    let rows = thread_rows(&store, &root);
+    let summary: Vec<String> = rows
+        .iter()
+        .map(|row| match row {
+            Row::Date(date) => format!("date {date}"),
+            Row::Post {
+                post, consecutive, ..
+            } => format!("{}{}", post.id, if *consecutive { "+" } else { "" }),
+            Row::ReplyCount(count) => replies_label(*count),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            "date 2026-01-10",
+            "root",
+            "3 replies",
+            "r1",
+            "r2+",
+            "date 2026-01-11",
+            "r3",
+        ]
+    );
 }

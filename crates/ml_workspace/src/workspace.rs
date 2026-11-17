@@ -52,6 +52,8 @@ pub enum WorkspaceAction {
     ToggleToolPanel,
     ToggleRightPanel,
     CloseRightPanel,
+    /// The right panel's edge was dragged.
+    RightPanelResized,
     NewTab,
     ActivateTab(usize),
     /// 1-based, like the `Ctrl/Cmd+N` shortcut; 9 is always the last tab.
@@ -108,6 +110,10 @@ pub enum WorkspaceEvent {
     NewTab,
     /// The banner's link was clicked.
     BannerAction,
+    /// The right panel was closed from the workspace (Esc, its toggle).
+    RightPanelClosed,
+    /// The right panel has a new width ([`Workspace::right_panel_width`]).
+    RightPanelResized,
 }
 
 /// Registers the workspace keybindings (MatterLite.md §10.5).
@@ -302,6 +308,37 @@ impl Workspace {
     ) {
         self.content = content;
         ctx.notify();
+    }
+
+    /// The view shown in the right panel (it draws its own header).
+    pub fn set_right_panel(
+        &mut self,
+        content: Option<Box<dyn crate::ToolPane>>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.right_panel
+            .update(ctx, |panel, ctx| panel.set_content(content, ctx));
+    }
+
+    /// Opens or closes the right panel (the owner then moves the focus).
+    pub fn set_right_panel_open(&mut self, open: bool, ctx: &mut ViewContext<Self>) {
+        if self.right_panel_open != open {
+            self.right_panel_open = open;
+            ctx.notify();
+        }
+    }
+
+    pub fn is_right_panel_open(&self) -> bool {
+        self.right_panel_open
+    }
+
+    pub fn right_panel_width(&self, app: &AppContext) -> f32 {
+        self.right_panel.as_ref(app).width()
+    }
+
+    pub fn set_right_panel_width(&mut self, width: f32, ctx: &mut ViewContext<Self>) {
+        self.right_panel
+            .update(ctx, |panel, ctx| panel.set_width(width, ctx));
     }
 
     /// Moves the focus into the tab content (or onto the workspace without one).
@@ -618,11 +655,18 @@ impl TypedActionView for Workspace {
             WorkspaceAction::ToggleThemeChooser => self.toggle_theme_chooser(ctx),
             WorkspaceAction::ToggleRightPanel => {
                 self.right_panel_open = !self.right_panel_open;
+                if !self.right_panel_open {
+                    ctx.emit(WorkspaceEvent::RightPanelClosed);
+                }
                 ctx.notify();
             }
             WorkspaceAction::CloseRightPanel => {
                 self.right_panel_open = false;
+                ctx.emit(WorkspaceEvent::RightPanelClosed);
                 ctx.notify();
+            }
+            WorkspaceAction::RightPanelResized => {
+                ctx.emit(WorkspaceEvent::RightPanelResized);
             }
             WorkspaceAction::NewTab => ctx.emit(WorkspaceEvent::NewTab),
             WorkspaceAction::ActivateTab(index) => self.activate_tab(index, ctx),

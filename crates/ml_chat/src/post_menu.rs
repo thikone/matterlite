@@ -47,6 +47,11 @@ pub enum PostAction {
         up: bool,
     },
     ClosePicker,
+    /// Reply in the toolbar or the menu, or the reply count: open the post's thread (or, in
+    /// a thread, go to its composer).
+    Reply {
+        post: PostId,
+    },
     /// A click on a reaction chip: add or remove mine.
     ToggleReaction {
         post: PostId,
@@ -65,6 +70,7 @@ pub enum PickerAnchor {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PostMenuItem {
+    Reply,
     Follow,
     MarkUnread,
     Save,
@@ -233,6 +239,9 @@ impl PostMenu {
     pub fn items(&self) -> Vec<Vec<(PostMenuItem, &'static str)>> {
         let a = &self.actions;
         let mut first = Vec::new();
+        if a.reply {
+            first.push((PostMenuItem::Reply, "Reply"));
+        }
         if a.follow {
             let label = match (a.following, self.replies > 0) {
                 (true, true) => "Unfollow thread",
@@ -394,6 +403,7 @@ impl PostMenu {
 #[derive(Default)]
 pub struct ToolbarStates {
     react: MouseStateHandle,
+    reply: MouseStateHandle,
     more: MouseStateHandle,
 }
 
@@ -401,6 +411,8 @@ pub struct ToolbarStates {
 pub struct ToolbarState {
     /// React (the emoji picker is on and I may react).
     pub react: bool,
+    /// Reply (in a channel; a thread has its composer).
+    pub reply: bool,
     pub menu_open: bool,
     pub picker_open: bool,
 }
@@ -448,6 +460,20 @@ pub fn render_toolbar<A: Action + Clone>(
             .with_cursor(Cursor::PointingHand)
             .finish();
         row.add_child(SavePosition::new(react, &host.react_position()).finish());
+    }
+    if toolbar.reply {
+        let post = post.clone();
+        let wrap = host.wrap;
+        let reply =
+            icon_button_with_color(appearance, Icon::Reply, false, states.reply.clone(), color)
+                .with_tooltip(tooltip("Reply"))
+                .build()
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(wrap(PostAction::Reply { post: post.clone() }))
+                })
+                .with_cursor(Cursor::PointingHand)
+                .finish();
+        row.add_child(reply);
     }
     let post = post.clone();
     let more = icon_button_with_color(

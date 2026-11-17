@@ -57,6 +57,8 @@ enum Blocked {
 pub struct ComposerView {
     editor: ViewHandle<EditorView>,
     channel: Option<ChannelId>,
+    /// The thread replied to; empty for the channel's composer.
+    root: PostId,
     blocked: Option<Blocked>,
     /// The text is too long to send.
     error: Option<String>,
@@ -84,6 +86,7 @@ impl ComposerView {
         Self {
             editor,
             channel: None,
+            root: PostId::default(),
             blocked: None,
             error: None,
             throttle: TypingThrottle::default(),
@@ -92,14 +95,21 @@ impl ComposerView {
         }
     }
 
-    /// Shows the composer of a chat: its draft, its placeholder, and whether it takes posts.
-    pub fn set_channel(&mut self, channel: Option<ChannelId>, ctx: &mut ViewContext<Self>) {
-        if channel == self.channel {
+    /// Shows the composer of a chat (`root` empty) or of a thread in it: its draft, its
+    /// placeholder, and whether it takes posts.
+    pub fn set_target(
+        &mut self,
+        channel: Option<ChannelId>,
+        root: PostId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if channel == self.channel && root == self.root {
             self.update_state(ctx);
             return;
         }
         self.save_draft(ctx);
         self.channel = channel;
+        self.root = root;
         self.throttle.reset();
         self.error = None;
         let draft = self
@@ -108,7 +118,7 @@ impl ComposerView {
             .and_then(|channel| {
                 Session::as_ref(ctx)
                     .active()?
-                    .draft(channel, &PostId::default())
+                    .draft(channel, &self.root)
                     .map(str::to_owned)
             })
             .unwrap_or_default();
@@ -151,6 +161,7 @@ impl ComposerView {
             Some(Blocked::ReadOnly) => {
                 "This channel is read-only. Only members with permission can post here.".to_owned()
             }
+            _ if !self.root.is_empty() => "Reply to thread".to_owned(),
             _ => format!("Write to {name}"),
         };
         let state = if blocked.is_some() {
@@ -228,7 +239,7 @@ impl ComposerView {
         if typing && !text.is_empty() && self.throttle.due(Instant::now(), interval) {
             Session::as_ref(ctx).send(Command::Typing {
                 channel,
-                root: PostId::default(),
+                root: self.root.clone(),
             });
         }
         // The draft is saved once the edits pause.
@@ -258,9 +269,8 @@ impl ComposerView {
         if text.trim().is_empty() {
             text.clear();
         }
-        Session::handle(ctx).update(ctx, |session, _| {
-            session.set_draft(&channel, &PostId::default(), text)
-        });
+        let root = self.root.clone();
+        Session::handle(ctx).update(ctx, |session, _| session.set_draft(&channel, &root, text));
     }
 
     fn on_enter(&mut self, key: EnterKey, ctx: &mut ViewContext<Self>) {
@@ -299,7 +309,7 @@ impl ComposerView {
         }
         Session::as_ref(ctx).send(Command::SendPost {
             channel: channel.clone(),
-            root: PostId::default(),
+            root: self.root.clone(),
             message,
         });
         self.editor.update(ctx, |editor, ctx| {
@@ -308,8 +318,9 @@ impl ComposerView {
         self.sync_up_key(ctx);
         self.unsaved = false;
         self.edits += 1;
+        let root = self.root.clone();
         Session::handle(ctx).update(ctx, |session, _| {
-            session.set_draft(&channel, &PostId::default(), String::new())
+            session.set_draft(&channel, &root, String::new())
         });
         self.throttle.reset();
         self.error = None;

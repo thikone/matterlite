@@ -31,7 +31,13 @@ fn entries_follow_the_actions_in_the_webapp_order() {
     assert_eq!(
         labels(all, 3),
         [
-            vec!["Follow thread", "Mark as unread", "Save", "Pin to channel"],
+            vec![
+                "Reply",
+                "Follow thread",
+                "Mark as unread",
+                "Save",
+                "Pin to channel"
+            ],
             vec!["Copy link", "Copy text"],
             vec!["Edit", "Delete"],
         ]
@@ -45,6 +51,7 @@ fn entries_follow_the_actions_in_the_webapp_order() {
     assert_eq!(
         labels(toggled, 0)[0],
         [
+            "Reply",
             "Unfollow message",
             "Mark as unread",
             "Remove from saved",

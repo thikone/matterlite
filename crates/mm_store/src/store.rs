@@ -436,9 +436,8 @@ impl Store {
         );
         let mut changed = Vec::new();
         for mut thread in list.threads {
-            if let Some(post) = thread.post.take() {
-                changed.push(post.id.clone());
-                self.posts.insert(post.id.clone(), Arc::new(post));
+            if let Some(root) = self.put_thread_root(&mut thread) {
+                changed.push(root);
             }
             self.thread_states.insert(thread.id.clone(), thread);
         }
@@ -446,6 +445,30 @@ impl Store {
             StoreDelta::PostsChanged(changed),
             StoreDelta::ThreadCountsChanged(team.clone()),
         ]
+    }
+
+    /// Takes a thread's copy of its root post (from the threads list or `thread_updated`).
+    /// That copy has no reply count (the thread carries it) and may lack metadata, so a root
+    /// already known only takes the thread's reply count, last reply and participants.
+    pub(crate) fn put_thread_root(&mut self, thread: &mut ThreadResponse) -> Option<PostId> {
+        let mut post = thread.post.take()?;
+        match self.posts.get_mut(&post.id) {
+            Some(known) => {
+                let known = Arc::make_mut(known);
+                known.reply_count = thread.reply_count;
+                known.last_reply_at = thread.last_reply_at;
+                if !thread.participants.is_empty() {
+                    known.participants = thread.participants.clone();
+                }
+            }
+            None => {
+                post.reply_count = thread.reply_count;
+                post.last_reply_at = thread.last_reply_at;
+                post.participants = thread.participants.clone();
+                self.posts.insert(post.id.clone(), Arc::new(post));
+            }
+        }
+        Some(thread.id.clone())
     }
 
     // ---- derived views ----

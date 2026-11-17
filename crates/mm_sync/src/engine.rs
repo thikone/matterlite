@@ -932,6 +932,18 @@ impl Engine {
             Command::LoadOlder(channel) => self.load_older(channel),
             Command::LoadNewer(channel) => self.load_newer(channel),
             Command::OpenThread(root) => self.enqueue(Priority::Interactive, Job::Thread(root)),
+            Command::MarkThreadRead(root) => {
+                if let Some((me, team, root)) = self.thread_team(&root) {
+                    self.limiter.acquire().await;
+                    if let Err(error) = self
+                        .client
+                        .mark_thread_read(&me, &team, &root, now_ms())
+                        .await
+                    {
+                        log::warn!("marking thread {root} read: {error}");
+                    }
+                }
+            }
             Command::PauseSync => {
                 self.sync_paused = true;
                 self.emit_sync_status(true).await;

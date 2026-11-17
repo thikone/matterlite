@@ -301,6 +301,7 @@ async fn post_actions_use_the_webapp_routes() {
         ("DELETE", "/api/v4/users/u1/teams/t1/threads/p1/following"),
         ("POST", "/api/v4/users/u1/teams/t1/threads/p1/set_unread/p2"),
         ("POST", "/api/v4/users/u1/preferences/delete"),
+        ("PUT", "/api/v4/users/u1/teams/t1/threads/p1/read/1234"),
     ] {
         Mock::given(method(verb))
             .and(path(route))
@@ -343,6 +344,10 @@ async fn post_actions_use_the_webapp_routes() {
         .await
         .unwrap();
     client.delete_preferences(&user, &[]).await.unwrap();
+    client
+        .mark_thread_read(&user, &team, &post, 1234)
+        .await
+        .unwrap();
     client.set_post_unread(&user, &post, true).await.unwrap();
     assert_eq!(
         client.patch_post(&post, "fixed").await.unwrap().message,

@@ -156,6 +156,8 @@ pub enum Command {
     LoadNewer(ChannelId),
     /// Loads a whole thread.
     OpenThread(PostId),
+    /// Marks a followed thread read now (CRT), as the webapp does while it is on screen.
+    MarkThreadRead(PostId),
     /// Pins or unpins a post: shown at once, undone if the server refuses.
     PinPost {
         post: PostId,

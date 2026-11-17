@@ -171,9 +171,8 @@ impl Store {
                     &mut deltas,
                 );
                 let mut thread = thread.clone();
-                if let Some(post) = thread.post.take() {
-                    deltas.push(StoreDelta::PostsChanged(vec![post.id.clone()]));
-                    self.posts.insert(post.id.clone(), Arc::new(post));
+                if let Some(root) = self.put_thread_root(&mut thread) {
+                    deltas.push(StoreDelta::PostsChanged(vec![root]));
                 }
                 deltas.push(StoreDelta::ThreadChanged(thread.id.clone()));
                 self.thread_states.insert(thread.id.clone(), thread);

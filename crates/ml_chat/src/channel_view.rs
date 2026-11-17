@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! A chat tab's content (MatterLite.md §10.2, §10.4): the channel header and the timeline,
+//! A chat's content (MatterLite.md §10.2, §10.4): a channel in a tab, or a reply thread in
+//! the right panel (the root post, its replies and a composer that replies), with the same
+//! rows and post actions. For a channel: the channel header and the timeline,
 //! anchored at the bottom, with date separators, the "New messages" line, combined
 //! membership messages, posts with avatars, holes that load older or newer posts when they
 //! come near, pending and failed posts with Retry and Delete, and "Jump to newest". A post
@@ -58,6 +60,8 @@ use crate::history_pane::ChatFilter;
 use crate::message::{
     CustomEmoji, MessageRenderer, OnClick, Palette, Target, emoji_image, fixed_width,
 };
+use ml_workspace::icon_button_with_color;
+
 use crate::post_menu::{
     PickerAnchor, PostAction, PostMenu, PostMenuHost, PostMenuItem, ToolbarState, ToolbarStates,
     render_toolbar,
@@ -84,11 +88,21 @@ const SHOW_POST_OFFSET: f32 = 120.;
 const FLASH: Duration = Duration::from_secs(3);
 /// The editor of a post being edited grows with its text up to this height, then scrolls.
 const MAX_EDIT_HEIGHT: f32 = 320.;
-/// The posts of the chat, for the post toolbar and menu.
-const POSTS: PostMenuHost<ChannelAction> = PostMenuHost {
-    prefix: "ml_chat:channel",
-    wrap: ChannelAction::Post,
-};
+
+/// Where the view is: a chat tab, or the right panel (a thread, with a close button; Esc
+/// closes it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChatMode {
+    Tab,
+    Panel,
+}
+
+/// What a chat view shows: a channel or a thread (by its root post).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ChatKey {
+    Channel(ChannelId),
+    Thread(PostId),
+}
 const SCROLLBAR: warpui::elements::ScrollbarWidth = warpui::elements::ScrollbarWidth::Auto;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -108,6 +122,10 @@ pub enum ChannelAction {
     PageDown,
     /// The post toolbar and menu.
     Post(PostAction),
+    /// The thread header's Follow/Unfollow.
+    ToggleFollow,
+    /// The right panel's close button.
+    Close,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,6 +138,10 @@ pub enum ChannelEvent {
     ConfirmDelete { post: PostId, replies: i64 },
     /// A new emoji on a post with `UniqueEmojiReactionLimitPerPost` distinct ones already.
     ReactionLimit,
+    /// Reply on a post of a channel: show its thread (in the right panel).
+    OpenThread(PostId),
+    /// The right panel's thread view closes (its close button or Esc).
+    Close,
 }
 
 pub(crate) fn init(app: &mut AppContext) {
@@ -157,6 +179,7 @@ enum RowData {
     Post(Box<PostData>),
     Activity { text: String, time: String },
     Hole(HoleKind),
+    ReplyCount(usize),
 }
 
 struct PostData {
@@ -193,6 +216,8 @@ struct Shared {
     toolbar: Rc<ToolbarStates>,
     /// Hover states of the reaction chips, by post and emoji (`+` for the add chip).
     chips: Rc<RefCell<HashMap<(PostId, String), MouseStateHandle>>>,
+    /// The saved positions and action wrapper of this view's post toolbar and menu.
+    posts: PostMenuHost<ChannelAction>,
 }
 
 /// What rows draw differently from one frame to the next.
@@ -202,6 +227,8 @@ struct RowState {
     /// The post whose menu or emoji picker is open: it keeps its toolbar.
     menu: Option<PostId>,
     picker: Option<PostId>,
+    /// A thread is shown: posts have no Reply button (the composer replies).
+    thread: bool,
     /// The post being edited, and the editor that takes its message's place.
     editing: Option<Editing>,
     editor: ViewHandle<EditorView>,
@@ -220,8 +247,18 @@ struct Editing {
 }
 
 pub struct ChannelView {
+    mode: ChatMode,
+    posts: PostMenuHost<ChannelAction>,
+    /// What is shown, and its channel (a thread's, once its root post is known).
+    key: Option<ChatKey>,
     channel: Option<ChannelId>,
-    chats: HashMap<ChannelId, Chat>,
+    chats: HashMap<ChatKey, Chat>,
+    /// A thread: whether I follow it (CRT), for the header's button.
+    following: Option<bool>,
+    /// The thread last marked read, and its last reply then.
+    thread_read: Option<(PostId, i64)>,
+    follow_state: MouseStateHandle,
+    close_state: MouseStateHandle,
     shared: Rc<Shared>,
     /// The channel's name, icon and header line, and its member count.
     title: String,
@@ -262,7 +299,24 @@ pub struct ChannelView {
 }
 
 impl ChannelView {
+    /// The view of the chat tabs.
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
+        Self::with_mode(ChatMode::Tab, ctx)
+    }
+
+    /// The thread view of the right panel.
+    pub fn new_panel(ctx: &mut ViewContext<Self>) -> Self {
+        Self::with_mode(ChatMode::Panel, ctx)
+    }
+
+    fn with_mode(mode: ChatMode, ctx: &mut ViewContext<Self>) -> Self {
+        let posts = PostMenuHost {
+            prefix: match mode {
+                ChatMode::Tab => "ml_chat:channel",
+                ChatMode::Panel => "ml_chat:thread",
+            },
+            wrap: ChannelAction::Post,
+        };
         ctx.subscribe_to_model(&Appearance::handle(ctx), |me, _, _, ctx| {
             me.theme_generation += 1;
             for chat in me.chats.values() {
@@ -287,10 +341,11 @@ impl ChannelView {
                 last_viewed_at,
             } => {
                 log::debug!("channel opened: {channel} last viewed {last_viewed_at}");
-                if let Some(chat) = me.chats.get_mut(channel) {
+                let key = ChatKey::Channel(channel.clone());
+                if let Some(chat) = me.chats.get_mut(&key) {
                     chat.last_viewed_at = Some(*last_viewed_at);
                     chat.jump_to_new = true;
-                    if me.channel.as_ref() == Some(channel) {
+                    if me.key.as_ref() == Some(&key) {
                         me.refresh(ctx);
                     }
                 }
@@ -306,11 +361,7 @@ impl ChannelView {
         ctx.subscribe_to_view(&composer, |me, _, event, ctx| match event {
             ComposerEvent::Sent => {
                 // My post shows at the bottom, as in the webapp.
-                if let Some(chat) = me
-                    .channel
-                    .as_ref()
-                    .and_then(|channel| me.chats.get(channel))
-                {
+                if let Some(chat) = me.chat() {
                     chat.list.scroll_to_bottom();
                 }
                 ctx.notify();
@@ -340,8 +391,15 @@ impl ChannelView {
         let hover = Rc::new(RefCell::new(HashMap::new()));
         let toolbar = Rc::new(ToolbarStates::default());
         Self {
+            mode,
+            posts,
+            key: None,
             channel: None,
             chats: HashMap::new(),
+            following: None,
+            thread_read: None,
+            follow_state: MouseStateHandle::default(),
+            close_state: MouseStateHandle::default(),
             shared: Rc::new(Shared {
                 rows: Vec::new(),
                 lookup: lookup.clone(),
@@ -350,6 +408,7 @@ impl ChannelView {
                 hover: hover.clone(),
                 toolbar: toolbar.clone(),
                 chips: chips.clone(),
+                posts,
             }),
             title: String::new(),
             icon: None,
@@ -393,7 +452,28 @@ impl ChannelView {
     fn active_filter(&self) -> Option<&ChatFilter> {
         self.filter
             .as_ref()
-            .filter(|filter| Some(&filter.channel) == self.channel.as_ref())
+            .filter(|filter| self.key.as_ref() == Some(&ChatKey::Channel(filter.channel.clone())))
+    }
+
+    /// The chat on screen.
+    fn chat(&self) -> Option<&Chat> {
+        self.key.as_ref().and_then(|key| self.chats.get(key))
+    }
+
+    /// The thread on screen.
+    fn root(&self) -> Option<&PostId> {
+        match &self.key {
+            Some(ChatKey::Thread(root)) => Some(root),
+            _ => None,
+        }
+    }
+
+    /// The composer posts to the chat, or replies to the thread.
+    fn update_composer(&mut self, ctx: &mut ViewContext<Self>) {
+        let channel = self.channel.clone();
+        let root = self.root().cloned().unwrap_or_default();
+        self.composer
+            .update(ctx, |composer, ctx| composer.set_target(channel, root, ctx));
     }
 
     /// Scrolls the open chat to a post and highlights it for a moment (the webapp's permalink
@@ -408,11 +488,7 @@ impl ChannelView {
         if !found {
             return false;
         }
-        let Some(chat) = self
-            .channel
-            .clone()
-            .and_then(|channel| self.chats.get_mut(&channel))
-        else {
+        let Some(chat) = self.key.clone().and_then(|key| self.chats.get_mut(&key)) else {
             return false;
         };
         chat.list.scroll_to(key, SHOW_POST_OFFSET);
@@ -436,60 +512,104 @@ impl ChannelView {
 
     /// Shows a chat (the active tab's), or nothing.
     pub fn set_channel(&mut self, channel: Option<ChannelId>, ctx: &mut ViewContext<Self>) {
-        if channel == self.channel {
+        self.set_key(channel.map(ChatKey::Channel), ctx);
+    }
+
+    /// Shows a thread (the right panel's), or nothing.
+    pub fn set_thread(&mut self, root: Option<PostId>, ctx: &mut ViewContext<Self>) {
+        self.set_key(root.map(ChatKey::Thread), ctx);
+    }
+
+    /// The thread shown, if any.
+    pub fn thread(&self) -> Option<&PostId> {
+        self.root()
+    }
+
+    fn set_key(&mut self, key: Option<ChatKey>, ctx: &mut ViewContext<Self>) {
+        if key == self.key {
             return;
         }
-        if let Some(channel) = &channel
-            && !self.chats.contains_key(channel)
+        if let Some(key) = &key
+            && !self.chats.contains_key(key)
         {
             let (list, viewports) = TimelineState::new();
-            let id = channel.clone();
+            let id = key.clone();
             ctx.spawn_stream_local(
                 viewports,
                 move |me, viewport, ctx| me.on_viewport(&id, viewport, ctx),
                 |_, _| {},
             );
             self.chats.insert(
-                channel.clone(),
+                key.clone(),
                 Chat {
                     list,
                     last_viewed_at: None,
-                    jump_to_new: true,
+                    // A thread opens at its newest reply.
+                    jump_to_new: matches!(key, ChatKey::Channel(_)),
                     viewport: Viewport::default(),
                     loading_older: None,
                     loading_newer: None,
                 },
             );
         }
-        self.channel = channel.clone();
+        if self.mode == ChatMode::Panel {
+            // The panel shows one thread at a time.
+            self.chats.retain(|known, _| Some(known) == key.as_ref());
+        }
+        self.channel = match &key {
+            Some(ChatKey::Channel(channel)) => Some(channel.clone()),
+            Some(ChatKey::Thread(root)) => Session::as_ref(ctx)
+                .store()
+                .and_then(|store| Some(store.read().ok()?.posts.get(root)?.channel_id.clone())),
+            None => None,
+        };
+        if let Some(ChatKey::Thread(root)) = &key {
+            Session::as_ref(ctx).send(Command::OpenThread(root.clone()));
+        }
+        self.key = key;
         self.editing = None;
         self.menu = None;
         self.picking = None;
+        self.following = None;
+        self.thread_read = None;
         self.lookup_dirty = true;
-        self.composer
-            .update(ctx, |composer, ctx| composer.set_channel(channel, ctx));
+        self.update_composer(ctx);
         self.refresh(ctx);
     }
 
     /// Forgets the chats whose tabs closed.
     pub fn retain(&mut self, open: &[ChannelId]) {
-        self.chats.retain(|channel, _| open.contains(channel));
+        self.chats.retain(|key, _| match key {
+            ChatKey::Channel(channel) => open.contains(channel),
+            ChatKey::Thread(_) => true,
+        });
     }
 
     fn on_changes(&mut self, deltas: &[StoreDelta], ctx: &mut ViewContext<Self>) {
-        let Some(channel) = self.channel.clone() else {
+        let Some(key) = self.key.clone() else {
             return;
         };
+        // The channel's own timeline and member (a thread's channel matters for its name).
+        let channel = match &key {
+            ChatKey::Channel(channel) => channel.clone(),
+            ChatKey::Thread(_) => self.channel.clone().unwrap_or_default(),
+        };
+        let is_channel = matches!(key, ChatKey::Channel(_));
         let mut relevant = false;
         for delta in deltas {
             match delta {
                 StoreDelta::TimelineChanged(changed) => {
-                    if *changed == channel {
+                    if *changed == channel && is_channel {
                         relevant = true;
-                        if let Some(chat) = self.chats.get_mut(&channel) {
+                        if let Some(chat) = self.chats.get_mut(&key) {
                             chat.loading_older = None;
                             chat.loading_newer = None;
                         }
+                    }
+                }
+                StoreDelta::ThreadChanged(root) => {
+                    if key == ChatKey::Thread(root.clone()) {
+                        relevant = true;
                     }
                 }
                 StoreDelta::PostsChanged(_)
@@ -499,7 +619,7 @@ impl ChannelView {
                     self.composer
                         .update(ctx, |composer, ctx| composer.update_state(ctx));
                 }
-                StoreDelta::MemberChanged(changed) if *changed == channel => {
+                StoreDelta::MemberChanged(changed) if *changed == channel && is_channel => {
                     relevant = true;
                     self.lookup_dirty = true;
                     // Marked unread by hand (also elsewhere): the "New messages" line moves to
@@ -514,7 +634,7 @@ impl ChannelView {
                             .map(|member| member.last_viewed_at)
                     });
                     if let Some(last_viewed) = last_viewed
-                        && let Some(chat) = self.chats.get_mut(&channel)
+                        && let Some(chat) = self.chats.get_mut(&key)
                     {
                         chat.last_viewed_at = Some(last_viewed);
                     }
@@ -554,20 +674,15 @@ impl ChannelView {
         self.refresh(ctx);
     }
 
-    fn on_viewport(
-        &mut self,
-        channel: &ChannelId,
-        viewport: Viewport,
-        ctx: &mut ViewContext<Self>,
-    ) {
+    fn on_viewport(&mut self, key: &ChatKey, viewport: Viewport, ctx: &mut ViewContext<Self>) {
         let at_bottom_changed = self
             .chats
-            .get(channel)
+            .get(key)
             .is_some_and(|chat| chat.viewport.at_bottom != viewport.at_bottom);
-        if let Some(chat) = self.chats.get_mut(channel) {
+        if let Some(chat) = self.chats.get_mut(key) {
             chat.viewport = viewport;
         }
-        if self.channel.as_ref() == Some(channel) {
+        if self.key.as_ref() == Some(key) {
             self.load_if_near_an_end(ctx);
             if at_bottom_changed {
                 ctx.notify();
@@ -577,11 +692,11 @@ impl ChannelView {
 
     /// Asks for the next page when a loadable hole is within a few rows of the screen.
     fn load_if_near_an_end(&mut self, ctx: &mut ViewContext<Self>) {
-        let Some(channel) = self.channel.clone() else {
+        let Some(ChatKey::Channel(channel)) = self.key.clone() else {
             return;
         };
         let rows = &self.shared.rows;
-        let Some(chat) = self.chats.get_mut(&channel) else {
+        let Some(chat) = self.chats.get_mut(&ChatKey::Channel(channel.clone())) else {
             return;
         };
         if rows.is_empty() || chat.viewport.rows != rows.len() {
@@ -608,7 +723,7 @@ impl ChannelView {
 
     /// Rebuilds the rows of the chat on screen from the store.
     fn refresh(&mut self, ctx: &mut ViewContext<Self>) {
-        let Some(channel) = self.channel.clone() else {
+        let Some(key) = self.key.clone() else {
             ctx.notify();
             return;
         };
@@ -618,31 +733,64 @@ impl ChannelView {
         let Ok(store) = store.read() else {
             return;
         };
-        let team = channel_team(&store, &channel);
-        if self.lookup_dirty {
-            self.lookup = Rc::new(ChatLookup::new(&store, &channel, team.as_ref()));
-            *self.docs.borrow_mut() = Docs::default();
-            self.lookup_dirty = false;
+        // A thread's channel is known once its root post is.
+        let channel = match &key {
+            ChatKey::Channel(channel) => Some(channel.clone()),
+            ChatKey::Thread(root) => store.posts.get(root).map(|post| post.channel_id.clone()),
+        };
+        let channel_changed = channel != self.channel;
+        if channel_changed {
+            self.channel = channel.clone();
+            self.lookup_dirty = true;
         }
-        self.title = store
-            .channel_name(&channel)
-            .unwrap_or_else(|| channel.to_string());
-        self.icon = Some(icon_kind(&store, &channel));
-        // The header as one line of plain text (Markdown removed).
-        self.header = store
-            .channels
-            .get(&channel)
-            .map(|channel| mm_render::render(&channel.header, &self.lookup.context()).plain_text())
-            .unwrap_or_default();
-        self.members = store
-            .channel_stats
-            .get(&channel)
-            .map(|stats| stats.member_count);
+        if let Some(channel) = &channel {
+            let team = channel_team(&store, channel);
+            if self.lookup_dirty {
+                self.lookup = Rc::new(ChatLookup::new(&store, channel, team.as_ref()));
+                *self.docs.borrow_mut() = Docs::default();
+                self.lookup_dirty = false;
+            }
+            self.title = store
+                .channel_name(channel)
+                .unwrap_or_else(|| channel.to_string());
+            self.icon = Some(icon_kind(&store, channel));
+            // The header as one line of plain text (Markdown removed).
+            self.header = store
+                .channels
+                .get(channel)
+                .map(|channel| {
+                    mm_render::render(&channel.header, &self.lookup.context()).plain_text()
+                })
+                .unwrap_or_default();
+            self.members = store
+                .channel_stats
+                .get(channel)
+                .map(|stats| stats.member_count);
+        }
+        // A thread: Follow in the header, and marking it read while it is on screen (CRT,
+        // `markThreadAsRead` when the thread has unread replies).
+        let mut mark_read = None;
+        if let ChatKey::Thread(root) = &key {
+            let actions = store.post_actions(root, now_ms());
+            self.following = actions.follow.then_some(actions.following);
+            if store.crt_enabled()
+                && let Some(state) = store.thread_states.get(root)
+                && (state.unread_replies > 0 || state.unread_mentions > 0)
+                && self.thread_read != Some((root.clone(), state.last_reply_at))
+            {
+                self.thread_read = Some((root.clone(), state.last_reply_at));
+                mark_read = Some(root.clone());
+            }
+        }
 
-        let Some(chat) = self.chats.get(&channel) else {
+        let Some(chat) = self.chats.get(&key) else {
             return;
         };
-        let mut rows = timeline::rows(&store, &channel, chat.last_viewed_at);
+        let mut rows = match &key {
+            ChatKey::Channel(channel) => timeline::rows(&store, channel, chat.last_viewed_at),
+            ChatKey::Thread(root) => timeline::thread_rows(&store, root),
+        };
+        let in_thread = matches!(key, ChatKey::Thread(_));
         if let Some(filter) = self.active_filter() {
             rows = filtered(rows, &filter.ids);
         }
@@ -660,7 +808,10 @@ impl ChannelView {
             self.theme_generation.hash(&mut hasher);
             let row_data = match row {
                 Row::Start => {
-                    let (title, subtitle) = start_text(&store, &channel, &self.title);
+                    let (title, subtitle) = channel
+                        .as_ref()
+                        .map(|channel| start_text(&store, channel, &self.title))
+                        .unwrap_or_default();
                     title.hash(&mut hasher);
                     subtitle.hash(&mut hasher);
                     RowData::Start { title, subtitle }
@@ -668,6 +819,10 @@ impl ChannelView {
                 Row::Date(date) => RowData::Date(timeline::date_label(*date, today)),
                 Row::NewMessages => RowData::NewMessages,
                 Row::Hole(kind) => RowData::Hole(*kind),
+                Row::ReplyCount(count) => {
+                    count.hash(&mut hasher);
+                    RowData::ReplyCount(*count)
+                }
                 Row::Activity {
                     text, create_at, ..
                 } => {
@@ -728,12 +883,12 @@ impl ChannelView {
                                     .collect()
                             })
                             .unwrap_or_default(),
-                        replies: if crt && post.is_root() {
+                        replies: if crt && post.is_root() && !in_thread {
                             post.reply_count
                         } else {
                             0
                         },
-                        is_reply: !crt && !post.is_root(),
+                        is_reply: !crt && !post.is_root() && !in_thread,
                         actions: store.post_actions(&post.id, now),
                         post: post.clone(),
                         consecutive: *consecutive,
@@ -762,8 +917,14 @@ impl ChannelView {
         drop(store);
         self.request_images(wanted, ctx);
         self.custom_emoji = Rc::new(custom_emoji);
+        if channel_changed {
+            self.update_composer(ctx);
+        }
+        if let Some(root) = mark_read {
+            Session::as_ref(ctx).send(Command::MarkThreadRead(root));
+        }
 
-        let chat = self.chats.get_mut(&channel).expect("chat");
+        let chat = self.chats.get_mut(&key).expect("chat");
         chat.list.set_rows(keys);
         if chat.jump_to_new {
             let has_line = data.iter().any(|row| matches!(row, RowData::NewMessages));
@@ -804,6 +965,7 @@ impl ChannelView {
             hover: self.hover.clone(),
             toolbar: self.toolbar.clone(),
             chips: self.chips.clone(),
+            posts: self.posts,
         });
         self.load_if_near_an_end(ctx);
         ctx.notify();
@@ -826,6 +988,9 @@ impl ChannelView {
     }
 
     fn render_header(&self, chat_colors: &ChatColors, appearance: &Appearance) -> Box<dyn Element> {
+        if self.root().is_some() {
+            return self.render_thread_header(appearance);
+        }
         let theme = appearance.theme();
         let font = appearance.ui_font_family();
         let size = appearance.ui_font_size();
@@ -880,6 +1045,99 @@ impl ChannelView {
 }
 
 impl ChannelView {
+    /// A thread's header (the webapp's RHS header): "Thread", the channel's name, Follow or
+    /// Following (CRT), and in the right panel a close button.
+    fn render_thread_header(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let font = appearance.ui_font_family();
+        let size = appearance.ui_font_size();
+        let text = theme.main_text_color(theme.background()).into_solid();
+        let muted = theme.sub_text_color(theme.background()).into_solid();
+        let link = theme.chat().link;
+        let mut row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(8.)
+            .with_child(
+                Text::new_inline("Thread", font, size + 2.)
+                    .with_color(text)
+                    .with_style(Properties::default().weight(Weight::Bold))
+                    .finish(),
+            )
+            .with_child(
+                Expanded::new(
+                    1.,
+                    Text::new_inline(self.title.clone(), font, size)
+                        .with_color(muted)
+                        .with_clip(ClipConfig::ellipsis())
+                        .finish(),
+                )
+                .finish(),
+            );
+        if let Some(following) = self.following {
+            let label = if following { "Following" } else { "Follow" };
+            row.add_child(
+                Hoverable::new(self.follow_state.clone(), move |state| {
+                    let mut chip = Container::new(
+                        Text::new_inline(label, font, size - 1.)
+                            .with_color(link)
+                            .with_style(Properties::default().weight(Weight::Bold))
+                            .finish(),
+                    )
+                    .with_horizontal_padding(10.)
+                    .with_vertical_padding(4.)
+                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
+                    chip = if following {
+                        chip.with_background_color(fade(
+                            link,
+                            if state.is_hovered() { 0.16 } else { 0.08 },
+                        ))
+                    } else {
+                        chip.with_border(Border::all(1.).with_border_color(fade(link, 0.6)))
+                            .with_background_color(fade(
+                                link,
+                                if state.is_hovered() { 0.08 } else { 0. },
+                            ))
+                    };
+                    chip.finish()
+                })
+                .with_cursor(Cursor::PointingHand)
+                .on_click(|ctx, _, _| ctx.dispatch_typed_action(ChannelAction::ToggleFollow))
+                .finish(),
+            );
+        }
+        if self.mode == ChatMode::Panel {
+            let tooltip = appearance
+                .ui_builder()
+                .tool_tip("Close (Esc)".to_owned())
+                .build()
+                .finish();
+            row.add_child(
+                icon_button_with_color(
+                    appearance,
+                    Icon::X,
+                    false,
+                    self.close_state.clone(),
+                    theme.sub_text_color(theme.background()),
+                )
+                .with_tooltip(move || tooltip)
+                .build()
+                .on_click(|ctx, _, _| ctx.dispatch_typed_action(ChannelAction::Close))
+                .with_cursor(Cursor::PointingHand)
+                .finish(),
+            );
+        }
+        ConstrainedBox::new(
+            Container::new(row.finish())
+                .with_padding_left(SIDE_PADDING)
+                .with_padding_right(8.)
+                .with_border(Border::bottom(1.).with_border_fill(theme.outline()))
+                .finish(),
+        )
+        .with_height(HEADER_HEIGHT)
+        .finish()
+    }
+
     /// "carol is typing..." between the timeline and the composer; the line keeps its height
     /// so the composer doesn't move.
     fn render_typing(&self, style: &RowStyle, app: &AppContext) -> Box<dyn Element> {
@@ -889,7 +1147,7 @@ impl ChannelView {
             .as_ref()
             .zip(session.active())
             .and_then(|(channel, active)| {
-                let users = active.typing(channel, &PostId::default());
+                let users = active.typing(channel, &self.root().cloned().unwrap_or_default());
                 let store = session.store()?.read().ok()?;
                 let names: Vec<String> = users
                     .iter()
@@ -1130,6 +1388,12 @@ fn render_row(
                 .finish()
         }
         RowData::Date(label) => separator(label, style.muted, style.border, style),
+        RowData::ReplyCount(count) => separator(
+            &timeline::replies_label(*count),
+            style.muted,
+            style.border,
+            style,
+        ),
         RowData::NewMessages => separator(
             "New messages",
             style.chat.new_message_separator,
@@ -1141,6 +1405,7 @@ fn render_row(
                 HoleKind::Older => ("Load older messages", Some(ChannelAction::Load(*kind))),
                 HoleKind::Newer => ("Load newer messages", Some(ChannelAction::Load(*kind))),
                 HoleKind::Gap => ("Loading missing messages…", None),
+                HoleKind::Replies => ("Loading replies…", None),
             };
             let length = label.chars().count();
             let mut text = Text::new_inline(label, style.font, style.size - 1.);
@@ -1192,6 +1457,7 @@ fn render_row(
             // The edited post has no toolbar or menu.
             let has_actions = data.actions.any() && editing.is_none();
             let menu_id = id.clone();
+            let posts = shared.posts;
             Hoverable::new(mouse_state, |mouse| {
                 let highlighted = has_actions && (mouse.is_hovered() || menu_open || picker_open);
                 let mut post =
@@ -1209,11 +1475,12 @@ fn render_row(
                 let mut stack = Stack::new().with_child(post.finish());
                 stack.add_positioned_child(
                     render_toolbar(
-                        POSTS,
+                        shared.posts,
                         &shared.toolbar,
                         &id,
                         ToolbarState {
                             react: data.actions.emoji_picker,
+                            reply: data.actions.reply && !state.thread,
                             menu_open,
                             picker_open,
                         },
@@ -1230,7 +1497,7 @@ fn render_row(
             })
             .on_right_click(move |ctx, _, position| {
                 if has_actions {
-                    let action = POSTS.open_at(ctx, menu_id.clone(), position);
+                    let action = posts.open_at(ctx, menu_id.clone(), position);
                     ctx.dispatch_typed_action(action);
                 }
             })
@@ -1352,9 +1619,16 @@ fn render_post(
                 .finish(),
         );
         if data.is_reply {
+            let post = post.id.clone();
+            let label = "replied in a thread";
             header.add_child(
-                Text::new_inline("replied in a thread", style.font, small)
-                    .with_color(style.muted)
+                Text::new_inline(label, style.font, small)
+                    .with_color(style.palette.link)
+                    .with_clickable_char_range(0..label.chars().count(), move |_, ctx, _| {
+                        ctx.dispatch_typed_action(ChannelAction::Post(PostAction::Reply {
+                            post: post.clone(),
+                        }))
+                    })
                     .finish(),
             );
         }
@@ -1413,11 +1687,9 @@ fn render_post(
         content.add_child(chips.finish());
     }
     if data.replies > 0 {
-        let label = if data.replies == 1 {
-            "1 reply".to_owned()
-        } else {
-            format!("{} replies", data.replies)
-        };
+        let label = timeline::replies_label(data.replies as usize);
+        let length = label.chars().count();
+        let post = post.id.clone();
         content.add_child(
             Flex::row()
                 .with_spacing(6.)
@@ -1426,6 +1698,11 @@ fn render_post(
                 .with_child(
                     Text::new_inline(label, style.font, small)
                         .with_color(style.palette.link)
+                        .with_clickable_char_range(0..length, move |_, ctx, _| {
+                            ctx.dispatch_typed_action(ChannelAction::Post(PostAction::Reply {
+                                post: post.clone(),
+                            }))
+                        })
                         .finish(),
                 )
                 .finish(),
@@ -1624,13 +1901,14 @@ fn add_reaction_chip(
     .with_cursor(Cursor::PointingHand)
     .on_click({
         let post = post.clone();
+        let posts = shared.posts;
         move |ctx, _, _| {
-            let action = POSTS.open_picker(ctx, post.clone(), PickerAnchor::Chip);
+            let action = posts.open_picker(ctx, post.clone(), PickerAnchor::Chip);
             ctx.dispatch_typed_action(action)
         }
     })
     .finish();
-    warpui::elements::SavePosition::new(chip, &POSTS.add_reaction_position(post)).finish()
+    warpui::elements::SavePosition::new(chip, &shared.posts.add_reaction_position(post)).finish()
 }
 
 /// "Message not sent. Retry · Delete" with the two links.
@@ -1714,11 +1992,7 @@ impl View for ChannelView {
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
-        let Some(chat) = self
-            .channel
-            .as_ref()
-            .and_then(|channel| self.chats.get(channel))
-        else {
+        let Some(chat) = self.chat() else {
             return Empty::new().finish();
         };
         let style = Rc::new(row_style(appearance));
@@ -1729,6 +2003,7 @@ impl View for ChannelView {
             flash: self.flash.clone(),
             menu: self.menu.as_ref().map(|menu| menu.post.clone()),
             picker: self.picking.as_ref().map(|(post, _, _)| post.clone()),
+            thread: self.root().is_some(),
             editing: self.editing.clone(),
             editor: self.edit_editor.clone(),
         };
@@ -1801,8 +2076,8 @@ impl View for ChannelView {
         }
         if let Some(menu) = &self.menu {
             stack.add_positioned_overlay_child(
-                menu.render(POSTS, appearance),
-                menu.positioning(POSTS),
+                menu.render(self.posts, appearance),
+                menu.positioning(self.posts),
             );
         }
         if let Some((post, anchor, up)) = &self.picking {
@@ -1811,11 +2086,14 @@ impl View for ChannelView {
                     ctx.dispatch_typed_action(ChannelAction::Post(PostAction::ClosePicker))
                 })
                 .finish();
-            stack
-                .add_positioned_overlay_child(picker, POSTS.picker_positioning(post, *anchor, *up));
+            stack.add_positioned_overlay_child(
+                picker,
+                self.posts.picker_positioning(post, *anchor, *up),
+            );
         }
         let timeline =
-            warpui::elements::SavePosition::new(stack.finish(), &POSTS.root_position()).finish();
+            warpui::elements::SavePosition::new(stack.finish(), &self.posts.root_position())
+                .finish();
         let column = Flex::column()
             .with_main_axis_size(MainAxisSize::Max)
             .with_main_axis_alignment(MainAxisAlignment::Start)
@@ -1843,8 +2121,12 @@ impl TypedActionView for ChannelView {
     type Action = ChannelAction;
 
     fn handle_action(&mut self, action: &ChannelAction, ctx: &mut ViewContext<Self>) {
-        let Some(channel) = self.channel.clone() else {
+        let Some(key) = self.key.clone() else {
             return;
+        };
+        let channel = match &key {
+            ChatKey::Channel(channel) => Some(channel.clone()),
+            ChatKey::Thread(_) => None,
         };
         match action {
             ChannelAction::Click(Target::Url(url)) => ctx.open_url(url),
@@ -1856,19 +2138,22 @@ impl TypedActionView for ChannelView {
             // Profiles, DMs and search come with later steps.
             ChannelAction::Click(Target::Mention(_) | Target::Hashtag(_)) => {}
             ChannelAction::Load(kind) => {
+                let Some(channel) = channel else { return };
                 let command = match kind {
                     HoleKind::Older => Command::LoadOlder(channel),
                     HoleKind::Newer => Command::LoadNewer(channel),
-                    HoleKind::Gap => return,
+                    HoleKind::Gap | HoleKind::Replies => return,
                 };
                 Session::as_ref(ctx).send(command);
             }
             ChannelAction::JumpToNewest => {
-                if let Some(chat) = self.chats.get(&channel) {
+                if let Some(chat) = self.chat() {
                     chat.list.scroll_to_bottom();
                 }
                 // Opened at the first unread post: the newest page may not be loaded yet.
-                Session::as_ref(ctx).send(Command::LoadNewer(channel));
+                if let Some(channel) = channel {
+                    Session::as_ref(ctx).send(Command::LoadNewer(channel));
+                }
                 ctx.notify();
             }
             // `Esc` closes the post menu first.
@@ -1877,7 +2162,24 @@ impl TypedActionView for ChannelView {
                 self.close_picker(false, ctx);
                 ctx.notify();
             }
-            ChannelAction::MarkRead => Session::as_ref(ctx).send(Command::MarkRead(channel)),
+            // The right panel closes; a channel is marked read.
+            ChannelAction::MarkRead if self.mode == ChatMode::Panel => {
+                ctx.emit(ChannelEvent::Close)
+            }
+            ChannelAction::MarkRead => {
+                if let Some(channel) = channel {
+                    Session::as_ref(ctx).send(Command::MarkRead(channel));
+                }
+            }
+            ChannelAction::Close => ctx.emit(ChannelEvent::Close),
+            ChannelAction::ToggleFollow => {
+                if let (Some(root), Some(following)) = (self.root().cloned(), self.following) {
+                    Session::as_ref(ctx).send(Command::FollowThread {
+                        root,
+                        follow: !following,
+                    });
+                }
+            }
             ChannelAction::ClearFilter => ctx.emit(ChannelEvent::ClearFilter),
             ChannelAction::Focus => {
                 self.focus_timeline = true;
@@ -1890,23 +2192,18 @@ impl TypedActionView for ChannelView {
                 Session::as_ref(ctx).send(Command::DiscardPost(pending.clone()))
             }
             ChannelAction::PageUp | ChannelAction::PageDown => {
-                if let Some(chat) = self.chats.get(&channel) {
+                if let Some(chat) = self.chat() {
                     chat.list.scroll_page(*action == ChannelAction::PageUp);
                 }
                 ctx.notify();
             }
-            ChannelAction::Post(action) => self.post_action(action, &channel, ctx),
+            ChannelAction::Post(action) => self.post_action(action, ctx),
         }
     }
 }
 
 impl ChannelView {
-    fn post_action(
-        &mut self,
-        action: &PostAction,
-        channel: &ChannelId,
-        ctx: &mut ViewContext<Self>,
-    ) {
+    fn post_action(&mut self, action: &PostAction, ctx: &mut ViewContext<Self>) {
         let session = Session::as_ref(ctx);
         let Some(store) = session.store().cloned() else {
             return;
@@ -1921,7 +2218,9 @@ impl ChannelView {
                 let Some(known) = store.posts.get(post) else {
                     return;
                 };
-                let actions = store.post_actions(post, now_ms());
+                let mut actions = store.post_actions(post, now_ms());
+                // In a thread the composer replies.
+                actions.reply &= self.root().is_none();
                 self.menu = actions.any().then(|| {
                     PostMenu::new(known, *at, *up, actions, thread_replies(&store, known))
                 });
@@ -1939,6 +2238,7 @@ impl ChannelView {
                 ctx.notify();
             }
             PostAction::ClosePicker => self.close_picker(false, ctx),
+            PostAction::Reply { post } => self.reply(post, ctx),
             PostAction::ToggleReaction { post, emoji } => {
                 let Ok(store) = store.read() else { return };
                 let actions = store.post_actions(post, now_ms());
@@ -1990,7 +2290,10 @@ impl ChannelView {
                         let text = if *item == PostMenuItem::CopyText {
                             store.posts.get(&post).map(|post| post.message.clone())
                         } else {
-                            let team = channel_team(&store, channel);
+                            let team = store
+                                .posts
+                                .get(&post)
+                                .and_then(|known| channel_team(&store, &known.channel_id));
                             crate::channel_info::post_link(&store, &post, team.as_ref(), &server)
                         };
                         drop(store);
@@ -2002,6 +2305,10 @@ impl ChannelView {
                     }
                     PostMenuItem::Edit => {
                         self.start_edit(&post, ctx);
+                        None
+                    }
+                    PostMenuItem::Reply => {
+                        self.reply(&post, ctx);
                         None
                     }
                     PostMenuItem::Delete => {
@@ -2021,6 +2328,32 @@ impl ChannelView {
 }
 
 impl ChannelView {
+    /// Reply on a post: its thread opens in the right panel; in a thread, the composer takes
+    /// the keyboard.
+    fn reply(&mut self, post: &PostId, ctx: &mut ViewContext<Self>) {
+        if self.root().is_some() {
+            self.menu = None;
+            ctx.focus(&self.composer);
+            ctx.notify();
+            return;
+        }
+        let root = Session::as_ref(ctx).store().and_then(|store| {
+            let store = store.read().ok()?;
+            let known = store.posts.get(post)?;
+            Some(if known.is_root() {
+                known.id.clone()
+            } else {
+                known.root_id.clone()
+            })
+        });
+        if let Some(root) = root {
+            // The click that got here (a reply count) kept the keyboard for the timeline; the
+            // thread takes it instead, and coming back lands in the composer.
+            self.focus_timeline = false;
+            ctx.emit(ChannelEvent::OpenThread(root));
+        }
+    }
+
     /// Adds my reaction (`addReaction`): nothing if it is there already, the limit dialog if
     /// the post has as many distinct emoji as the server allows.
     fn add_reaction(&mut self, post: &PostId, emoji: &str, ctx: &mut ViewContext<Self>) {
@@ -2123,11 +2456,7 @@ impl ChannelView {
             hint,
             error: None,
         });
-        if let Some(chat) = self
-            .channel
-            .as_ref()
-            .and_then(|channel| self.chats.get(channel))
-        {
+        if let Some(chat) = self.chat() {
             let index = self
                 .shared
                 .rows

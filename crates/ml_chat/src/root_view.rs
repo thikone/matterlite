@@ -51,6 +51,17 @@ const ERROR_WIDTH: f32 = 360.;
 const SWITCHER_TOP: f32 = 80.;
 /// UI state key of the open tabs.
 const TABS_KEY: &str = "tabs";
+/// UI state key of the right panel: the open thread and the width.
+const RIGHT_PANEL_KEY: &str = "right_panel";
+
+/// The right panel as saved per account.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct SavedPanel {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    thread: Option<mm_model::PostId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    width: Option<f32>,
+}
 /// Keymap context while a dialog is open (Esc closes it).
 const DIALOG_OPEN: &str = "Root_DialogOpen";
 
@@ -130,6 +141,8 @@ pub struct RootView {
     workspace: Option<ViewHandle<Workspace>>,
     chats: Option<ViewHandle<ChatsView>>,
     channel: Option<ViewHandle<ChannelView>>,
+    /// The thread in the right panel.
+    thread: Option<ViewHandle<ChannelView>>,
     channel_pane: Option<ViewHandle<ChannelPane>>,
     history: Option<ViewHandle<HistoryPane>>,
     switcher: Option<ViewHandle<SwitcherView>>,
@@ -193,6 +206,7 @@ impl RootView {
             workspace: None,
             chats: None,
             channel: None,
+            thread: None,
             channel_pane: None,
             history: None,
             switcher: None,
@@ -253,30 +267,21 @@ impl RootView {
                 workspace.set_tool_pane(ToolPanelTab::Chats, Some(Box::new(pane)), ctx)
             });
             let channel = ctx.add_typed_action_view(ChannelView::new);
-            ctx.subscribe_to_view(&channel, |me, _, event, ctx| match event {
-                ChannelEvent::OpenChannel(channel) => me.open_chat(channel.clone(), ctx),
-                ChannelEvent::ConfirmDelete { post, replies } => {
-                    me.dialog = Some(Dialog::DeletePost {
-                        post: post.clone(),
-                        replies: *replies,
-                    });
-                    ctx.notify();
-                }
-                ChannelEvent::ReactionLimit => {
-                    me.dialog = Some(Dialog::ReactionLimit);
-                    ctx.notify();
-                }
-                ChannelEvent::ClearFilter => {
-                    if let Some(history) = &me.history {
-                        history.update(ctx, |history, ctx| history.clear_filter(ctx));
-                    }
-                }
+            ctx.subscribe_to_view(&channel, |me, _, event, ctx| {
+                me.on_channel_event(event, ctx)
             });
             let content = ViewPane(channel.clone());
             workspace.update(ctx, |workspace, ctx| {
                 workspace.set_content(Some(Box::new(content)), ctx)
             });
             self.channel = Some(channel);
+            let thread = ctx.add_typed_action_view(ChannelView::new_panel);
+            ctx.subscribe_to_view(&thread, |me, _, event, ctx| me.on_channel_event(event, ctx));
+            let panel = ViewPane(thread.clone());
+            workspace.update(ctx, |workspace, ctx| {
+                workspace.set_right_panel(Some(Box::new(panel)), ctx)
+            });
+            self.thread = Some(thread);
             let channel_pane = ctx.add_typed_action_view(ChannelPane::new);
             ctx.subscribe_to_view(&channel_pane, |me, _, event, ctx| match event {
                 ChannelPaneEvent::ShowPost(post) => me.show_post(post.clone(), ctx),
@@ -317,6 +322,7 @@ impl RootView {
             self.workspace = None;
             self.chats = None;
             self.channel = None;
+            self.thread = None;
             self.channel_pane = None;
             self.history = None;
             self.switcher = None;
@@ -345,8 +351,117 @@ impl RootView {
         }
     }
 
+    /// Events of the chat tab's view and of the right panel's thread view.
+    fn on_channel_event(&mut self, event: &ChannelEvent, ctx: &mut ViewContext<Self>) {
+        match event {
+            ChannelEvent::OpenChannel(channel) => self.open_chat(channel.clone(), ctx),
+            ChannelEvent::ConfirmDelete { post, replies } => {
+                self.dialog = Some(Dialog::DeletePost {
+                    post: post.clone(),
+                    replies: *replies,
+                });
+                ctx.notify();
+            }
+            ChannelEvent::ReactionLimit => {
+                self.dialog = Some(Dialog::ReactionLimit);
+                ctx.notify();
+            }
+            ChannelEvent::ClearFilter => {
+                if let Some(history) = &self.history {
+                    history.update(ctx, |history, ctx| history.clear_filter(ctx));
+                }
+            }
+            ChannelEvent::OpenThread(root) => self.open_thread(root.clone(), true, ctx),
+            ChannelEvent::Close => {
+                self.close_thread(ctx);
+                self.focus_chat(ctx);
+            }
+        }
+    }
+
+    /// Shows a thread in the right panel (`focus`: with the keyboard in its composer).
+    fn open_thread(&mut self, root: mm_model::PostId, focus: bool, ctx: &mut ViewContext<Self>) {
+        let (Some(thread), Some(workspace)) = (self.thread.clone(), self.workspace.clone()) else {
+            return;
+        };
+        thread.update(ctx, |thread, ctx| thread.set_thread(Some(root), ctx));
+        workspace.update(ctx, |workspace, ctx| {
+            workspace.set_right_panel_open(true, ctx)
+        });
+        if focus {
+            ctx.focus(&thread);
+        }
+        self.save_panel(ctx);
+    }
+
+    /// Closes the right panel's thread (the panel itself too).
+    fn close_thread(&mut self, ctx: &mut ViewContext<Self>) {
+        if let Some(thread) = &self.thread {
+            thread.update(ctx, |thread, ctx| thread.set_thread(None, ctx));
+        }
+        if let Some(workspace) = &self.workspace {
+            workspace.update(ctx, |workspace, ctx| {
+                workspace.set_right_panel_open(false, ctx)
+            });
+        }
+        self.save_panel(ctx);
+    }
+
+    /// Saves the open thread and the panel's width for the account.
+    fn save_panel(&mut self, ctx: &mut ViewContext<Self>) {
+        if !self.tabs_restored {
+            return;
+        }
+        let (Some(thread), Some(workspace)) = (&self.thread, &self.workspace) else {
+            return;
+        };
+        let saved = SavedPanel {
+            thread: thread.as_ref(ctx).thread().cloned(),
+            width: Some(workspace.as_ref(ctx).right_panel_width(ctx)),
+        };
+        if let Ok(json) = serde_json::to_string(&saved) {
+            Session::handle(ctx).update(ctx, |session, _| {
+                session.set_ui_state(RIGHT_PANEL_KEY, Some(json))
+            });
+        }
+    }
+
+    /// Restores the right panel's width and thread (if its root post is known).
+    fn restore_panel(&mut self, ctx: &mut ViewContext<Self>) {
+        let session = Session::as_ref(ctx);
+        let saved: SavedPanel = session
+            .active()
+            .and_then(|active| active.ui_state(RIGHT_PANEL_KEY))
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+        let known = saved.thread.clone().filter(|root| {
+            session
+                .store()
+                .and_then(|store| {
+                    store
+                        .read()
+                        .ok()
+                        .map(|store| store.posts.contains_key(root))
+                })
+                .unwrap_or(false)
+        });
+        if let (Some(width), Some(workspace)) = (saved.width, &self.workspace) {
+            workspace.update(ctx, |workspace, ctx| {
+                workspace.set_right_panel_width(width, ctx)
+            });
+        }
+        if let Some(root) = known {
+            self.open_thread(root, false, ctx);
+        }
+    }
+
     fn on_workspace_event(&mut self, event: &WorkspaceEvent, ctx: &mut ViewContext<Self>) {
         match *event {
+            WorkspaceEvent::RightPanelClosed => {
+                self.close_thread(ctx);
+                self.focus_chat(ctx);
+            }
+            WorkspaceEvent::RightPanelResized => self.save_panel(ctx),
             WorkspaceEvent::AccountMenu => {
                 self.dialog = Some(Dialog::Account);
                 ctx.notify();
@@ -476,6 +591,7 @@ impl RootView {
             self.tabs = tabs;
         }
         self.after_tabs_change(ctx);
+        self.restore_panel(ctx);
         // Back where the user left off, with the keyboard in the chat.
         if self.tabs.active_channel().is_some() {
             self.focus_chat(ctx);
