@@ -329,15 +329,21 @@ fn read_state_from_other_devices() {
         250
     );
 
-    // Marked unread by hand: a post while viewing doesn't clear it.
+    // Marked unread by hand: a post while viewing doesn't clear it. The channel comes in the
+    // broadcast only (`sendWebSocketPostUnreadEvent`).
     apply(
         &mut store,
         event(
             "post_unread",
-            json!({"channel_id": "c1", "msg_count": 9, "msg_count_root": 7,
-                   "mention_count": 1, "mention_count_root": 1, "last_viewed_at": 150}),
-            json!({}),
+            json!({"msg_count": 9, "msg_count_root": 7, "mention_count": 1,
+                   "mention_count_root": 1, "urgent_mention_count": 0,
+                   "last_viewed_at": 150, "post_id": "root1"}),
+            json!({"channel_id": "c1", "team_id": "t1", "user_id": ME}),
         ),
+    );
+    assert_eq!(
+        store.channel_members[&ChannelId::from("c1")].last_viewed_at,
+        150
     );
     store.viewing = Some("c1".into());
     apply(

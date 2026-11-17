@@ -78,6 +78,41 @@ pub fn link(
     server: &str,
 ) -> Option<String> {
     let info = store.channels.get(channel)?;
+    let team_url = team_url(store, channel, team, server)?;
+    let path = match info.channel_type {
+        ChannelType::Direct => {
+            let partner = dm_partner(&info.name, &store.me)?;
+            format!("messages/@{}", store.users.get(&partner)?.username)
+        }
+        ChannelType::Group => format!("messages/{}", info.name),
+        _ => format!("channels/{}", info.name),
+    };
+    Some(format!("{team_url}/{path}"))
+}
+
+/// A post's permalink in the webapp (`getPermalinkURL`): `{site}/{team}/pl/{post id}`, the
+/// team of the post's channel, or `team` for a DM or GM.
+pub fn post_link(
+    store: &Store,
+    post: &mm_model::PostId,
+    team: Option<&TeamId>,
+    server: &str,
+) -> Option<String> {
+    let channel = &store.posts.get(post)?.channel_id;
+    Some(format!(
+        "{}/pl/{post}",
+        team_url(store, channel, team, server)?
+    ))
+}
+
+/// `{site}/{team name}` for a chat; `team` stands in for a DM's or GM's.
+fn team_url(
+    store: &Store,
+    channel: &ChannelId,
+    team: Option<&TeamId>,
+    server: &str,
+) -> Option<String> {
+    let info = store.channels.get(channel)?;
     let team_id = if info.team_id.is_empty() {
         team?
     } else {
@@ -90,15 +125,7 @@ pub fn link(
         .filter(|url| !url.is_empty())
         .unwrap_or(server)
         .trim_end_matches('/');
-    let path = match info.channel_type {
-        ChannelType::Direct => {
-            let partner = dm_partner(&info.name, &store.me)?;
-            format!("messages/@{}", store.users.get(&partner)?.username)
-        }
-        ChannelType::Group => format!("messages/{}", info.name),
-        _ => format!("channels/{}", info.name),
-    };
-    Some(format!("{site}/{team_name}/{path}"))
+    Some(format!("{site}/{team_name}"))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

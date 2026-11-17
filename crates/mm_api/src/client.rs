@@ -669,6 +669,62 @@ impl Client {
         .await
     }
 
+    /// `POST /users/{id}/preferences/delete`.
+    pub async fn delete_preferences(
+        &self,
+        user_id: &UserId,
+        preferences: &[Preference],
+    ) -> Result<(), ApiError> {
+        self.empty(
+            self.post(&["users", user_id.as_str(), "preferences", "delete"])
+                .json(preferences),
+        )
+        .await
+    }
+
+    /// `PUT /posts/{id}/patch` with a new message; the server keeps the old one in the edit
+    /// history and sends `post_edited`.
+    pub async fn patch_post(&self, post_id: &PostId, message: &str) -> Result<Post, ApiError> {
+        self.json(
+            self.put(&["posts", post_id.as_str(), "patch"])
+                .json(&json!({ "message": message })),
+        )
+        .await
+    }
+
+    /// `DELETE /posts/{id}`; a root post takes its replies with it.
+    pub async fn delete_post(&self, post_id: &PostId) -> Result<(), ApiError> {
+        self.empty(self.delete(&["posts", post_id.as_str()])).await
+    }
+
+    /// `POST /posts/{id}/pin` or `/unpin`.
+    pub async fn pin_post(&self, post_id: &PostId, pinned: bool) -> Result<(), ApiError> {
+        let action = if pinned { "pin" } else { "unpin" };
+        self.empty(self.post(&["posts", post_id.as_str(), action]))
+            .await
+    }
+
+    /// `POST /users/{uid}/posts/{pid}/set_unread`: the channel becomes unread from this post
+    /// on; the server answers with `post_unread`.
+    pub async fn set_post_unread(
+        &self,
+        user_id: &UserId,
+        post_id: &PostId,
+        collapsed_threads: bool,
+    ) -> Result<(), ApiError> {
+        self.empty(
+            self.post(&[
+                "users",
+                user_id.as_str(),
+                "posts",
+                post_id.as_str(),
+                "set_unread",
+            ])
+            .json(&json!({ "collapsed_threads_supported": collapsed_threads })),
+        )
+        .await
+    }
+
     // Threads (CRT, WebApp.md §10.3).
 
     /// `GET /users/{uid}/teams/{tid}/threads`: followed threads, newest activity first.
@@ -688,6 +744,50 @@ impl Client {
             ])
             .query(&query.pairs()),
         )
+        .await
+    }
+
+    /// `PUT` or `DELETE /users/{uid}/teams/{tid}/threads/{id}/following`; the server answers
+    /// with `thread_follow_changed`.
+    pub async fn follow_thread(
+        &self,
+        user_id: &UserId,
+        team_id: &TeamId,
+        root_id: &PostId,
+        follow: bool,
+    ) -> Result<(), ApiError> {
+        let segments = [
+            "users",
+            user_id.as_str(),
+            "teams",
+            team_id.as_str(),
+            "threads",
+            root_id.as_str(),
+            "following",
+        ];
+        let method = if follow { Method::PUT } else { Method::DELETE };
+        self.empty(self.request(method, &segments)).await
+    }
+
+    /// `POST /users/{uid}/teams/{tid}/threads/{id}/set_unread/{post_id}`: a thread becomes
+    /// unread from one of its posts (CRT); the server answers with `thread_read_changed`.
+    pub async fn set_thread_unread(
+        &self,
+        user_id: &UserId,
+        team_id: &TeamId,
+        root_id: &PostId,
+        post_id: &PostId,
+    ) -> Result<(), ApiError> {
+        self.empty(self.post(&[
+            "users",
+            user_id.as_str(),
+            "teams",
+            team_id.as_str(),
+            "threads",
+            root_id.as_str(),
+            "set_unread",
+            post_id.as_str(),
+        ]))
         .await
     }
 

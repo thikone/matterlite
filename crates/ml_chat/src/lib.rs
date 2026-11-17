@@ -16,6 +16,7 @@ pub mod history;
 mod history_pane;
 mod login_view;
 mod message;
+mod post_menu;
 mod root_view;
 pub mod session;
 pub mod settings;

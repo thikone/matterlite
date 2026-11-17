@@ -45,6 +45,10 @@ pub enum Icon {
     Check,
     /// A window with its left pane marked: the tools panel button.
     Menu,
+    // MatterLite: post actions.
+    Reply,
+    DotsHorizontal,
+    FaceSmile,
 }
 
 impl From<Icon> for &'static str {
@@ -78,9 +82,12 @@ impl From<Icon> for &'static str {
             Icon::Pin => "bundled/svg/pin-01.svg",
             Icon::Check => "bundled/svg/check-thick.svg",
             Icon::Menu => "bundled/svg/layout-left.svg",
+            Icon::Reply => "bundled/svg/reverse-left.svg",
+            Icon::DotsHorizontal => "bundled/svg/dots-horizontal.svg",
             // Drawn for MatterLite (Warp has no lock or archive icon).
             Icon::Lock => "matterlite/svg/lock.svg",
             Icon::Archive => "matterlite/svg/archive.svg",
+            Icon::FaceSmile => "matterlite/svg/face-smile.svg",
         }
     }
 }

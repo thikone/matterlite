@@ -156,6 +156,29 @@ pub enum Command {
     LoadNewer(ChannelId),
     /// Loads a whole thread.
     OpenThread(PostId),
+    /// Pins or unpins a post: shown at once, undone if the server refuses.
+    PinPost {
+        post: PostId,
+        pinned: bool,
+    },
+    /// Saves a post, or removes it from Saved (the `flagged_post` preference).
+    SavePost {
+        post: PostId,
+        saved: bool,
+    },
+    /// Marks the chat unread from a post on; with `in_thread` under CRT, the post's thread
+    /// instead (the webapp's `markPostAsUnread` by location).
+    MarkUnread {
+        post: PostId,
+        in_thread: bool,
+    },
+    /// Follows or unfollows a thread (CRT).
+    FollowThread {
+        root: PostId,
+        follow: bool,
+    },
+    /// Deletes a post; the server's `post_deleted` removes it (with its replies for a root).
+    DeletePost(PostId),
     SendPost {
         channel: ChannelId,
         /// Empty for a root post.

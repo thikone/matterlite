@@ -22,15 +22,21 @@ impl Store {
             WsEvent::PostDeleted(deleted) => self.post_deleted(&deleted.post, &mut deltas),
             WsEvent::EphemeralMessage(post) => self.insert_post(post, &mut deltas),
             WsEvent::PostUnread(unread) => {
-                if let Some(member) = self.channel_members.get_mut(&unread.channel_id) {
+                // The server names the channel in the broadcast only.
+                let channel = if unread.channel_id.is_empty() {
+                    &broadcast.channel_id
+                } else {
+                    &unread.channel_id
+                };
+                if let Some(member) = self.channel_members.get_mut(channel) {
                     member.msg_count = unread.msg_count;
                     member.msg_count_root = unread.msg_count_root;
                     member.mention_count = unread.mention_count;
                     member.mention_count_root = unread.mention_count_root;
                     member.urgent_mention_count = unread.urgent_mention_count;
                     member.last_viewed_at = unread.last_viewed_at;
-                    self.manually_unread.insert(unread.channel_id.clone());
-                    deltas.push(StoreDelta::MemberChanged(unread.channel_id.clone()));
+                    self.manually_unread.insert(channel.clone());
+                    deltas.push(StoreDelta::MemberChanged(channel.clone()));
                 }
             }
             WsEvent::ReactionAdded(reaction) => self.reaction(reaction, true, &mut deltas),
@@ -148,24 +154,10 @@ impl Store {
                 }
             }
             WsEvent::PreferencesChanged(preferences) => {
-                let crt_before = self.crt_enabled();
-                let names_before = self.name_format();
-                for preference in preferences.iter().filter(|p| p.user_id == self.me) {
-                    self.preferences.insert(
-                        (preference.category.clone(), preference.name.clone()),
-                        preference.value.clone(),
-                    );
-                }
-                self.after_preferences(crt_before, names_before, &mut deltas);
+                deltas.extend(self.put_preferences(preferences));
             }
             WsEvent::PreferencesDeleted(preferences) => {
-                let crt_before = self.crt_enabled();
-                let names_before = self.name_format();
-                for preference in preferences.iter().filter(|p| p.user_id == self.me) {
-                    self.preferences
-                        .remove(&(preference.category.clone(), preference.name.clone()));
-                }
-                self.after_preferences(crt_before, names_before, &mut deltas);
+                deltas.extend(self.remove_preferences(preferences));
             }
             WsEvent::ThreadUpdated(updated) => {
                 let thread = &updated.thread;
@@ -645,6 +637,45 @@ impl Store {
             deltas.push(StoreDelta::ChannelRemoved(channel));
         }
         deltas.push(StoreDelta::TeamRemoved(team.clone()));
+    }
+
+    /// My preferences saved (from the server, or before it confirms); others' are ignored.
+    pub fn put_preferences(&mut self, preferences: &[mm_model::Preference]) -> Vec<StoreDelta> {
+        let crt_before = self.crt_enabled();
+        let names_before = self.name_format();
+        for preference in preferences.iter().filter(|p| p.user_id == self.me) {
+            self.preferences.insert(
+                (preference.category.clone(), preference.name.clone()),
+                preference.value.clone(),
+            );
+        }
+        let mut deltas = Vec::new();
+        self.after_preferences(crt_before, names_before, &mut deltas);
+        deltas
+    }
+
+    /// My preferences deleted.
+    pub fn remove_preferences(&mut self, preferences: &[mm_model::Preference]) -> Vec<StoreDelta> {
+        let crt_before = self.crt_enabled();
+        let names_before = self.name_format();
+        for preference in preferences.iter().filter(|p| p.user_id == self.me) {
+            self.preferences
+                .remove(&(preference.category.clone(), preference.name.clone()));
+        }
+        let mut deltas = Vec::new();
+        self.after_preferences(crt_before, names_before, &mut deltas);
+        deltas
+    }
+
+    /// Pins or unpins a post before the server's `post_edited` confirms it.
+    pub fn set_post_pinned(&mut self, post: &PostId, pinned: bool) -> Vec<StoreDelta> {
+        match self.posts.get_mut(post) {
+            Some(known) if known.is_pinned != pinned => {
+                Arc::make_mut(known).is_pinned = pinned;
+                vec![StoreDelta::PostsChanged(vec![post.clone()])]
+            }
+            _ => Vec::new(),
+        }
     }
 
     fn after_preferences(

@@ -23,4 +23,6 @@ pub mod keys {
     pub const DIRECT_CHANNEL_SHOW: &str = "direct_channel_show";
     pub const GROUP_CHANNEL_SHOW: &str = "group_channel_show";
     pub const THEME: &str = "theme";
+    /// Saved posts: `(flagged_post, <post id>) = "true"`.
+    pub const FLAGGED_POST: &str = "flagged_post";
 }

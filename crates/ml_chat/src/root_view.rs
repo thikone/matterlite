@@ -24,7 +24,7 @@ use ml_workspace::{ToolPanelTab, ViewPane};
 use mm_sync::Command;
 
 use ml_workspace::{TabBadge, TabLeading, TabSpec};
-use mm_model::ChannelId;
+use mm_model::{ChannelId, PostId};
 use mm_store::{Store, StoreDelta};
 use settings::Setting as _;
 use warp_core::ui::icons::Icon;
@@ -70,6 +70,8 @@ pub enum RootAction {
     ResolveServerChange(ServerChange),
     DismissNotice,
     DismissError,
+    /// Delete in the "Delete message" dialog.
+    DeletePost,
     PauseSync,
     ResumeSync,
     /// The window buttons on the login screen.
@@ -103,9 +105,10 @@ pub(crate) fn init(app: &mut AppContext) {
     ]);
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Dialog {
     Account,
+    DeletePost { post: PostId, replies: i64 },
 }
 
 #[derive(Default)]
@@ -117,6 +120,7 @@ struct Buttons {
     start_fresh: button::Button,
     keep_cache: button::Button,
     ok: button::Button,
+    delete: button::Button,
     dialog: dialog::Dialog,
 }
 
@@ -250,6 +254,13 @@ impl RootView {
             let channel = ctx.add_typed_action_view(ChannelView::new);
             ctx.subscribe_to_view(&channel, |me, _, event, ctx| match event {
                 ChannelEvent::OpenChannel(channel) => me.open_chat(channel.clone(), ctx),
+                ChannelEvent::ConfirmDelete { post, replies } => {
+                    me.dialog = Some(Dialog::DeletePost {
+                        post: post.clone(),
+                        replies: *replies,
+                    });
+                    ctx.notify();
+                }
                 ChannelEvent::ClearFilter => {
                     if let Some(history) = &me.history {
                         history.update(ctx, |history, ctx| history.clear_filter(ctx));
@@ -709,8 +720,11 @@ impl RootView {
         if let Some(notice) = active.notices.first() {
             return Some(self.render_notice(notice, appearance));
         }
-        match self.dialog? {
+        match self.dialog.as_ref()? {
             Dialog::Account => Some(self.render_account(active, app, appearance)),
+            Dialog::DeletePost { replies, .. } => {
+                Some(self.render_delete_post(*replies, appearance))
+            }
         }
     }
 
@@ -818,6 +832,37 @@ impl RootView {
             ),
         ];
         self.dialog("The server has changed", lines, buttons, false, appearance)
+    }
+
+    /// The webapp's "Confirm Post Delete" dialog.
+    fn render_delete_post(&self, replies: i64, appearance: &Appearance) -> Box<dyn Element> {
+        let mut lines = vec!["Are you sure you want to delete this message?".to_owned()];
+        match replies {
+            0 => {}
+            1 => lines.push("This message has 1 reply; it is deleted too.".to_owned()),
+            n => lines.push(format!(
+                "This message has {n} replies; they are deleted too."
+            )),
+        }
+        let buttons = vec![
+            self.button(
+                &self.buttons.cancel,
+                "Cancel",
+                false,
+                false,
+                RootAction::CloseDialog,
+                appearance,
+            ),
+            self.button(
+                &self.buttons.delete,
+                "Delete",
+                true,
+                false,
+                RootAction::DeletePost,
+                appearance,
+            ),
+        ];
+        self.dialog("Delete message", lines, buttons, true, appearance)
     }
 
     fn render_notice(&self, notice: &str, appearance: &Appearance) -> Box<dyn Element> {
@@ -1195,6 +1240,12 @@ impl TypedActionView for RootView {
             }
             RootAction::PauseSync => Session::as_ref(ctx).send(Command::PauseSync),
             RootAction::ResumeSync => Session::as_ref(ctx).send(Command::ResumeSync),
+            RootAction::DeletePost => {
+                if let Some(Dialog::DeletePost { post, .. }) = self.dialog.take() {
+                    Session::as_ref(ctx).send(Command::DeletePost(post));
+                }
+                ctx.notify();
+            }
             RootAction::DismissNotice => {
                 Session::handle(ctx).update(ctx, |session, ctx| session.dismiss_notice(ctx));
             }

@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use ml_themes::ChatColors;
 use mm_model::{ChannelId, ChannelType, Post, PostId, TeamId};
 use mm_render::MessageDoc;
-use mm_store::{Store, StoreDelta, dm_partner};
+use mm_store::{PostActions, Store, StoreDelta, dm_partner};
 use mm_sync::{Command, ImageKey};
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::icons::Icon;
@@ -53,6 +53,9 @@ use crate::history_pane::ChatFilter;
 use crate::message::{
     CustomEmoji, MessageRenderer, OnClick, Palette, Target, emoji_image, fixed_width,
 };
+use crate::post_menu::{
+    PostAction, PostMenu, PostMenuHost, PostMenuItem, ToolbarStates, render_toolbar,
+};
 use crate::session::{Session, SessionEvent};
 use crate::timeline::{self, Author, ChatLookup, Clock, HoleKind, Pending, Row};
 use crate::timeline_list::{TimelineList, TimelineState, Viewport};
@@ -73,6 +76,11 @@ const NEW_LINE_OFFSET: f32 = 80.;
 /// A post shown from elsewhere: this far below the top, highlighted this long.
 const SHOW_POST_OFFSET: f32 = 120.;
 const FLASH: Duration = Duration::from_secs(3);
+/// The posts of the chat, for the post toolbar and menu.
+const POSTS: PostMenuHost<ChannelAction> = PostMenuHost {
+    prefix: "ml_chat:channel",
+    wrap: ChannelAction::Post,
+};
 const SCROLLBAR: warpui::elements::ScrollbarWidth = warpui::elements::ScrollbarWidth::Auto;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -90,6 +98,8 @@ pub enum ChannelAction {
     Discard(String),
     PageUp,
     PageDown,
+    /// The post toolbar and menu.
+    Post(PostAction),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -98,6 +108,8 @@ pub enum ChannelEvent {
     OpenChannel(ChannelId),
     /// "Show all" in the filter banner: turn "Filter the chat" off.
     ClearFilter,
+    /// Delete in the post menu: ask before deleting (a root post takes its replies).
+    ConfirmDelete { post: PostId, replies: i64 },
 }
 
 pub(crate) fn init(app: &mut AppContext) {
@@ -151,6 +163,8 @@ struct PostData {
     replies: i64,
     /// A reply shown in the channel (CRT off).
     is_reply: bool,
+    /// What the post toolbar and menu offer.
+    actions: PostActions,
 }
 
 /// Messages rendered so far, by post (and `update_at`).
@@ -165,6 +179,17 @@ struct Shared {
     lookup: Rc<ChatLookup>,
     docs: Rc<RefCell<Docs>>,
     custom_emoji: Rc<CustomEmoji>,
+    /// Hover states of the posts (kept across refreshes) and of the toolbar's buttons.
+    hover: Rc<RefCell<HashMap<PostId, MouseStateHandle>>>,
+    toolbar: Rc<ToolbarStates>,
+}
+
+/// What rows draw differently from one frame to the next.
+struct RowState {
+    /// A post shown from elsewhere, highlighted for a moment.
+    flash: Option<PostId>,
+    /// The post whose menu is open: it keeps its toolbar.
+    menu: Option<PostId>,
 }
 
 pub struct ChannelView {
@@ -197,6 +222,9 @@ pub struct ChannelView {
     /// The next focus of this view stays on the timeline (a click in it) instead of moving
     /// on to the composer.
     focus_timeline: bool,
+    hover: Rc<RefCell<HashMap<PostId, MouseStateHandle>>>,
+    toolbar: Rc<ToolbarStates>,
+    menu: Option<PostMenu>,
 }
 
 impl ChannelView {
@@ -252,6 +280,8 @@ impl ChannelView {
         let lookup = Rc::new(ChatLookup::default());
         let docs = Rc::new(RefCell::new(Docs::default()));
         let custom_emoji = Rc::new(CustomEmoji::new());
+        let hover = Rc::new(RefCell::new(HashMap::new()));
+        let toolbar = Rc::new(ToolbarStates::default());
         Self {
             channel: None,
             chats: HashMap::new(),
@@ -260,6 +290,8 @@ impl ChannelView {
                 lookup: lookup.clone(),
                 docs: docs.clone(),
                 custom_emoji: custom_emoji.clone(),
+                hover: hover.clone(),
+                toolbar: toolbar.clone(),
             }),
             title: String::new(),
             icon: None,
@@ -280,6 +312,9 @@ impl ChannelView {
             flash: None,
             flashes: 0,
             focus_timeline: false,
+            hover,
+            toolbar,
+            menu: None,
         }
     }
 
@@ -397,6 +432,26 @@ impl ChannelView {
                 StoreDelta::RolesChanged => {
                     self.composer
                         .update(ctx, |composer, ctx| composer.update_state(ctx));
+                }
+                StoreDelta::MemberChanged(changed) if *changed == channel => {
+                    relevant = true;
+                    self.lookup_dirty = true;
+                    // Marked unread by hand (also elsewhere): the "New messages" line moves to
+                    // the first unread post.
+                    let last_viewed = Session::as_ref(ctx).store().and_then(|store| {
+                        let store = store.read().ok()?;
+                        store
+                            .manually_unread
+                            .contains(&channel)
+                            .then(|| store.channel_members.get(&channel))
+                            .flatten()
+                            .map(|member| member.last_viewed_at)
+                    });
+                    if let Some(last_viewed) = last_viewed
+                        && let Some(chat) = self.chats.get_mut(&channel)
+                    {
+                        chat.last_viewed_at = Some(last_viewed);
+                    }
                 }
                 StoreDelta::ChannelChanged(_)
                 | StoreDelta::MemberChanged(_)
@@ -526,7 +581,8 @@ impl ChannelView {
             rows = filtered(rows, &filter.ids);
         }
         let clock = Clock::of(&store);
-        let today = clock.today(now_ms());
+        let now = now_ms();
+        let today = clock.today(now);
         let crt = store.crt_enabled();
         let mut wanted: Vec<ImageKey> = Vec::new();
         let mut custom_emoji = CustomEmoji::new();
@@ -609,6 +665,7 @@ impl ChannelView {
                             0
                         },
                         is_reply: !crt && !post.is_root(),
+                        actions: store.post_actions(&post.id, now),
                         post: post.clone(),
                         consecutive: *consecutive,
                         pending: *pending,
@@ -623,6 +680,8 @@ impl ChannelView {
                         &post_data.files,
                         post_data.replies,
                         post_data.is_reply,
+                        post_data.post.is_pinned,
+                        post_data.actions.saved,
                     )
                         .hash(&mut hasher);
                     RowData::Post(Box::new(post_data))
@@ -647,11 +706,18 @@ impl ChannelView {
                 chat.jump_to_new = false;
             }
         }
+        // Hover states of posts no longer shown go.
+        self.hover.borrow_mut().retain(|id, _| {
+            data.iter()
+                .any(|row| matches!(row, RowData::Post(post) if post.post.id == *id))
+        });
         self.shared = Rc::new(Shared {
             rows: data,
             lookup: self.lookup.clone(),
             docs: self.docs.clone(),
             custom_emoji: self.custom_emoji.clone(),
+            hover: self.hover.clone(),
+            toolbar: self.toolbar.clone(),
         });
         self.load_if_near_an_end(ctx);
         ctx.notify();
@@ -974,7 +1040,8 @@ fn render_row(
     shared: &Shared,
     style: &RowStyle,
     index: usize,
-    flash: Option<&PostId>,
+    state: &RowState,
+    appearance: &Appearance,
 ) -> Box<dyn Element> {
     let Some(row) = shared.rows.get(index) else {
         return Empty::new().finish();
@@ -1045,14 +1112,47 @@ fn render_row(
             )
         }
         RowData::Post(data) => {
-            let post = render_post(shared, style, data);
-            if flash == Some(&data.post.id) {
-                Container::new(post)
-                    .with_background_color(fade(style.chat.mention_highlight_bg, 0.55))
-                    .finish()
-            } else {
-                post
-            }
+            let id = data.post.id.clone();
+            let mouse_state = shared
+                .hover
+                .borrow_mut()
+                .entry(id.clone())
+                .or_default()
+                .clone();
+            let flashing = state.flash.as_ref() == Some(&id);
+            let menu_open = state.menu.as_ref() == Some(&id);
+            let has_actions = data.actions.any();
+            let menu_id = id.clone();
+            Hoverable::new(mouse_state, |mouse| {
+                let highlighted = has_actions && (mouse.is_hovered() || menu_open);
+                let mut post = Container::new(render_post(shared, style, data));
+                if flashing {
+                    post = post.with_background_color(fade(style.chat.mention_highlight_bg, 0.55));
+                } else if highlighted {
+                    post = post.with_background_color(fade(style.text, 0.04));
+                }
+                if !highlighted {
+                    return post.finish();
+                }
+                let mut stack = Stack::new().with_child(post.finish());
+                stack.add_positioned_child(
+                    render_toolbar(POSTS, &shared.toolbar, &id, menu_open, appearance),
+                    warpui::elements::OffsetPositioning::offset_from_parent(
+                        pathfinder_geometry::vector::vec2f(-SIDE_PADDING, 2.),
+                        warpui::elements::ParentOffsetBounds::ParentByPosition,
+                        warpui::elements::ParentAnchor::TopRight,
+                        warpui::elements::ChildAnchor::TopRight,
+                    ),
+                );
+                stack.finish()
+            })
+            .on_right_click(move |ctx, _, position| {
+                if has_actions {
+                    let action = POSTS.open_at(ctx, menu_id.clone(), position);
+                    ctx.dispatch_typed_action(action);
+                }
+            })
+            .finish()
         }
     }
 }
@@ -1111,6 +1211,29 @@ fn render_post(shared: &Shared, style: &RowStyle, data: &PostData) -> Box<dyn El
     let mut content = Flex::column()
         .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
         .with_spacing(4.);
+    // The webapp's post pre-header.
+    if post.is_pinned || data.actions.saved {
+        let mut labels = Flex::row()
+            .with_spacing(4.)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center);
+        if post.is_pinned {
+            labels.add_child(icon(Icon::Pin, style.muted, small - 1.));
+            labels.add_child(
+                Text::new_inline("Pinned", style.font, small - 1.)
+                    .with_color(style.muted)
+                    .finish(),
+            );
+        }
+        if data.actions.saved {
+            let label = if post.is_pinned { "· Saved" } else { "Saved" };
+            labels.add_child(
+                Text::new_inline(label, style.font, small - 1.)
+                    .with_color(style.muted)
+                    .finish(),
+            );
+        }
+        content.add_child(labels.finish());
+    }
     if !data.consecutive {
         let mut header = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -1360,9 +1483,18 @@ impl View for ChannelView {
         let header = self.render_header(&style.chat, appearance);
         let shared = self.shared.clone();
         let row_style = style.clone();
-        let flash = self.flash.clone();
-        let list = TimelineList::new(chat.list.clone(), move |index, _| {
-            render_row(&shared, &row_style, index, flash.as_ref())
+        let row_state = RowState {
+            flash: self.flash.clone(),
+            menu: self.menu.as_ref().map(|menu| menu.post.clone()),
+        };
+        let list = TimelineList::new(chat.list.clone(), move |index, app| {
+            render_row(
+                &shared,
+                &row_style,
+                index,
+                &row_state,
+                Appearance::as_ref(app),
+            )
         });
         let timeline = Scrollable::vertical(
             self.scroll_state.clone(),
@@ -1422,12 +1554,20 @@ impl View for ChannelView {
                 ),
             );
         }
+        if let Some(menu) = &self.menu {
+            stack.add_positioned_overlay_child(
+                menu.render(POSTS, appearance),
+                menu.positioning(POSTS),
+            );
+        }
+        let timeline =
+            warpui::elements::SavePosition::new(stack.finish(), &POSTS.root_position()).finish();
         let column = Flex::column()
             .with_main_axis_size(MainAxisSize::Max)
             .with_main_axis_alignment(MainAxisAlignment::Start)
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_child(header)
-            .with_child(Shrinkable::new(1., stack.finish()).finish())
+            .with_child(Shrinkable::new(1., timeline).finish())
             .with_child(self.render_typing(&style, app))
             .with_child(
                 Container::new(ChildView::new(&self.composer).finish())
@@ -1477,6 +1617,11 @@ impl TypedActionView for ChannelView {
                 Session::as_ref(ctx).send(Command::LoadNewer(channel));
                 ctx.notify();
             }
+            // `Esc` closes the post menu first.
+            ChannelAction::MarkRead if self.menu.is_some() => {
+                self.menu = None;
+                ctx.notify();
+            }
             ChannelAction::MarkRead => Session::as_ref(ctx).send(Command::MarkRead(channel)),
             ChannelAction::ClearFilter => ctx.emit(ChannelEvent::ClearFilter),
             ChannelAction::Focus => {
@@ -1495,6 +1640,103 @@ impl TypedActionView for ChannelView {
                 }
                 ctx.notify();
             }
+            ChannelAction::Post(action) => self.post_action(action, &channel, ctx),
         }
+    }
+}
+
+impl ChannelView {
+    fn post_action(
+        &mut self,
+        action: &PostAction,
+        channel: &ChannelId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let session = Session::as_ref(ctx);
+        let Some(store) = session.store().cloned() else {
+            return;
+        };
+        let server = session
+            .active()
+            .map(|active| active.server.as_str().to_owned())
+            .unwrap_or_default();
+        match action {
+            PostAction::OpenMenu { post, at, up } => {
+                let Ok(store) = store.read() else { return };
+                let Some(known) = store.posts.get(post) else {
+                    return;
+                };
+                let actions = store.post_actions(post, now_ms());
+                self.menu = actions.any().then(|| {
+                    PostMenu::new(known, *at, *up, actions, thread_replies(&store, known))
+                });
+                ctx.notify();
+            }
+            PostAction::CloseMenu => {
+                self.menu = None;
+                ctx.notify();
+            }
+            PostAction::Choose(item) => {
+                let Some(menu) = self.menu.take() else { return };
+                ctx.notify();
+                let post = menu.post.clone();
+                let actions = menu.actions;
+                let command = match item {
+                    PostMenuItem::Follow => Some(Command::FollowThread {
+                        root: post,
+                        follow: !actions.following,
+                    }),
+                    PostMenuItem::MarkUnread => Some(Command::MarkUnread {
+                        post,
+                        in_thread: false,
+                    }),
+                    PostMenuItem::Save => Some(Command::SavePost {
+                        post,
+                        saved: !actions.saved,
+                    }),
+                    PostMenuItem::Pin => Some(Command::PinPost {
+                        post,
+                        pinned: !actions.pinned,
+                    }),
+                    PostMenuItem::CopyLink | PostMenuItem::CopyText => {
+                        let Ok(store) = store.read() else { return };
+                        let text = if *item == PostMenuItem::CopyText {
+                            store.posts.get(&post).map(|post| post.message.clone())
+                        } else {
+                            let team = channel_team(&store, channel);
+                            crate::channel_info::post_link(&store, &post, team.as_ref(), &server)
+                        };
+                        drop(store);
+                        if let Some(text) = text {
+                            ctx.clipboard()
+                                .write(warpui::clipboard::ClipboardContent::plain_text(text));
+                        }
+                        None
+                    }
+                    PostMenuItem::Delete => {
+                        ctx.emit(ChannelEvent::ConfirmDelete {
+                            post,
+                            replies: menu.replies,
+                        });
+                        None
+                    }
+                };
+                if let Some(command) = command {
+                    Session::as_ref(ctx).send(command);
+                }
+            }
+        }
+    }
+}
+
+/// Replies in a post's thread (of the post itself if it is the root).
+fn thread_replies(store: &Store, post: &Post) -> i64 {
+    if post.is_root() {
+        post.reply_count
+    } else {
+        store
+            .posts
+            .get(&post.root_id)
+            .map_or(post.reply_count, |root| root.reply_count)
     }
 }

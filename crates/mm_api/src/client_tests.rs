@@ -288,3 +288,64 @@ async fn id_lists_are_json_arrays() {
         .unwrap();
     assert_eq!(statuses[1].user_id.as_str(), "u2");
 }
+
+#[tokio::test]
+async fn post_actions_use_the_webapp_routes() {
+    let (mock, client) = server().await;
+    let client = logged_in(client);
+    for (verb, route) in [
+        ("POST", "/api/v4/posts/p1/pin"),
+        ("POST", "/api/v4/posts/p1/unpin"),
+        ("DELETE", "/api/v4/posts/p1"),
+        ("PUT", "/api/v4/users/u1/teams/t1/threads/p1/following"),
+        ("DELETE", "/api/v4/users/u1/teams/t1/threads/p1/following"),
+        ("POST", "/api/v4/users/u1/teams/t1/threads/p1/set_unread/p2"),
+        ("POST", "/api/v4/users/u1/preferences/delete"),
+    ] {
+        Mock::given(method(verb))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "OK"})))
+            .expect(1)
+            .mount(&mock)
+            .await;
+    }
+    Mock::given(method("POST"))
+        .and(path("/api/v4/users/u1/posts/p1/set_unread"))
+        .and(body_json(json!({"collapsed_threads_supported": true})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api/v4/posts/p1/patch"))
+        .and(body_json(json!({"message": "fixed"})))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"id": "p1", "message": "fixed"})),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+
+    let (user, team, post) = (UserId::from("u1"), TeamId::from("t1"), PostId::from("p1"));
+    client.pin_post(&post, true).await.unwrap();
+    client.pin_post(&post, false).await.unwrap();
+    client.delete_post(&post).await.unwrap();
+    client
+        .follow_thread(&user, &team, &post, true)
+        .await
+        .unwrap();
+    client
+        .follow_thread(&user, &team, &post, false)
+        .await
+        .unwrap();
+    client
+        .set_thread_unread(&user, &team, &post, &"p2".into())
+        .await
+        .unwrap();
+    client.delete_preferences(&user, &[]).await.unwrap();
+    client.set_post_unread(&user, &post, true).await.unwrap();
+    assert_eq!(
+        client.patch_post(&post, "fixed").await.unwrap().message,
+        "fixed"
+    );
+}

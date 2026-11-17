@@ -10,6 +10,7 @@
 //! computed from the state. No I/O and
 //! no UI: the sync engine (`mm_sync`) drives it.
 
+mod actions;
 mod apply;
 mod delta;
 mod items;
@@ -19,6 +20,7 @@ mod store;
 mod timeline;
 mod unread;
 
+pub use actions::PostActions;
 pub use delta::{Fetch, StoreDelta};
 pub use items::{
     ItemOptions, MAX_COMBINED_SYSTEM_POSTS, POST_COLLAPSE_MS, TimelineItem,

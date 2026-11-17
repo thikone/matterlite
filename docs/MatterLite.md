@@ -1063,6 +1063,10 @@ plus the chat palette `ChatColors` that comes with the active theme.
   the theme changes); elements are rebuilt for the visible rows only.
 - Items: post (full header or compact continuation), date separator, new-messages line,
   combined system message, pending/failed post with retry.
+- Post actions (`ml_chat::post_menu`, rules in `mm_store::PostActions`): a toolbar at the
+  hovered post's top right (React, Reply, More) and the post menu (More or right-click):
+  Reply, Follow thread, Mark as unread, Save, Pin, Copy link, Copy text, Edit, Delete, as the
+  webapp's dot menu offers them. Pinned and saved posts carry a small "Pinned · Saved" line.
 
 ### 10.5 Keyboard
 

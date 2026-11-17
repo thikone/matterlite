@@ -10,7 +10,10 @@ use async_channel::{Receiver, Sender};
 use mm_api::{ApiError, Client, ClientOptions, NewPost, PostsQuery};
 use mm_cache::{Cache, Op, OutboxEntry, Writer, account_id, kv, metadata_ops, ops_for};
 use mm_model::ws::{Broadcast, WsEvent};
-use mm_model::{CategoryId, ChannelId, ChannelType, Post, ServerVersion, TeamId, User, UserId};
+use mm_model::{
+    CategoryId, ChannelId, ChannelType, Post, PostId, Preference, ServerVersion, TeamId, User,
+    UserId,
+};
 use mm_store::{PageRequest, StoreDelta, dm_partner};
 use mm_ws::{ResumeState, WsConfig, WsHandle, WsOutput};
 use serde_json::json;
@@ -1010,6 +1013,16 @@ impl Engine {
                 category,
             } => self.move_to_category(team, channel, category).await,
             Command::SetMuted { channel, muted } => self.set_muted(channel, muted).await,
+            Command::PinPost { post, pinned } => self.pin_post(post, pinned).await,
+            Command::SavePost { post, saved } => self.save_post(post, saved).await,
+            Command::MarkUnread { post, in_thread } => self.mark_unread(post, in_thread).await,
+            Command::FollowThread { root, follow } => self.follow_thread(root, follow).await,
+            Command::DeletePost(post) => {
+                self.limiter.acquire().await;
+                if let Err(error) = self.client.delete_post(&post).await {
+                    self.request_failed("Deleting the message", &error).await;
+                }
+            }
             Command::LeaveChannel(channel) => {
                 let me = self.store.read().expect("store lock").me.clone();
                 self.limiter.acquire().await;
@@ -1154,6 +1167,138 @@ impl Engine {
                 crate::auth::describe(&error)
             )))
             .await;
+        }
+    }
+
+    /// Reports a request the user made that failed.
+    async fn request_failed(&self, what: &str, error: &mm_api::ApiError) {
+        log::warn!("{what}: {error}");
+        self.emit(Event::Error(format!(
+            "{what} failed: {}",
+            crate::auth::describe(error)
+        )))
+        .await;
+    }
+
+    async fn pin_post(&mut self, post: PostId, pinned: bool) {
+        let deltas = self
+            .store
+            .write()
+            .expect("store lock")
+            .set_post_pinned(&post, pinned);
+        self.emit_changes(deltas).await;
+        self.limiter.acquire().await;
+        if let Err(error) = self.client.pin_post(&post, pinned).await {
+            let deltas = self
+                .store
+                .write()
+                .expect("store lock")
+                .set_post_pinned(&post, !pinned);
+            self.emit_changes(deltas).await;
+            let what = if pinned {
+                "Pinning the message"
+            } else {
+                "Unpinning the message"
+            };
+            self.request_failed(what, &error).await;
+        }
+    }
+
+    async fn save_post(&mut self, post: PostId, saved: bool) {
+        let me = self.store.read().expect("store lock").me.clone();
+        let preference = Preference {
+            user_id: me.clone(),
+            category: mm_model::preference::keys::FLAGGED_POST.to_owned(),
+            name: post.to_string(),
+            value: "true".to_owned(),
+        };
+        let preferences = std::slice::from_ref(&preference);
+        let deltas = {
+            let mut store = self.store.write().expect("store lock");
+            if saved {
+                store.put_preferences(preferences)
+            } else {
+                store.remove_preferences(preferences)
+            }
+        };
+        self.emit_changes(deltas).await;
+        self.limiter.acquire().await;
+        let result = if saved {
+            self.client.save_preferences(&me, preferences).await
+        } else {
+            self.client.delete_preferences(&me, preferences).await
+        };
+        if let Err(error) = result {
+            let deltas = {
+                let mut store = self.store.write().expect("store lock");
+                if saved {
+                    store.remove_preferences(preferences)
+                } else {
+                    store.put_preferences(preferences)
+                }
+            };
+            self.emit_changes(deltas).await;
+            let what = if saved {
+                "Saving the message"
+            } else {
+                "Removing the message from Saved"
+            };
+            self.request_failed(what, &error).await;
+        }
+    }
+
+    /// The team for a thread request: the channel's, or for a DM or GM one of mine (the
+    /// webapp uses the current team; the server only checks the channel).
+    fn thread_team(&self, post: &PostId) -> Option<(UserId, TeamId, PostId)> {
+        let store = self.store.read().expect("store lock");
+        let post = store.posts.get(post)?;
+        let root = if post.is_root() {
+            post.id.clone()
+        } else {
+            post.root_id.clone()
+        };
+        let team = store
+            .channels
+            .get(&post.channel_id)
+            .map(|channel| channel.team_id.clone())
+            .filter(|team| !team.is_empty())
+            .or_else(|| store.team_members.keys().min().cloned())?;
+        Some((store.me.clone(), team, root))
+    }
+
+    async fn mark_unread(&mut self, post: PostId, in_thread: bool) {
+        let (me, crt) = {
+            let store = self.store.read().expect("store lock");
+            (store.me.clone(), store.crt_enabled())
+        };
+        self.limiter.acquire().await;
+        let result = if in_thread && crt {
+            let Some((me, team, root)) = self.thread_team(&post) else {
+                return;
+            };
+            self.client
+                .set_thread_unread(&me, &team, &root, &post)
+                .await
+        } else {
+            self.client.set_post_unread(&me, &post, crt).await
+        };
+        if let Err(error) = result {
+            self.request_failed("Marking as unread", &error).await;
+        }
+    }
+
+    async fn follow_thread(&mut self, root: PostId, follow: bool) {
+        let Some((me, team, root)) = self.thread_team(&root) else {
+            return;
+        };
+        self.limiter.acquire().await;
+        if let Err(error) = self.client.follow_thread(&me, &team, &root, follow).await {
+            let what = if follow {
+                "Following the thread"
+            } else {
+                "Unfollowing the thread"
+            };
+            self.request_failed(what, &error).await;
         }
     }
 

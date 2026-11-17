@@ -11,6 +11,7 @@ mod tool_panel;
 pub mod window_controls;
 mod workspace;
 
+pub use buttons::icon_button_with_color;
 pub use search_bar::{
     Matcher, SearchBarEvent, SearchBarOptions, SearchBarView, ToggleGroup, ToggleSpec,
 };
