@@ -252,6 +252,7 @@ impl MessageRenderer<'_> {
                 .enumerate()
                 .map(|(column, cell)| TableCell {
                     content: self.inline(cell, palette.size, header),
+                    min_content: self.text(&words_on_lines(cell), palette.size, header),
                     alignment: table.alignments.get(column).copied().unwrap_or_default(),
                 })
                 .collect()
@@ -544,4 +545,29 @@ fn intern(path: &str) -> &'static str {
     let leaked: &'static str = Box::leak(path.to_owned().into_boxed_str());
     paths.insert(path.to_owned(), leaked);
     leaked
+}
+
+/// The spans with a line break at every space, so the text is as wide as its longest word
+/// (words joined across spans without a space stay one word).
+fn words_on_lines(spans: &[Span]) -> Vec<Span> {
+    let mut out = Vec::new();
+    for span in spans {
+        if span.kind == SpanKind::LineBreak {
+            out.push(span.clone());
+            continue;
+        }
+        for (index, word) in span.text.split(char::is_whitespace).enumerate() {
+            if index > 0 {
+                out.push(Span {
+                    text: String::new(),
+                    style: span.style,
+                    kind: SpanKind::LineBreak,
+                });
+            }
+            if !word.is_empty() {
+                out.push(Span::text(word, span.style));
+            }
+        }
+    }
+    out
 }

@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! A Markdown table: every column as wide as its widest cell (as the webapp's
-//! `markdown__table`, which isn't stretched to the message's width), all columns narrowed in
-//! proportion (their text wrapping) when the table doesn't fit, and every cell of a row as
-//! tall as the row, so the borders line up.
+//! A Markdown table, its columns sized as a browser sizes an HTML table (`table-layout:
+//! auto`): each column as wide as its widest cell on one line when the table fits (the
+//! webapp's `markdown__table` isn't stretched to the message's width); otherwise every column
+//! gets at least its longest word and the rest of the width is shared in proportion to how much
+//! more each column would take, so short columns aren't squeezed by long ones. Words break
+//! only when even the longest words don't fit. Every cell of a row is as tall as the row, so
+//! the borders line up.
 
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::{Vector2F, vec2f};
@@ -24,6 +27,9 @@ const MIN_COLUMN: f32 = 24.;
 
 pub struct TableCell {
     pub content: Box<dyn Element>,
+    /// The content's words one per line: its width is the narrowest the cell can be without
+    /// breaking a word (CSS min-content).
+    pub min_content: Box<dyn Element>,
     pub alignment: Alignment,
 }
 
@@ -57,16 +63,33 @@ impl MarkdownTable {
     }
 }
 
-/// Column widths (content) from their natural widths: as they are when they fit in `available`
-/// (content width of the whole table), else narrowed in proportion, none below `MIN_COLUMN`.
-pub fn column_widths(natural: &[f32], available: f32) -> Vec<f32> {
-    let total: f32 = natural.iter().sum();
-    if total <= available || total <= 0. {
-        return natural.to_vec();
-    }
-    let scale = available.max(0.) / total;
-    natural
+/// Column widths (content) from each column's narrowest width without breaking a word
+/// (`min`) and its one-line width (`max`), for `available` content width: the one-line widths
+/// when they fit; else the narrowest widths plus the room left, shared in proportion to
+/// `max - min`; else (not even the longest words fit) the narrowest widths narrowed in
+/// proportion, none below `MIN_COLUMN`.
+pub fn column_widths(min: &[f32], max: &[f32], available: f32) -> Vec<f32> {
+    let max: Vec<f32> = max
         .iter()
+        .zip(min)
+        .map(|(max, min)| max.max(*min))
+        .collect();
+    let total_max: f32 = max.iter().sum();
+    if total_max <= available || total_max <= 0. {
+        return max;
+    }
+    let total_min: f32 = min.iter().sum();
+    if total_min < available {
+        let room = available - total_min;
+        let wanted = total_max - total_min;
+        return min
+            .iter()
+            .zip(&max)
+            .map(|(min, max)| min + (max - min) * room / wanted)
+            .collect();
+    }
+    let scale = available.max(0.) / total_min.max(1.);
+    min.iter()
         .map(|width| (width * scale).max(MIN_COLUMN.min(*width)))
         .collect()
 }
@@ -79,17 +102,20 @@ impl Element for MarkdownTable {
         app: &AppContext,
     ) -> Vector2F {
         let count = self.rows.iter().map(Vec::len).max().unwrap_or(0);
-        // Natural widths: each cell on one line.
+        // Each column's one-line width and its longest word's.
         let mut natural = vec![0f32; count];
+        let mut narrowest = vec![0f32; count];
         let unbounded = SizeConstraint::new(Vector2F::zero(), vec2f(f32::INFINITY, f32::INFINITY));
         for row in &mut self.rows {
             for (column, cell) in row.iter_mut().enumerate() {
                 let size = cell.content.layout(unbounded, ctx, app);
                 natural[column] = natural[column].max(size.x().ceil());
+                let words = cell.min_content.layout(unbounded, ctx, app);
+                narrowest[column] = narrowest[column].max(words.x().ceil());
             }
         }
         let chrome = count as f32 * (2. * PADDING_X + 1.) + 1.;
-        self.columns = column_widths(&natural, constraint.max.x() - chrome);
+        self.columns = column_widths(&narrowest, &natural, constraint.max.x() - chrome);
         // Each cell in its column's width; the row as tall as its tallest cell.
         self.heights.clear();
         self.sizes.clear();
