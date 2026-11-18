@@ -213,6 +213,7 @@ impl RootView {
                     )
                 }) {
                     me.drop_gone_tabs(ctx);
+                    me.close_gone_thread(ctx);
                 }
                 if deltas.iter().any(affects_tabs) {
                     me.sync_tabs(ctx);
@@ -804,6 +805,26 @@ impl RootView {
         };
         if !removed.is_empty() {
             self.after_tabs_change(ctx);
+        }
+    }
+
+    /// Closes the right panel's thread when its root was deleted (by anyone) or its channel
+    /// left, as `drop_gone_tabs` does for thread tabs.
+    fn close_gone_thread(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(root) = self
+            .thread
+            .as_ref()
+            .and_then(|thread| thread.as_ref(ctx).thread().cloned())
+        else {
+            return;
+        };
+        let gone = Session::as_ref(ctx)
+            .store()
+            .and_then(|store| store.read().ok())
+            .is_some_and(|store| !key_exists(&store, &ChatKey::Thread(root)));
+        if gone {
+            self.close_thread(ctx);
+            self.focus_chat(ctx);
         }
     }
 

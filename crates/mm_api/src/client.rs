@@ -9,7 +9,7 @@ use mm_model::{
     AppError, Channel, ChannelId, ChannelMember, ChannelStats, ClientConfig, Emoji, EmojiId,
     OrderedSidebarCategories, Post, PostId, PostList, Preference, Reaction, Role, ScheduledPost,
     ServerVersion, SessionToken, SidebarCategory, Status, Team, TeamId, TeamMember, TeamUnread,
-    ThreadList, User, UserId,
+    ThreadList, ThreadResponse, User, UserId,
 };
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{Method, RequestBuilder, Response, StatusCode};
@@ -943,6 +943,28 @@ impl Client {
             "read",
             &timestamp,
         ]))
+        .await
+    }
+
+    /// `GET /users/{uid}/teams/{tid}/threads/{id}?extended=true`: one followed thread, its
+    /// participants as full users (`getUserThread`).
+    pub async fn user_thread(
+        &self,
+        user_id: &UserId,
+        team_id: &TeamId,
+        root_id: &PostId,
+    ) -> Result<ThreadResponse, ApiError> {
+        self.json(
+            self.get(&[
+                "users",
+                user_id.as_str(),
+                "teams",
+                team_id.as_str(),
+                "threads",
+                root_id.as_str(),
+            ])
+            .query(&[("extended", "true")]),
+        )
         .await
     }
 

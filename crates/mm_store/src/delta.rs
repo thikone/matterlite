@@ -72,4 +72,9 @@ pub enum Fetch {
     /// My roles changed: refetch them by name.
     Roles,
     Users(Vec<UserId>),
+    /// A followed thread's record (after one of its replies was deleted: `fetchThread`).
+    Thread {
+        team: TeamId,
+        root: PostId,
+    },
 }

@@ -306,6 +306,58 @@ fn reactions_and_deletes() {
 }
 
 #[test]
+fn a_deleted_reply_updates_the_followed_thread() {
+    let mut store = new_store("always_on");
+    store.add_thread(
+        &"root1".into(),
+        &serde_json::from_value::<PostList>(json!({
+            "order": ["r2", "r1", "root1"],
+            "posts": {
+                "root1": {"id": "root1", "channel_id": "c1", "user_id": "bob", "create_at": 100,
+                          "reply_count": 2},
+                "r1": {"id": "r1", "channel_id": "c1", "user_id": "bob", "root_id": "root1",
+                       "create_at": 150},
+                "r2": {"id": "r2", "channel_id": "c1", "user_id": ME, "root_id": "root1",
+                       "create_at": 160}
+            }
+        }))
+        .unwrap(),
+    );
+    apply(
+        &mut store,
+        event(
+            "thread_updated",
+            json!({"thread": json!({"id": "root1", "reply_count": 2, "last_reply_at": 160,
+                "participants": [{"id": "bob"}, {"id": ME}],
+                "post": {"id": "root1", "channel_id": "c1", "user_id": "bob", "create_at": 100}})
+                .to_string(),
+                "previous_unread_replies": 0, "previous_unread_mentions": 0}),
+            json!({"team_id": "t1"}),
+        ),
+    );
+    let deltas = apply(
+        &mut store,
+        event(
+            "post_deleted",
+            json!({"post": json!({"id": "r1", "channel_id": "c1", "user_id": "bob",
+                "root_id": "root1", "delete_at": 9}).to_string()}),
+            json!({"channel_id": "c1"}),
+        ),
+    );
+    assert!(deltas.contains(&StoreDelta::ThreadChanged("root1".into())));
+    assert!(deltas.iter().any(|delta| matches!(
+        delta,
+        StoreDelta::Fetch(Fetch::Thread { root, .. }) if root.as_str() == "root1"
+    )));
+    let thread = &store.thread_states[&PostId::from("root1")];
+    assert_eq!(thread.reply_count, 1);
+    // All the remaining replies are known: bob has none left.
+    let participants: Vec<&str> = thread.participants.iter().map(|u| u.id.as_str()).collect();
+    assert_eq!(participants, [ME]);
+    assert_eq!(store.posts[&PostId::from("root1")].reply_count, 1);
+}
+
+#[test]
 fn read_state_from_other_devices() {
     let mut store = new_store("always_on");
     apply(

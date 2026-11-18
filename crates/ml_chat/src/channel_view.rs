@@ -2438,9 +2438,15 @@ impl ChannelView {
                         None
                     }
                     PostMenuItem::Delete => {
+                        // Only a root takes replies with it (`menu.replies` is the thread's).
+                        let root = store
+                            .read()
+                            .ok()
+                            .and_then(|store| store.posts.get(&post).map(|known| known.is_root()))
+                            .unwrap_or(false);
                         ctx.emit(ChannelEvent::ConfirmDelete {
                             post,
-                            replies: menu.replies,
+                            replies: if root { menu.replies } else { 0 },
                         });
                         None
                     }

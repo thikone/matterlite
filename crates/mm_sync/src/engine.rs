@@ -900,6 +900,17 @@ impl Engine {
                     }
                     Vec::new()
                 }
+                mm_store::Fetch::Thread { team, root } => {
+                    let me = self.store.read().expect("store lock").me.clone();
+                    let thread = self.client.user_thread(&me, &team, &root).await?;
+                    let mut store = self.store.write().expect("store lock");
+                    // Unfollowed or gone meanwhile: keep it out of the list.
+                    if store.thread_states.contains_key(&root) {
+                        store.put_thread_state(thread)
+                    } else {
+                        Vec::new()
+                    }
+                }
             })
         }
         .await;

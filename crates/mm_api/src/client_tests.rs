@@ -356,6 +356,26 @@ async fn post_actions_use_the_webapp_routes() {
 }
 
 #[tokio::test]
+async fn a_followed_thread_is_fetched_extended() {
+    let (mock, client) = server().await;
+    let client = logged_in(client);
+    Mock::given(method("GET"))
+        .and(path("/api/v4/users/u1/teams/t1/threads/p1"))
+        .and(wiremock::matchers::query_param("extended", "true"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"id": "p1", "reply_count": 1})),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+    let thread = client
+        .user_thread(&"u1".into(), &"t1".into(), &"p1".into())
+        .await
+        .unwrap();
+    assert_eq!((thread.id.as_str(), thread.reply_count), ("p1", 1));
+}
+
+#[tokio::test]
 async fn reactions_use_the_webapp_routes() {
     let (mock, client) = server().await;
     let client = logged_in(client);

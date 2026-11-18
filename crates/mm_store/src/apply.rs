@@ -170,12 +170,7 @@ impl Store {
                     (thread.unread_replies, thread.unread_mentions),
                     &mut deltas,
                 );
-                let mut thread = thread.clone();
-                if let Some(root) = self.put_thread_root(&mut thread) {
-                    deltas.push(StoreDelta::PostsChanged(vec![root]));
-                }
-                deltas.push(StoreDelta::ThreadChanged(thread.id.clone()));
-                self.thread_states.insert(thread.id.clone(), thread);
+                deltas.extend(self.put_thread_state(thread.clone()));
             }
             WsEvent::ThreadReadChanged(read) => {
                 if read.thread_id.is_empty() {
@@ -462,12 +457,63 @@ impl Store {
                 removed.push(reply);
             }
             self.thread_states.remove(&post.id);
-        } else if let Some(root) = self.posts.get_mut(&post.root_id) {
-            let root = Arc::make_mut(root);
-            root.reply_count = (root.reply_count - 1).max(0);
-            deltas.push(StoreDelta::PostsChanged(vec![post.root_id.clone()]));
+        } else {
+            if let Some(root) = self.posts.get_mut(&post.root_id) {
+                let root = Arc::make_mut(root);
+                root.reply_count = (root.reply_count - 1).max(0);
+                deltas.push(StoreDelta::PostsChanged(vec![post.root_id.clone()]));
+            }
+            self.thread_reply_deleted(&post.root_id, deltas);
         }
         deltas.push(StoreDelta::PostsRemoved(removed));
+    }
+
+    /// A followed thread's record (from `thread_updated` or fetched), with its copy of the root.
+    pub fn put_thread_state(&mut self, mut thread: mm_model::ThreadResponse) -> Vec<StoreDelta> {
+        let mut deltas = Vec::new();
+        if let Some(root) = self.put_thread_root(&mut thread) {
+            deltas.push(StoreDelta::PostsChanged(vec![root]));
+        }
+        deltas.push(StoreDelta::ThreadChanged(thread.id.clone()));
+        self.thread_states.insert(thread.id.clone(), thread);
+        deltas
+    }
+
+    /// A reply of a followed thread was deleted: the server sends no `thread_updated` for it,
+    /// so its reply count goes down here at once, its participants are those of the remaining
+    /// replies when they are all known, and the record is refetched (as the webapp's
+    /// `handlePostDeleteEvent` does).
+    fn thread_reply_deleted(&mut self, root: &PostId, deltas: &mut Vec<StoreDelta>) {
+        let Some(state) = self.thread_states.get_mut(root) else {
+            return;
+        };
+        state.reply_count = (state.reply_count - 1).max(0);
+        let replies: Vec<&UserId> = self
+            .posts
+            .values()
+            .filter(|reply| reply.root_id == *root && reply.delete_at == 0)
+            .map(|reply| &reply.user_id)
+            .collect();
+        if replies.len() as i64 == state.reply_count {
+            state
+                .participants
+                .retain(|user| replies.contains(&&user.id));
+        }
+        deltas.push(StoreDelta::ThreadChanged(root.clone()));
+        // The thread's team: its channel's, or (a DM) any of mine, as the webapp's current one.
+        let team = self
+            .posts
+            .get(root)
+            .and_then(|post| self.channels.get(&post.channel_id))
+            .map(|channel| channel.team_id.clone())
+            .filter(|team| !team.as_str().is_empty())
+            .or_else(|| self.teams.keys().min().cloned());
+        if let Some(team) = team {
+            deltas.push(StoreDelta::Fetch(Fetch::Thread {
+                team,
+                root: root.clone(),
+            }));
+        }
     }
 
     pub(crate) fn reaction(
