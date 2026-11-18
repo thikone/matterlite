@@ -1071,6 +1071,8 @@ plus the chat palette `ChatColors` that comes with the active theme.
   `ChatKey::Thread`: root, "N replies", replies, a composer that replies; Reply, the reply
   count and "replied in a thread" open it; `Esc` or ✕ closes it; open thread and width are
   saved per account. "Open in tab" moves it to a tab (`tabs::ChatKey::Thread`).
+- Edit history: "(edited)" on my post opens `EditHistoryView` in the right panel (current
+  version first, earlier ones collapsed, Restore with a confirmation).
 - Reactions: chips under the message (a click adds or removes mine, hovering names who
   reacted), and the emoji picker (`ml_chat::emoji_picker`) from React in the toolbar or the
   `+` chip: search, category tabs, a virtualized grid (`UniformList`), Recently Used from the

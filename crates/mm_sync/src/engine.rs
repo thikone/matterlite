@@ -1036,6 +1036,36 @@ impl Engine {
                 }
             }
             Command::React { post, emoji, add } => self.react(post, emoji, add).await,
+            Command::LoadEditHistory(post) => {
+                self.limiter.acquire().await;
+                let versions = match self.client.edit_history(&post).await {
+                    Ok(versions) => Some(versions),
+                    Err(error) => {
+                        log::warn!("edit history of {post}: {error}");
+                        None
+                    }
+                };
+                let deltas = self
+                    .store
+                    .write()
+                    .expect("store lock")
+                    .set_edit_history(post, versions);
+                self.emit_changes(deltas).await;
+            }
+            Command::RestorePostVersion { post, version } => {
+                self.limiter.acquire().await;
+                match self.client.restore_post_version(&post, &version).await {
+                    Ok(restored) => {
+                        let deltas = self
+                            .store
+                            .write()
+                            .expect("store lock")
+                            .put_edited_post(&restored);
+                        self.emit_changes(deltas).await;
+                    }
+                    Err(error) => self.request_failed("Restoring the message", &error).await,
+                }
+            }
             Command::EditPost { post, message } => {
                 self.limiter.acquire().await;
                 match self.client.patch_post(&post, &message).await {

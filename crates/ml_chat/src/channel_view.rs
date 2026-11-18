@@ -141,6 +141,8 @@ pub enum ChannelEvent {
     Close,
     /// "Open in tab": the right panel's thread moves to a chat tab.
     OpenInTab(PostId),
+    /// "(edited)" on my post: show its edit history in the right panel.
+    ShowEditHistory(PostId),
 }
 
 pub(crate) fn init(app: &mut AppContext) {
@@ -189,6 +191,9 @@ struct PostData {
     avatar: Option<PathBuf>,
     time: String,
     reactions: Vec<ReactionChip>,
+    /// "(edited)": its tooltip, and whether a click shows the edit history (my post, while
+    /// I may edit it, as the webapp's `PostEditedIndicator`).
+    edited: Option<(String, bool)>,
     files: Vec<String>,
     /// Replies of a root post under Collapsed Reply Threads.
     replies: i64,
@@ -866,6 +871,15 @@ impl ChannelView {
                             let actions = store.post_actions(&post.id, now);
                             timeline::reaction_chips(&store, post, actions.react, actions.unreact)
                         },
+                        edited: (post.edit_at != 0 && !post.is_deleted()).then(|| {
+                            let history =
+                                post.user_id == store.me && store.post_actions(&post.id, now).edit;
+                            let mut label = timeline::edited_label(&clock, post.edit_at, now);
+                            if history {
+                                label.push_str(" · Click to view history");
+                            }
+                            (label, history)
+                        }),
                         files: post
                             .metadata
                             .as_ref()
@@ -1659,12 +1673,10 @@ fn render_post(
         };
         content.add_child(renderer.render(&doc));
     }
-    if post.edit_at != 0 && !post.is_deleted() && editing.is_none() {
-        content.add_child(
-            Text::new_inline("(edited)", style.font, small)
-                .with_color(style.muted)
-                .finish(),
-        );
+    if let (Some((tooltip, history)), None) = (&data.edited, editing) {
+        content.add_child(edited_indicator(
+            shared, style, &post.id, tooltip, *history, appearance,
+        ));
     }
     for file in &data.files {
         content.add_child(
@@ -1881,6 +1893,65 @@ fn reaction_chip(
             });
     }
     hoverable.finish()
+}
+
+/// "(edited)" under a message: when, on hover; on my post a click shows the edit history.
+fn edited_indicator(
+    shared: &Shared,
+    style: &RowStyle,
+    post: &PostId,
+    tooltip: &str,
+    history: bool,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let state = shared
+        .chips
+        .borrow_mut()
+        .entry((post.clone(), "(edited)".to_owned()))
+        .or_default()
+        .clone();
+    let tooltip = appearance
+        .ui_builder()
+        .tool_tip(tooltip.to_owned())
+        .build()
+        .finish();
+    let (font, size, muted, link) = (style.font, style.size - 2., style.muted, style.palette.link);
+    let mut indicator = Hoverable::new(state, move |state| {
+        let color = if history && state.is_hovered() {
+            link
+        } else {
+            muted
+        };
+        let text = Text::new_inline("(edited)", font, size)
+            .with_color(color)
+            .finish();
+        if !state.is_hovered() {
+            return text;
+        }
+        let mut stack = Stack::new().with_child(text);
+        stack.add_positioned_overlay_child(
+            tooltip,
+            warpui::elements::OffsetPositioning::offset_from_parent(
+                pathfinder_geometry::vector::vec2f(0., -4.),
+                warpui::elements::ParentOffsetBounds::WindowByPosition,
+                warpui::elements::ParentAnchor::TopLeft,
+                warpui::elements::ChildAnchor::BottomLeft,
+            ),
+        );
+        stack.finish()
+    });
+    if history {
+        let post = post.clone();
+        indicator = indicator
+            .with_cursor(Cursor::PointingHand)
+            .on_click(move |ctx, _, _| {
+                ctx.dispatch_typed_action(ChannelAction::Post(PostAction::EditHistory {
+                    post: post.clone(),
+                }))
+            });
+    }
+    // In a row, so only the word takes the pointer.
+    Flex::row().with_child(indicator.finish()).finish()
 }
 
 /// The `+` chip after a post's reactions: opens the emoji picker.
@@ -2257,6 +2328,9 @@ impl ChannelView {
             }
             PostAction::ClosePicker => self.close_picker(false, ctx),
             PostAction::Reply { post } => self.reply(post, ctx),
+            PostAction::EditHistory { post } => {
+                ctx.emit(ChannelEvent::ShowEditHistory(post.clone()))
+            }
             PostAction::ToggleReaction { post, emoji } => {
                 let Ok(store) = store.read() else { return };
                 let actions = store.post_actions(post, now_ms());

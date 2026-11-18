@@ -188,6 +188,13 @@ pub enum Command {
         emoji: String,
         add: bool,
     },
+    /// Loads the earlier versions of my post (`Store::edit_history`).
+    LoadEditHistory(PostId),
+    /// Gives my post an earlier version's message; the response updates the store.
+    RestorePostVersion {
+        post: PostId,
+        version: PostId,
+    },
     /// Changes a post's message (`PUT /posts/{id}/patch`); the response updates the store.
     EditPost {
         post: PostId,

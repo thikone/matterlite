@@ -384,3 +384,35 @@ async fn reactions_use_the_webapp_routes() {
     );
     client.remove_reaction(&user, &post, "+1").await.unwrap();
 }
+
+#[tokio::test]
+async fn edit_history_and_restore_use_the_webapp_routes() {
+    let (mock, client) = server().await;
+    let client = logged_in(client);
+    Mock::given(method("GET"))
+        .and(path("/api/v4/posts/p1/edit_history"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"id": "v2", "original_id": "p1", "message": "second", "edit_at": 20},
+            {"id": "v1", "original_id": "p1", "message": "first", "edit_at": 10},
+        ])))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v4/posts/p1/restore/v1"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"id": "p1", "message": "first"})),
+        )
+        .expect(1)
+        .mount(&mock)
+        .await;
+    let post = PostId::from("p1");
+    let history = client.edit_history(&post).await.unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[1].original_id, post);
+    let restored = client
+        .restore_post_version(&post, &"v1".into())
+        .await
+        .unwrap();
+    assert_eq!(restored.message, "first");
+}

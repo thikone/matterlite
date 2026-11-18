@@ -570,6 +570,17 @@ impl Clock {
     }
 }
 
+/// When a post was edited, as the webapp's edited indicator says it: "Edited today at
+/// 10:02 AM", "Edited Monday, January 5 at 9:15 PM".
+pub fn edited_label(clock: &Clock, edit_at: i64, now_ms: i64) -> String {
+    let date = date_label(clock.zone.date(edit_at), clock.today(now_ms));
+    let date = match date.as_str() {
+        "Today" | "Yesterday" => date.to_lowercase(),
+        _ => date,
+    };
+    format!("Edited {date} at {}", clock.time(edit_at))
+}
+
 /// A date separator: Today, Yesterday, the weekday and date this year, else with the year.
 pub fn date_label(date: NaiveDate, today: NaiveDate) -> String {
     if date == today {

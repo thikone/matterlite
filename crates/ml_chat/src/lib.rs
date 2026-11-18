@@ -11,6 +11,7 @@ pub mod chats;
 mod chats_view;
 pub mod composer;
 mod composer_view;
+mod edit_history;
 mod emoji_picker;
 mod format;
 pub mod history;
@@ -38,6 +39,7 @@ pub fn init(app: &mut warpui::AppContext) {
     app.add_singleton_model(account_theme::AccountThemeFollower::new);
     root_view::init(app);
     channel_view::init(app);
+    edit_history::init(app);
 }
 
 /// Opens the most recently used account if its login is saved (call once the window exists,

@@ -726,6 +726,24 @@ impl Client {
         .await
     }
 
+    /// `GET /posts/{id}/edit_history`: the earlier versions of my post, newest first (the
+    /// server refuses anyone but the author).
+    pub async fn edit_history(&self, post_id: &PostId) -> Result<Vec<Post>, ApiError> {
+        self.json(self.get(&["posts", post_id.as_str(), "edit_history"]))
+            .await
+    }
+
+    /// `POST /posts/{id}/restore/{version_id}`: the post takes an earlier version's message
+    /// (its current one goes into the history); the server answers with the post.
+    pub async fn restore_post_version(
+        &self,
+        post_id: &PostId,
+        version_id: &PostId,
+    ) -> Result<Post, ApiError> {
+        self.json(self.post(&["posts", post_id.as_str(), "restore", version_id.as_str()]))
+            .await
+    }
+
     /// `DELETE /posts/{id}`; a root post takes its replies with it.
     pub async fn delete_post(&self, post_id: &PostId) -> Result<(), ApiError> {
         self.empty(self.delete(&["posts", post_id.as_str()])).await

@@ -392,3 +392,21 @@ fn thread_rows_show_the_root_the_count_and_the_replies() {
         ]
     );
 }
+
+#[test]
+fn edited_labels_say_when() {
+    // The test user's zone is UTC.
+    let clock = Clock::of(&store());
+    assert_eq!(
+        edited_label(&clock, NOON + 2 * MINUTE, NOON + 60 * MINUTE),
+        "Edited today at 12:02 PM"
+    );
+    assert_eq!(
+        edited_label(&clock, NOON - 24 * 60 * MINUTE, NOON),
+        "Edited yesterday at 12:00 PM"
+    );
+    assert_eq!(
+        edited_label(&clock, NOON - 5 * 24 * 60 * MINUTE, NOON),
+        "Edited Monday, January 5 at 12:00 PM"
+    );
+}

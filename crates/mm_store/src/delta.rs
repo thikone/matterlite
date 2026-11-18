@@ -49,6 +49,8 @@ pub enum StoreDelta {
     ConfigChanged,
     LicenseChanged,
     EmojiChanged,
+    /// A post's edit history was loaded (or failed to load).
+    EditHistoryChanged(PostId),
     /// A pending post was sent, failed or retried.
     PendingChanged(String),
     /// The store lacks data an event refers to; the engine fetches it.

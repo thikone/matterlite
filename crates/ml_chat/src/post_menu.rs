@@ -52,6 +52,10 @@ pub enum PostAction {
     Reply {
         post: PostId,
     },
+    /// "(edited)" on my post: its edit history in the right panel.
+    EditHistory {
+        post: PostId,
+    },
     /// A click on a reaction chip: add or remove mine.
     ToggleReaction {
         post: PostId,

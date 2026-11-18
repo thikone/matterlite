@@ -34,6 +34,7 @@ use crate::channel_pane::{ChannelPane, ChannelPaneEvent};
 use crate::channel_view::{ChannelEvent, ChannelView};
 use crate::chats::{ChannelIcon, Presence};
 use crate::chats_view::{ChatsEvent, ChatsView};
+use crate::edit_history::{EditHistoryEvent, EditHistoryView};
 use crate::format::format_size;
 use crate::history_pane::{HistoryEvent, HistoryPane};
 use crate::login_view::LoginView;
@@ -83,6 +84,8 @@ pub enum RootAction {
     DismissError,
     /// Delete in the "Delete message" dialog.
     DeletePost,
+    /// Restore in the "Restore this version?" dialog.
+    RestoreVersion,
     PauseSync,
     ResumeSync,
     /// The window buttons on the login screen.
@@ -119,8 +122,17 @@ pub(crate) fn init(app: &mut AppContext) {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Dialog {
     Account,
-    DeletePost { post: PostId, replies: i64 },
+    DeletePost {
+        post: PostId,
+        replies: i64,
+    },
     ReactionLimit,
+    /// Restore an earlier version of my post (`message`: that version's text).
+    RestoreVersion {
+        post: mm_model::PostId,
+        version: mm_model::PostId,
+        message: String,
+    },
 }
 
 #[derive(Default)]
@@ -133,6 +145,7 @@ struct Buttons {
     keep_cache: button::Button,
     ok: button::Button,
     delete: button::Button,
+    restore: button::Button,
     dialog: dialog::Dialog,
 }
 
@@ -143,6 +156,8 @@ pub struct RootView {
     channel: Option<ViewHandle<ChannelView>>,
     /// The thread in the right panel.
     thread: Option<ViewHandle<ChannelView>>,
+    /// A post's edit history, shown in the right panel instead of the thread.
+    edit_history: Option<ViewHandle<EditHistoryView>>,
     channel_pane: Option<ViewHandle<ChannelPane>>,
     history: Option<ViewHandle<HistoryPane>>,
     switcher: Option<ViewHandle<SwitcherView>>,
@@ -209,6 +224,7 @@ impl RootView {
             chats: None,
             channel: None,
             thread: None,
+            edit_history: None,
             channel_pane: None,
             history: None,
             switcher: None,
@@ -284,6 +300,26 @@ impl RootView {
                 workspace.set_right_panel(Some(Box::new(panel)), ctx)
             });
             self.thread = Some(thread);
+            let edit_history = ctx.add_typed_action_view(EditHistoryView::new);
+            ctx.subscribe_to_view(&edit_history, |me, _, event, ctx| match event {
+                EditHistoryEvent::Close => {
+                    me.close_thread(ctx);
+                    me.focus_chat(ctx);
+                }
+                EditHistoryEvent::Restore {
+                    post,
+                    version,
+                    message,
+                } => {
+                    me.dialog = Some(Dialog::RestoreVersion {
+                        post: post.clone(),
+                        version: version.clone(),
+                        message: message.clone(),
+                    });
+                    ctx.notify();
+                }
+            });
+            self.edit_history = Some(edit_history);
             let channel_pane = ctx.add_typed_action_view(ChannelPane::new);
             ctx.subscribe_to_view(&channel_pane, |me, _, event, ctx| match event {
                 ChannelPaneEvent::ShowPost(post) => me.show_post(post.clone(), ctx),
@@ -325,6 +361,7 @@ impl RootView {
             self.chats = None;
             self.channel = None;
             self.thread = None;
+            self.edit_history = None;
             self.channel_pane = None;
             self.history = None;
             self.switcher = None;
@@ -374,6 +411,7 @@ impl RootView {
                 }
             }
             ChannelEvent::OpenThread(root) => self.open_thread(root.clone(), true, ctx),
+            ChannelEvent::ShowEditHistory(post) => self.show_edit_history(post.clone(), ctx),
             ChannelEvent::OpenInTab(root) => {
                 self.close_thread(ctx);
                 self.open_key(ChatKey::Thread(root.clone()), ctx);
@@ -398,6 +436,7 @@ impl RootView {
         let (Some(thread), Some(workspace)) = (self.thread.clone(), self.workspace.clone()) else {
             return;
         };
+        self.show_thread_pane(ctx);
         thread.update(ctx, |thread, ctx| thread.set_thread(Some(root), ctx));
         workspace.update(ctx, |workspace, ctx| {
             workspace.set_right_panel_open(true, ctx)
@@ -408,8 +447,47 @@ impl RootView {
         self.save_panel(ctx);
     }
 
-    /// Closes the right panel's thread (the panel itself too).
+    /// Shows a post's edit history in the right panel, in place of its thread.
+    fn show_edit_history(&mut self, post: mm_model::PostId, ctx: &mut ViewContext<Self>) {
+        let (Some(history), Some(workspace)) = (self.edit_history.clone(), self.workspace.clone())
+        else {
+            return;
+        };
+        if let Some(thread) = &self.thread {
+            thread.update(ctx, |thread, ctx| thread.set_thread(None, ctx));
+        }
+        let pane = ViewPane(history.clone());
+        workspace.update(ctx, |workspace, ctx| {
+            workspace.set_right_panel(Some(Box::new(pane)), ctx);
+            workspace.set_right_panel_open(true, ctx);
+        });
+        history.update(ctx, |history, ctx| history.show(Some(post), ctx));
+        ctx.focus(&history);
+        self.save_panel(ctx);
+    }
+
+    /// The right panel shows the thread view again (not the edit history).
+    fn show_thread_pane(&mut self, ctx: &mut ViewContext<Self>) {
+        let (Some(thread), Some(history), Some(workspace)) = (
+            self.thread.clone(),
+            self.edit_history.clone(),
+            self.workspace.clone(),
+        ) else {
+            return;
+        };
+        if history.as_ref(ctx).post().is_none() {
+            return;
+        }
+        history.update(ctx, |history, ctx| history.show(None, ctx));
+        let pane = ViewPane(thread);
+        workspace.update(ctx, |workspace, ctx| {
+            workspace.set_right_panel(Some(Box::new(pane)), ctx)
+        });
+    }
+
+    /// Closes the right panel's thread or edit history (the panel itself too).
     fn close_thread(&mut self, ctx: &mut ViewContext<Self>) {
+        self.show_thread_pane(ctx);
         if let Some(thread) = &self.thread {
             thread.update(ctx, |thread, ctx| thread.set_thread(None, ctx));
         }
@@ -870,6 +948,9 @@ impl RootView {
                 Some(self.render_delete_post(*replies, appearance))
             }
             Dialog::ReactionLimit => Some(self.render_reaction_limit(appearance)),
+            Dialog::RestoreVersion { message, .. } => {
+                Some(self.render_restore_version(message, appearance))
+            }
         }
     }
 
@@ -1008,6 +1089,40 @@ impl RootView {
             ),
         ];
         self.dialog("Delete message", lines, buttons, true, appearance)
+    }
+
+    /// The webapp's `RestorePostModal`: the version's text, Cancel and Restore.
+    fn render_restore_version(&self, message: &str, appearance: &Appearance) -> Box<dyn Element> {
+        const SHOWN: usize = 400;
+        let mut text: String = message.chars().take(SHOWN).collect();
+        if message.chars().count() > SHOWN {
+            text.push('…');
+        }
+        let buttons = vec![
+            self.button(
+                &self.buttons.cancel,
+                "Cancel",
+                false,
+                false,
+                RootAction::CloseDialog,
+                appearance,
+            ),
+            self.button(
+                &self.buttons.restore,
+                "Restore",
+                true,
+                false,
+                RootAction::RestoreVersion,
+                appearance,
+            ),
+        ];
+        self.dialog(
+            "Restore this version?",
+            vec![text],
+            buttons,
+            true,
+            appearance,
+        )
     }
 
     /// The webapp's `ReactionLimitReachedModal` (the end-user text).
@@ -1461,6 +1576,17 @@ impl TypedActionView for RootView {
             }
             RootAction::PauseSync => Session::as_ref(ctx).send(Command::PauseSync),
             RootAction::ResumeSync => Session::as_ref(ctx).send(Command::ResumeSync),
+            RootAction::RestoreVersion => {
+                if let Some(Dialog::RestoreVersion { post, version, .. }) = self.dialog.take() {
+                    Session::as_ref(ctx).send(Command::RestorePostVersion { post, version });
+                }
+                // Back to the edit history, which shows the restored version.
+                match &self.edit_history {
+                    Some(history) if history.as_ref(ctx).post().is_some() => ctx.focus(history),
+                    _ => self.focus_chat(ctx),
+                }
+                ctx.notify();
+            }
             RootAction::DeletePost => {
                 if let Some(Dialog::DeletePost { post, .. }) = self.dialog.take() {
                     Session::as_ref(ctx).send(Command::DeletePost(post));

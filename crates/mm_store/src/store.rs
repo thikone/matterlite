@@ -70,6 +70,9 @@ pub struct Store {
     /// Pinned posts as last loaded, newest first (the posts are in `posts`; a post pinned or
     /// unpinned since shows by its `is_pinned`).
     pub pinned: HashMap<ChannelId, Vec<PostId>>,
+    /// The earlier versions of my posts, newest first, as last loaded
+    /// (`GET /posts/{id}/edit_history`); `None` when loading failed.
+    pub edit_history: HashMap<PostId, Option<Vec<Post>>>,
     /// My memberships.
     pub channel_members: HashMap<ChannelId, ChannelMember>,
     pub posts: HashMap<PostId, Arc<Post>>,
@@ -246,6 +249,16 @@ impl Store {
 
     /// A channel's pinned posts. They are stored without joining the timeline's ranges (they
     /// may be far older than what is loaded).
+    /// A post's earlier versions (`None`: they couldn't be loaded).
+    pub fn set_edit_history(
+        &mut self,
+        post: PostId,
+        versions: Option<Vec<Post>>,
+    ) -> Vec<StoreDelta> {
+        self.edit_history.insert(post.clone(), versions);
+        vec![StoreDelta::EditHistoryChanged(post)]
+    }
+
     pub fn set_pinned(&mut self, channel: ChannelId, list: &PostList) -> Vec<StoreDelta> {
         let mut changed = Vec::new();
         for post in list.ordered() {
