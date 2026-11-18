@@ -64,17 +64,21 @@ pub enum PostAction {
 }
 
 /// What the emoji picker opens next to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PickerAnchor {
     /// React in the toolbar (the picker's right edge at the button's).
     Toolbar,
     /// The `+` chip after the reactions (left edges aligned).
     Chip,
+    /// "Add reaction" in the post menu: where the menu was, at the right-click point (relative
+    /// to the host's area) or under the More button.
+    Menu { at: Option<Vector2F> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PostMenuItem {
     Reply,
+    React,
     Follow,
     MarkUnread,
     Save,
@@ -147,6 +151,8 @@ impl<A: Action + Clone> PostMenuHost<A> {
         match anchor {
             PickerAnchor::Toolbar => self.react_position(),
             PickerAnchor::Chip => self.add_reaction_position(post),
+            PickerAnchor::Menu { at: Some(_) } => self.root_position(),
+            PickerAnchor::Menu { at: None } => self.more_position(),
         }
     }
 
@@ -172,12 +178,27 @@ impl<A: Action + Clone> PostMenuHost<A> {
             ChildAnchor, OffsetPositioning, PositionedElementAnchor, PositionedElementOffsetBounds,
         };
         let (button, child, offset) = match (anchor, up) {
-            (PickerAnchor::Toolbar, false) => (
+            // At the right-click point, as the menu was.
+            (PickerAnchor::Menu { at: Some(at) }, up) => {
+                return OffsetPositioning::offset_from_save_position_element(
+                    self.root_position(),
+                    at,
+                    PositionedElementOffsetBounds::WindowByPosition,
+                    PositionedElementAnchor::TopLeft,
+                    if up {
+                        ChildAnchor::BottomLeft
+                    } else {
+                        ChildAnchor::TopLeft
+                    },
+                );
+            }
+            // Under (or over) the More button, as the menu was.
+            (PickerAnchor::Toolbar | PickerAnchor::Menu { at: None }, false) => (
                 PositionedElementAnchor::BottomRight,
                 ChildAnchor::TopRight,
                 4.,
             ),
-            (PickerAnchor::Toolbar, true) => (
+            (PickerAnchor::Toolbar | PickerAnchor::Menu { at: None }, true) => (
                 PositionedElementAnchor::TopRight,
                 ChildAnchor::BottomRight,
                 -4.,
@@ -245,6 +266,10 @@ impl PostMenu {
         let mut first = Vec::new();
         if a.reply {
             first.push((PostMenuItem::Reply, "Reply"));
+        }
+        // As React in the toolbar, so the menu offers all the toolbar does.
+        if a.emoji_picker {
+            first.push((PostMenuItem::React, "Add reaction"));
         }
         if a.follow {
             let label = match (a.following, self.replies > 0) {

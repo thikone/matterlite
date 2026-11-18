@@ -2429,6 +2429,14 @@ impl ChannelView {
                         self.reply(&post, ctx);
                         None
                     }
+                    PostMenuItem::React => {
+                        // Where the menu was.
+                        let anchor = PickerAnchor::Menu { at: menu.at };
+                        self.picking = Some((post, anchor, menu.up));
+                        self.picker.update(ctx, |picker, ctx| picker.open(ctx));
+                        ctx.focus(&self.picker);
+                        None
+                    }
                     PostMenuItem::Delete => {
                         ctx.emit(ChannelEvent::ConfirmDelete {
                             post,

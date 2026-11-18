@@ -33,6 +33,7 @@ fn entries_follow_the_actions_in_the_webapp_order() {
         [
             vec![
                 "Reply",
+                "Add reaction",
                 "Follow thread",
                 "Mark as unread",
                 "Save",
@@ -52,6 +53,7 @@ fn entries_follow_the_actions_in_the_webapp_order() {
         labels(toggled, 0)[0],
         [
             "Reply",
+            "Add reaction",
             "Unfollow message",
             "Mark as unread",
             "Remove from saved",
@@ -71,4 +73,14 @@ fn empty_groups_are_left_out() {
         labels(archived, 0),
         [vec!["Save"], vec!["Copy link", "Copy text"]]
     );
+}
+
+#[test]
+fn add_reaction_follows_the_emoji_picker() {
+    let no_picker = PostActions {
+        reply: true,
+        react: true,
+        ..PostActions::default()
+    };
+    assert_eq!(labels(no_picker, 0), [vec!["Reply"]]);
 }
