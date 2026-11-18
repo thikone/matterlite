@@ -4,13 +4,16 @@ A native Rust desktop client for [Mattermost](https://mattermost.com) servers, f
 Windows x64, Linux x64 and macOS arm64. The UI is built on WarpUI, the GPU-rendered UI
 framework from the [Warp](https://github.com/warpdotdev/warp) terminal.
 
-Status: **M3, the first usable version**: login (with MFA) and stored accounts; chat tabs,
+Status: **M4, threads and reactions**: login (with MFA) and stored accounts; chat tabs,
 the Chats sidebar, the Ctrl/Cmd+K switcher; the channel view with Markdown, emoji and code
 highlighting, older history as you scroll, a composer with drafts and the typing indicator;
-the Channel tab (info, members, pinned) and the History pane with local search; Warp's
-themes and the five Mattermost themes, following the account's theme; a reconnect banner.
-Everything is cached locally, so it opens at once and works offline for reading. Threads,
-reactions, files and notifications come next (`docs/MatterLite.md` §18).
+post actions (edit, delete, save, pin, mark unread, copy) from a hover toolbar or the
+right-click menu; reactions with an emoji picker; reply threads in the right panel or as
+tabs; edit history; the Activity tab (threads, mentions, saved, drafts, scheduled); the
+Channel tab (info, members, pinned) and the History pane with local and server search;
+Warp's themes and the five Mattermost themes, following the account's theme; a reconnect
+banner. Everything is cached locally, so it opens at once and works offline for reading.
+Files and notifications come next (`docs/MatterLite.md` §18).
 
 ## Running
 
