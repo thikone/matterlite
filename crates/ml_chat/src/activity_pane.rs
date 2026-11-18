@@ -28,6 +28,7 @@ use warpui::{
 };
 
 use crate::chats_view::fade;
+use crate::clip_width::ClipWidth;
 use crate::message::{MessageRenderer, Palette, Target};
 use crate::session::{Session, SessionEvent};
 use crate::timeline::{self, ChatLookup, Clock};
@@ -205,7 +206,9 @@ impl ActivityPane {
             .finish();
             row.add_child(button);
         }
-        Container::new(row.finish())
+        // Clipped, not wider than the panel: the panel can be made narrower than the tabs
+        // (as the other tool panes can), and widening it shows them again.
+        Container::new(ClipWidth::new(row.finish()).finish())
             .with_horizontal_padding(PADDING - 8.)
             .with_border(Border::bottom(1.).with_border_fill(theme.outline()))
             .finish()

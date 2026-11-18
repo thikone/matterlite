@@ -10,6 +10,7 @@ mod channel_pane;
 mod channel_view;
 pub mod chats;
 mod chats_view;
+mod clip_width;
 pub mod composer;
 mod composer_view;
 mod edit_history;
