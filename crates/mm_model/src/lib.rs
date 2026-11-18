@@ -29,7 +29,7 @@ pub use channel::{
 pub use config::{ClientConfig, CollapsedThreads};
 pub use error::AppError;
 pub use ids::{CategoryId, ChannelId, EmojiId, FileId, PostId, TeamId, UserId, is_valid_id};
-pub use post::{Emoji, FileInfo, Post, PostList, PostMetadata, Reaction};
+pub use post::{Emoji, FileInfo, Post, PostList, PostMetadata, Reaction, ScheduledPost};
 pub use preference::Preference;
 pub use role::Role;
 pub use team::{Team, TeamMember, TeamUnread};

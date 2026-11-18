@@ -83,6 +83,11 @@ impl Active {
             .map(String::as_str)
     }
 
+    /// Every unsent draft: (channel, thread root or empty) and its text.
+    pub fn drafts(&self) -> impl Iterator<Item = (&(ChannelId, PostId), &String)> {
+        self.drafts.iter()
+    }
+
     /// Who is typing in a chat's composer (`root` empty) or a thread, oldest first.
     pub fn typing(&self, channel: &ChannelId, root: &PostId) -> Vec<UserId> {
         self.typing.users(channel, root)
@@ -121,6 +126,8 @@ pub enum SessionEvent {
     ImageReady(mm_sync::ImageKey),
     /// Someone started or stopped typing somewhere.
     TypingChanged,
+    /// A composer's draft was saved or cleared.
+    DraftsChanged,
     Error(String),
 }
 
@@ -192,7 +199,13 @@ impl Session {
 
     /// Saves the unsent text of a composer (empty: deletes it); the cache write is the
     /// engine's.
-    pub fn set_draft(&mut self, channel: &ChannelId, root: &PostId, message: String) {
+    pub fn set_draft(
+        &mut self,
+        channel: &ChannelId,
+        root: &PostId,
+        message: String,
+        ctx: &mut ModelContext<Self>,
+    ) {
         let Some(active) = self.active_mut() else {
             return;
         };
@@ -214,6 +227,7 @@ impl Session {
             root: root.clone(),
             message,
         });
+        ctx.emit(SessionEvent::DraftsChanged);
     }
 
     pub fn auth(&self) -> &Auth {

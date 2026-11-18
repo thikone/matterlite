@@ -502,3 +502,60 @@ fn the_threads_list_keeps_known_roots() {
     // A root not known yet is stored with the thread's count.
     assert_eq!(store.posts[&PostId::from("unknown")].reply_count, 1);
 }
+
+#[test]
+fn mention_search_keys_leave_out_channel_wide_ones() {
+    let store = Store::new(
+        serde_json::from_value(json!({
+            "id": ME, "username": "alice", "first_name": "Alice",
+            "notify_props": {"mention_keys": "deploy, @channel,,@alice", "first_name": "true",
+                             "channel": "true"}
+        }))
+        .unwrap(),
+    );
+    assert_eq!(store.mention_search_keys(), ["@alice", "deploy", "Alice"]);
+    // Without custom keys or the first name: the username alone.
+    let plain = Store::new(User {
+        id: ME.into(),
+        username: "alice".into(),
+        ..User::default()
+    });
+    assert_eq!(plain.mention_search_keys(), ["@alice"]);
+}
+
+#[test]
+fn post_lists_keep_the_server_order_and_newer_copies() {
+    let mut store = new_store("off");
+    let list: PostList = serde_json::from_value(json!({
+        "order": ["p2", "root1"],
+        "posts": {
+            "p2": {"id": "p2", "channel_id": "c1", "user_id": "bob", "create_at": 300},
+            "root1": {"id": "root1", "channel_id": "c1", "user_id": "bob", "create_at": 100,
+                      "update_at": 0, "message": "older copy"},
+        },
+        "next_post_id": "", "prev_post_id": ""
+    }))
+    .unwrap();
+    let deltas = store.set_post_list(true, &list);
+    assert!(deltas.contains(&StoreDelta::ActivityChanged));
+    assert_eq!(
+        store.mentions.as_deref(),
+        Some(&["p2".into(), "root1".into()][..])
+    );
+    assert!(store.saved.is_none());
+    assert!(store.posts.contains_key(&PostId::from("p2")));
+}
+
+#[test]
+fn scheduled_posts_need_the_setting_and_a_licence() {
+    let mut store = new_store("off");
+    assert!(!store.scheduled_posts_enabled());
+    store.set_config(
+        serde_json::from_value::<ClientConfig>(json!({"ScheduledPosts": "true"})).unwrap(),
+    );
+    assert!(!store.scheduled_posts_enabled());
+    store.set_license(
+        serde_json::from_value::<ClientConfig>(json!({"IsLicensed": "true"})).unwrap(),
+    );
+    assert!(store.scheduled_posts_enabled());
+}

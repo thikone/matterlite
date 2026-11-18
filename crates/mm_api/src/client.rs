@@ -7,9 +7,9 @@ use std::time::Duration;
 use mm_model::error::ids;
 use mm_model::{
     AppError, Channel, ChannelId, ChannelMember, ChannelStats, ClientConfig, Emoji, EmojiId,
-    OrderedSidebarCategories, Post, PostId, PostList, Preference, Reaction, Role, ServerVersion,
-    SessionToken, SidebarCategory, Status, Team, TeamId, TeamMember, TeamUnread, ThreadList, User,
-    UserId,
+    OrderedSidebarCategories, Post, PostId, PostList, Preference, Reaction, Role, ScheduledPost,
+    ServerVersion, SessionToken, SidebarCategory, Status, Team, TeamId, TeamMember, TeamUnread,
+    ThreadList, User, UserId,
 };
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{Method, RequestBuilder, Response, StatusCode};
@@ -722,6 +722,75 @@ impl Client {
             post_id.as_str(),
             "reactions",
             emoji_name,
+        ]))
+        .await
+    }
+
+    /// `POST /posts/search`: posts matching `terms` in all my teams (`is_or_search`: any
+    /// term), newest first; `time_zone_offset` in seconds east of UTC.
+    pub async fn search_posts(
+        &self,
+        terms: &str,
+        is_or_search: bool,
+        time_zone_offset: i32,
+        page: u32,
+        per_page: u32,
+    ) -> Result<PostList, ApiError> {
+        self.json(self.post(&["posts", "search"]).json(&json!({
+            "terms": terms,
+            "is_or_search": is_or_search,
+            "include_deleted_channels": true,
+            "time_zone_offset": time_zone_offset,
+            "page": page,
+            "per_page": per_page,
+        })))
+        .await
+    }
+
+    /// `GET /users/{id}/posts/flagged`: my saved posts, newest first.
+    pub async fn flagged_posts(
+        &self,
+        user_id: &UserId,
+        page: u32,
+        per_page: u32,
+    ) -> Result<PostList, ApiError> {
+        self.json(
+            self.get(&["users", user_id.as_str(), "posts", "flagged"])
+                .query(&[("page", page), ("per_page", per_page)]),
+        )
+        .await
+    }
+
+    /// `GET /posts/scheduled/team/{id}?includeDirectChannels=true`: my scheduled posts in the
+    /// team's channels and in DMs/GMs.
+    pub async fn scheduled_posts(&self, team_id: &TeamId) -> Result<Vec<ScheduledPost>, ApiError> {
+        let by_key: std::collections::HashMap<String, Vec<ScheduledPost>> = self
+            .json(
+                self.get(&["posts", "scheduled", "team", team_id.as_str()])
+                    .query(&[("includeDirectChannels", "true")]),
+            )
+            .await?;
+        Ok(by_key.into_values().flatten().collect())
+    }
+
+    /// `DELETE /posts/schedule/{id}`.
+    pub async fn delete_scheduled_post(&self, id: &str) -> Result<(), ApiError> {
+        self.empty(self.delete(&["posts", "schedule", id])).await
+    }
+
+    /// `PUT /users/{uid}/teams/{tid}/threads/read`: all followed threads of the team read.
+    pub async fn mark_all_threads_read(
+        &self,
+        user_id: &UserId,
+        team_id: &TeamId,
+    ) -> Result<(), ApiError> {
+        self.empty(self.put(&[
+            "users",
+            user_id.as_str(),
+            "teams",
+            team_id.as_str(),
+            "threads",
+            "read",
         ]))
         .await
     }

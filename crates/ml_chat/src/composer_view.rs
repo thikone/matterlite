@@ -30,7 +30,7 @@ use crate::chats_view::fade;
 use crate::composer::{
     self, EnterKey, EnterPrefs, OnEnter, TypingThrottle, length_error, max_post_size,
 };
-use crate::session::Session;
+use crate::session::{Session, SessionEvent};
 
 /// The composer grows with its text up to this height, then scrolls.
 const MAX_EDITOR_HEIGHT: f32 = 240.;
@@ -74,6 +74,12 @@ impl ComposerView {
         let options = editor_options(Appearance::as_ref(ctx));
         let editor = ctx.add_typed_action_view(|ctx| EditorView::new(options, ctx));
         ctx.subscribe_to_view(&editor, |me, _, event, ctx| me.on_editor_event(event, ctx));
+        // A draft deleted elsewhere (the Activity tab) empties its composer.
+        ctx.subscribe_to_model(&Session::handle(ctx), |me, _, event, ctx| {
+            if let SessionEvent::DraftsChanged = event {
+                me.on_drafts_changed(ctx);
+            }
+        });
         ctx.subscribe_to_model(&Appearance::handle(ctx), |me, _, _, ctx| {
             let appearance = Appearance::as_ref(ctx);
             let (font, size) = (appearance.ui_font_family(), appearance.ui_font_size() + 1.);
@@ -92,6 +98,27 @@ impl ComposerView {
             throttle: TypingThrottle::default(),
             edits: 0,
             unsaved: false,
+        }
+    }
+
+    fn on_drafts_changed(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(channel) = self.channel.clone() else {
+            return;
+        };
+        // An edit not saved yet is newer than the saved drafts.
+        if self.unsaved || self.editor.as_ref(ctx).is_empty(ctx) {
+            return;
+        }
+        let gone = Session::as_ref(ctx)
+            .active()
+            .is_some_and(|active| active.draft(&channel, &self.root).is_none());
+        if gone {
+            self.editor.update(ctx, |editor, ctx| {
+                editor.clear_buffer_and_reset_undo_stack(ctx)
+            });
+            self.sync_up_key(ctx);
+            self.error = None;
+            ctx.notify();
         }
     }
 
@@ -270,7 +297,9 @@ impl ComposerView {
             text.clear();
         }
         let root = self.root.clone();
-        Session::handle(ctx).update(ctx, |session, _| session.set_draft(&channel, &root, text));
+        Session::handle(ctx).update(ctx, |session, ctx| {
+            session.set_draft(&channel, &root, text, ctx)
+        });
     }
 
     fn on_enter(&mut self, key: EnterKey, ctx: &mut ViewContext<Self>) {
@@ -319,8 +348,8 @@ impl ComposerView {
         self.unsaved = false;
         self.edits += 1;
         let root = self.root.clone();
-        Session::handle(ctx).update(ctx, |session, _| {
-            session.set_draft(&channel, &root, String::new())
+        Session::handle(ctx).update(ctx, |session, ctx| {
+            session.set_draft(&channel, &root, String::new(), ctx)
         });
         self.throttle.reset();
         self.error = None;

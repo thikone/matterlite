@@ -310,6 +310,17 @@ impl Workspace {
         ctx.notify();
     }
 
+    /// A mention count or unread dot on a toolbelt button.
+    pub fn set_tool_badge(
+        &mut self,
+        tab: crate::ToolPanelTab,
+        badge: crate::TabBadge,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.tool_panel
+            .update(ctx, |panel, ctx| panel.set_badge(tab, badge, ctx));
+    }
+
     /// The view shown in the right panel (it draws its own header).
     pub fn set_right_panel(
         &mut self,

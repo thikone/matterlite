@@ -49,6 +49,8 @@ pub enum StoreDelta {
     ConfigChanged,
     LicenseChanged,
     EmojiChanged,
+    /// A list of the Activity tab (mentions, saved, scheduled) was loaded.
+    ActivityChanged,
     /// A post's edit history was loaded (or failed to load).
     EditHistoryChanged(PostId),
     /// A pending post was sent, failed or retried.

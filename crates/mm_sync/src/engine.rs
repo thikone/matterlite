@@ -28,6 +28,8 @@ use crate::{
     UI_STATE_PREFIX,
 };
 
+/// Posts per page of the Activity lists (the webapp asks for 20 mentions, 60 saved).
+const ACTIVITY_PAGE: u32 = 60;
 /// How long a resumed connection may take to be confirmed before the engine bootstraps anyway.
 const RESUME_WAIT: Duration = Duration::from_secs(10);
 /// Unconfirmed WebSocket connections in a row before the token is checked over REST (the
@@ -1036,6 +1038,42 @@ impl Engine {
                 }
             }
             Command::React { post, emoji, add } => self.react(post, emoji, add).await,
+            Command::LoadMentions => self.load_mentions().await,
+            Command::LoadSaved => {
+                let me = self.store.read().expect("store lock").me.clone();
+                self.limiter.acquire().await;
+                match self.client.flagged_posts(&me, 0, ACTIVITY_PAGE).await {
+                    Ok(list) => {
+                        self.fetch_missing_authors(&list, Priority::Interactive);
+                        let deltas = self
+                            .store
+                            .write()
+                            .expect("store lock")
+                            .set_post_list(false, &list);
+                        self.emit_changes(deltas).await;
+                    }
+                    Err(error) => self.request_failed("Loading saved messages", &error).await,
+                }
+            }
+            Command::LoadScheduled(team) => self.load_scheduled(team).await,
+            Command::DeleteScheduled { team, id } => {
+                self.limiter.acquire().await;
+                match self.client.delete_scheduled_post(&id).await {
+                    Ok(()) => self.load_scheduled(team).await,
+                    Err(error) => {
+                        self.request_failed("Deleting the scheduled message", &error)
+                            .await
+                    }
+                }
+            }
+            Command::MarkAllThreadsRead(team) => {
+                let me = self.store.read().expect("store lock").me.clone();
+                self.limiter.acquire().await;
+                if let Err(error) = self.client.mark_all_threads_read(&me, &team).await {
+                    self.request_failed("Marking the threads read", &error)
+                        .await;
+                }
+            }
             Command::LoadEditHistory(post) => {
                 self.limiter.acquire().await;
                 let versions = match self.client.edit_history(&post).await {
@@ -1235,6 +1273,64 @@ impl Engine {
             crate::auth::describe(error)
         )))
         .await;
+    }
+
+    /// The webapp's Recent mentions: my mention keys, quoted, any of them, in all my teams.
+    async fn load_mentions(&mut self) {
+        let (keys, offset) = {
+            let store = self.store.read().expect("store lock");
+            let zone = store
+                .users
+                .get(&store.me)
+                .map_or(mm_store::Zone::Local, |me| mm_store::Zone::of(me));
+            (store.mention_search_keys(), zone.offset_seconds(now_ms()))
+        };
+        let terms = keys
+            .iter()
+            .map(|key| format!("\"{key}\""))
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.limiter.acquire().await;
+        match self
+            .client
+            .search_posts(&terms, true, offset, 0, ACTIVITY_PAGE)
+            .await
+        {
+            Ok(list) => {
+                self.fetch_missing_authors(&list, Priority::Interactive);
+                let deltas = self
+                    .store
+                    .write()
+                    .expect("store lock")
+                    .set_post_list(true, &list);
+                self.emit_changes(deltas).await;
+            }
+            Err(error) => self.request_failed("Searching mentions", &error).await,
+        }
+    }
+
+    async fn load_scheduled(&mut self, team: TeamId) {
+        self.limiter.acquire().await;
+        match self.client.scheduled_posts(&team).await {
+            Ok(posts) => {
+                let deltas = self
+                    .store
+                    .write()
+                    .expect("store lock")
+                    .set_scheduled(team, posts);
+                self.emit_changes(deltas).await;
+            }
+            // Servers before scheduled posts (or with them off) answer 404/501: an empty list.
+            Err(error) => {
+                log::info!("scheduled posts of {team}: {error}");
+                let deltas = self
+                    .store
+                    .write()
+                    .expect("store lock")
+                    .set_scheduled(team, Vec::new());
+                self.emit_changes(deltas).await;
+            }
+        }
     }
 
     async fn react(&mut self, post: PostId, emoji: String, add: bool) {

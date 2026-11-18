@@ -416,3 +416,61 @@ async fn edit_history_and_restore_use_the_webapp_routes() {
         .unwrap();
     assert_eq!(restored.message, "first");
 }
+
+#[tokio::test]
+async fn activity_lists_use_the_webapp_routes() {
+    let (mock, client) = server().await;
+    let client = logged_in(client);
+    let empty = json!({"order": [], "posts": {}, "next_post_id": "", "prev_post_id": ""});
+    Mock::given(method("POST"))
+        .and(path("/api/v4/posts/search"))
+        .and(body_json(
+            json!({"terms": "\"@alice\"", "is_or_search": true,
+            "include_deleted_channels": true, "time_zone_offset": 3600, "page": 0,
+            "per_page": 20}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(empty.clone()))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/users/u1/posts/flagged"))
+        .and(query_param("per_page", "60"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(empty))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/posts/scheduled/team/t1"))
+        .and(query_param("includeDirectChannels", "true"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "t1": [{"id": "s1", "channel_id": "c1", "message": "later", "scheduled_at": 9}],
+            "directChannels": [{"id": "s2", "channel_id": "d1", "message": "dm"}],
+        })))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    for (verb, route) in [
+        ("DELETE", "/api/v4/posts/schedule/s1"),
+        ("PUT", "/api/v4/users/u1/teams/t1/threads/read"),
+    ] {
+        Mock::given(method(verb))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "OK"})))
+            .expect(1)
+            .mount(&mock)
+            .await;
+    }
+    let (user, team) = (UserId::from("u1"), TeamId::from("t1"));
+    client
+        .search_posts("\"@alice\"", true, 3600, 0, 20)
+        .await
+        .unwrap();
+    client.flagged_posts(&user, 0, 60).await.unwrap();
+    let mut scheduled = client.scheduled_posts(&team).await.unwrap();
+    scheduled.sort_by(|a, b| a.id.cmp(&b.id));
+    assert_eq!(scheduled.len(), 2);
+    assert_eq!(scheduled[0].message, "later");
+    client.delete_scheduled_post("s1").await.unwrap();
+    client.mark_all_threads_read(&user, &team).await.unwrap();
+}

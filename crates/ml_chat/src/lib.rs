@@ -4,6 +4,7 @@
 //! shell (`ml_workspace`): the signed-in [`Session`], the login screen and the window root.
 
 pub mod account_theme;
+mod activity_pane;
 mod channel_info;
 mod channel_pane;
 mod channel_view;

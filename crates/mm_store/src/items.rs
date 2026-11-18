@@ -200,6 +200,12 @@ impl Zone {
     }
 
     /// The wall-clock time in this zone.
+    /// Seconds east of UTC at `at_ms` (the search's `time_zone_offset`).
+    pub fn offset_seconds(self, at_ms: i64) -> i32 {
+        let utc = DateTime::<Utc>::from_timestamp_millis(at_ms).unwrap_or_default();
+        (self.local(at_ms) - utc.naive_utc()).num_seconds() as i32
+    }
+
     pub fn local(self, at_ms: i64) -> NaiveDateTime {
         let utc = DateTime::<Utc>::from_timestamp_millis(at_ms).unwrap_or_default();
         match self {

@@ -188,6 +188,19 @@ pub enum Command {
         emoji: String,
         add: bool,
     },
+    /// Searches my recent mentions (`Store::mentions`), as the webapp's Recent mentions.
+    LoadMentions,
+    /// Loads my saved posts (`Store::saved`).
+    LoadSaved,
+    /// Loads my scheduled posts of a team (`Store::scheduled`).
+    LoadScheduled(TeamId),
+    /// Deletes a scheduled post, then reloads the team's list.
+    DeleteScheduled {
+        team: TeamId,
+        id: String,
+    },
+    /// Marks all followed threads of a team read (CRT).
+    MarkAllThreadsRead(TeamId),
     /// Loads the earlier versions of my post (`Store::edit_history`).
     LoadEditHistory(PostId),
     /// Gives my post an earlier version's message; the response updates the store.

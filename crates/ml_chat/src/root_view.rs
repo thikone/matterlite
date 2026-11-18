@@ -30,6 +30,7 @@ use settings::Setting as _;
 use warp_core::ui::icons::Icon;
 
 use crate::account_theme::AccountThemeFollower;
+use crate::activity_pane::{ActivityEvent, ActivityPane};
 use crate::channel_pane::{ChannelPane, ChannelPaneEvent};
 use crate::channel_view::{ChannelEvent, ChannelView};
 use crate::chats::{ChannelIcon, Presence};
@@ -159,6 +160,7 @@ pub struct RootView {
     /// A post's edit history, shown in the right panel instead of the thread.
     edit_history: Option<ViewHandle<EditHistoryView>>,
     channel_pane: Option<ViewHandle<ChannelPane>>,
+    activity: Option<ViewHandle<ActivityPane>>,
     history: Option<ViewHandle<HistoryPane>>,
     switcher: Option<ViewHandle<SwitcherView>>,
     switcher_open: bool,
@@ -199,6 +201,7 @@ impl RootView {
                 me.restore_tabs(ctx);
                 me.drop_gone_tabs(ctx);
                 me.sync_tabs(ctx);
+                me.update_activity_badge(ctx);
             }
             SessionEvent::TypingChanged => me.sync_tabs(ctx),
             SessionEvent::Error(message) => me.show_error(message.clone(), ctx),
@@ -214,6 +217,14 @@ impl RootView {
                 if deltas.iter().any(affects_tabs) {
                     me.sync_tabs(ctx);
                 }
+                if deltas.iter().any(|delta| {
+                    matches!(
+                        delta,
+                        StoreDelta::ThreadCountsChanged(_) | StoreDelta::CrtChanged
+                    )
+                }) {
+                    me.update_activity_badge(ctx);
+                }
             }
             _ => {}
         });
@@ -225,6 +236,7 @@ impl RootView {
             channel: None,
             thread: None,
             edit_history: None,
+            activity: None,
             channel_pane: None,
             history: None,
             switcher: None,
@@ -329,6 +341,23 @@ impl RootView {
                 workspace.set_tool_pane(ToolPanelTab::Channel, Some(Box::new(pane)), ctx)
             });
             self.channel_pane = Some(channel_pane);
+            let activity = ctx.add_typed_action_view(ActivityPane::new);
+            ctx.subscribe_to_view(&activity, |me, _, event, ctx| match event {
+                ActivityEvent::Post(post) => me.open_post(post.clone(), ctx),
+                ActivityEvent::Thread(root) => me.open_thread(root.clone(), true, ctx),
+                ActivityEvent::Chat { channel, root } => {
+                    if root.is_empty() {
+                        me.open_chat(channel.clone(), ctx);
+                    } else {
+                        me.open_thread(root.clone(), true, ctx);
+                    }
+                }
+            });
+            let pane = ViewPane(activity.clone());
+            workspace.update(ctx, |workspace, ctx| {
+                workspace.set_tool_pane(ToolPanelTab::Activity, Some(Box::new(pane)), ctx)
+            });
+            self.activity = Some(activity);
             let history = ctx.add_typed_action_view(HistoryPane::new);
             ctx.subscribe_to_view(&history, |me, _, event, ctx| match event {
                 HistoryEvent::ShowPost(post) => me.show_post(post.clone(), ctx),
@@ -349,6 +378,10 @@ impl RootView {
                 let team = team.clone();
                 pane.update(ctx, |pane, ctx| pane.set_team(team, ctx));
             }
+            if let Some(pane) = &self.activity {
+                let team = team.clone();
+                pane.update(ctx, |pane, ctx| pane.set_team(team, ctx));
+            }
             AccountThemeFollower::handle(ctx)
                 .update(ctx, |follower, ctx| follower.set_team(team, ctx));
             ctx.focus(&workspace);
@@ -362,6 +395,7 @@ impl RootView {
             self.channel = None;
             self.thread = None;
             self.edit_history = None;
+            self.activity = None;
             self.channel_pane = None;
             self.history = None;
             self.switcher = None;
@@ -378,6 +412,11 @@ impl RootView {
                     let team = team.clone();
                     pane.update(ctx, |pane, ctx| pane.set_team(team, ctx));
                 }
+                if let Some(pane) = &self.activity {
+                    let team = team.clone();
+                    pane.update(ctx, |pane, ctx| pane.set_team(team, ctx));
+                }
+                self.update_activity_badge(ctx);
                 let team = team.clone();
                 AccountThemeFollower::handle(ctx)
                     .update(ctx, |follower, ctx| follower.set_team(team, ctx));
@@ -599,6 +638,56 @@ impl RootView {
         self.tabs.open(key);
         self.after_tabs_change(ctx);
         self.focus_chat(ctx);
+    }
+
+    /// Opens a post from the Activity tab: a reply under CRT in its thread, else its chat with
+    /// the post shown.
+    fn open_post(&mut self, post: mm_model::PostId, ctx: &mut ViewContext<Self>) {
+        let target = Session::as_ref(ctx).store().and_then(|store| {
+            let store = store.read().ok()?;
+            let known = store.posts.get(&post)?;
+            Some((
+                known.channel_id.clone(),
+                (!known.is_root() && store.crt_enabled()).then(|| known.root_id.clone()),
+            ))
+        });
+        match target {
+            Some((_, Some(root))) => self.open_thread(root, true, ctx),
+            Some((channel, None)) => {
+                self.open_chat(channel, ctx);
+                self.show_post(post, ctx);
+            }
+            None => {}
+        }
+    }
+
+    /// The Activity button's mark: the team's unread thread mentions, or a dot for unread
+    /// threads (CRT).
+    fn update_activity_badge(&mut self, ctx: &mut ViewContext<Self>) {
+        let (Some(workspace), Some(chats)) = (self.workspace.clone(), self.chats.clone()) else {
+            return;
+        };
+        let team = chats.as_ref(ctx).team().cloned();
+        let badge = Session::as_ref(ctx)
+            .store()
+            .and_then(|store| {
+                let store = store.read().ok()?;
+                if !store.crt_enabled() {
+                    return None;
+                }
+                let counts = store.thread_counts.get(&team?)?;
+                Some(if counts.mentions > 0 {
+                    TabBadge::Mentions(counts.mentions)
+                } else if counts.unread_threads > 0 {
+                    TabBadge::Dot
+                } else {
+                    TabBadge::None
+                })
+            })
+            .unwrap_or(TabBadge::None);
+        workspace.update(ctx, |workspace, ctx| {
+            workspace.set_tool_badge(ToolPanelTab::Activity, badge, ctx)
+        });
     }
 
     /// Shows a post in the open chat (from the Channel tab's Pinned list or History).

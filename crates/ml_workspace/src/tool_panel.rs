@@ -23,6 +23,7 @@ use warpui::{
 
 use crate::buttons::icon_button_with_color;
 use crate::search_bar::{SearchBarEvent, SearchBarOptions, SearchBarView, ToggleGroup, ToggleSpec};
+use crate::tab_bar::TabBadge;
 use crate::{PANEL_HEADER_HEIGHT, WorkspaceAction};
 
 const DEFAULT_WIDTH: f32 = 300.;
@@ -210,6 +211,8 @@ pub struct ToolPanel {
     panes: Vec<(ToolPanelTab, Box<dyn ToolPane>)>,
     search_bars: Vec<(ToolPanelTab, ViewHandle<SearchBarView>)>,
     button_mouse_states: Vec<(ToolPanelTab, MouseStateHandle)>,
+    /// Marks on toolbelt buttons (Activity: unread threads and mentions).
+    badges: Vec<(ToolPanelTab, TabBadge)>,
     close_mouse_state: MouseStateHandle,
     themes_mouse_state: MouseStateHandle,
     resizable_state: ResizableStateHandle,
@@ -237,10 +240,29 @@ impl ToolPanel {
             button_mouse_states: all::<ToolPanelTab>()
                 .map(|tab| (tab, MouseStateHandle::default()))
                 .collect(),
+            badges: Vec::new(),
             close_mouse_state: MouseStateHandle::default(),
             themes_mouse_state: MouseStateHandle::default(),
             resizable_state: resizable_state_handle(DEFAULT_WIDTH),
         }
+    }
+
+    /// A mention count or an unread dot on a toolbelt button.
+    pub fn set_badge(&mut self, tab: ToolPanelTab, badge: TabBadge, ctx: &mut ViewContext<Self>) {
+        let old = self
+            .badges
+            .iter()
+            .find(|(badge_tab, _)| *badge_tab == tab)
+            .map(|(_, badge)| *badge)
+            .unwrap_or(TabBadge::None);
+        if old == badge {
+            return;
+        }
+        self.badges.retain(|(badge_tab, _)| *badge_tab != tab);
+        if badge != TabBadge::None {
+            self.badges.push((tab, badge));
+        }
+        ctx.notify();
     }
 
     pub fn active_tab(&self) -> ToolPanelTab {
@@ -327,23 +349,77 @@ impl ToolPanel {
             padding: Some(Coords::uniform(4.)),
             ..styles
         };
-        icon_button_with_color(appearance, tab.icon(), active, mouse_state, icon_color)
-            .with_tooltip(move || tooltip)
-            .with_style(size(UiComponentStyles {
-                font_color: Some(icon_color.into_solid()),
-                ..Default::default()
-            }))
-            .with_active_styles(size(UiComponentStyles {
-                font_color: Some(icon_color.into_solid()),
-                background: Some(internal_colors::fg_overlay_3(theme).into()),
-                ..Default::default()
-            }))
-            .build()
-            .on_click(move |ctx, _, _| {
-                ctx.dispatch_typed_action(WorkspaceAction::ShowToolPanelTab(tab));
-            })
-            .with_cursor(Cursor::PointingHand)
-            .finish()
+        let badge = self
+            .badges
+            .iter()
+            .find(|(badge_tab, _)| *badge_tab == tab)
+            .map(|(_, badge)| *badge);
+        let button =
+            icon_button_with_color(appearance, tab.icon(), active, mouse_state, icon_color)
+                .with_tooltip(move || tooltip)
+                .with_style(size(UiComponentStyles {
+                    font_color: Some(icon_color.into_solid()),
+                    ..Default::default()
+                }))
+                .with_active_styles(size(UiComponentStyles {
+                    font_color: Some(icon_color.into_solid()),
+                    background: Some(internal_colors::fg_overlay_3(theme).into()),
+                    ..Default::default()
+                }))
+                .build()
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(WorkspaceAction::ShowToolPanelTab(tab));
+                })
+                .with_cursor(Cursor::PointingHand)
+                .finish();
+        let mark = match badge {
+            Some(TabBadge::Mentions(count)) => {
+                let chat = theme.chat();
+                let label = if count > 99 {
+                    "99+".to_owned()
+                } else {
+                    count.to_string()
+                };
+                Container::new(
+                    Text::new_inline(label, appearance.ui_font_family(), 9.)
+                        .with_color(chat.button_text)
+                        .with_style(
+                            warpui::fonts::Properties::default()
+                                .weight(warpui::fonts::Weight::Bold),
+                        )
+                        .finish(),
+                )
+                .with_horizontal_padding(3.)
+                .with_background_color(chat.button_bg)
+                .with_corner_radius(warpui::elements::CornerRadius::with_all(
+                    warpui::elements::Radius::Pixels(6.),
+                ))
+                .finish()
+            }
+            Some(TabBadge::Dot) => ConstrainedBox::new(
+                Container::new(warpui::elements::Empty::new().finish())
+                    .with_background_color(theme.chat().button_bg)
+                    .with_corner_radius(warpui::elements::CornerRadius::with_all(
+                        warpui::elements::Radius::Percentage(50.),
+                    ))
+                    .finish(),
+            )
+            .with_width(7.)
+            .with_height(7.)
+            .finish(),
+            _ => return button,
+        };
+        let mut stack = warpui::elements::Stack::new().with_child(button);
+        stack.add_positioned_child(
+            mark,
+            warpui::elements::OffsetPositioning::offset_from_parent(
+                pathfinder_geometry::vector::vec2f(3., -2.),
+                warpui::elements::ParentOffsetBounds::Unbounded,
+                warpui::elements::ParentAnchor::TopRight,
+                warpui::elements::ChildAnchor::TopRight,
+            ),
+        );
+        stack.finish()
     }
 
     fn render_themes_button(&self, appearance: &Appearance) -> Box<dyn Element> {

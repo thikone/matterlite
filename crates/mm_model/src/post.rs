@@ -105,6 +105,25 @@ impl PostList {
     }
 }
 
+/// A post waiting to be sent at a time (`server/public/model/scheduled_post.go`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScheduledPost {
+    pub id: String,
+    pub create_at: i64,
+    pub update_at: i64,
+    pub user_id: UserId,
+    pub channel_id: ChannelId,
+    pub root_id: PostId,
+    pub message: String,
+    #[serde(deserialize_with = "null_default")]
+    pub file_ids: Vec<FileId>,
+    pub scheduled_at: i64,
+    pub processed_at: i64,
+    /// Why sending failed (`unknown`, `channel_archived`, …); empty while waiting.
+    pub error_code: String,
+}
+
 /// An emoji reaction (`server/public/model/reaction.go`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

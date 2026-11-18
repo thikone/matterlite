@@ -70,6 +70,12 @@ pub struct Store {
     /// Pinned posts as last loaded, newest first (the posts are in `posts`; a post pinned or
     /// unpinned since shows by its `is_pinned`).
     pub pinned: HashMap<ChannelId, Vec<PostId>>,
+    /// My recent mentions (the search for my mention keys), newest first, as last loaded.
+    pub mentions: Option<Vec<PostId>>,
+    /// My saved posts, newest first, as last loaded.
+    pub saved: Option<Vec<PostId>>,
+    /// My scheduled posts by team (with DMs and GMs), as last loaded.
+    pub scheduled: HashMap<TeamId, Vec<mm_model::ScheduledPost>>,
     /// The earlier versions of my posts, newest first, as last loaded
     /// (`GET /posts/{id}/edit_history`); `None` when loading failed.
     pub edit_history: HashMap<PostId, Option<Vec<Post>>>,
@@ -249,6 +255,83 @@ impl Store {
 
     /// A channel's pinned posts. They are stored without joining the timeline's ranges (they
     /// may be far older than what is loaded).
+    /// Recent mentions or saved posts from the server: the posts are stored (newer copies
+    /// win), the list keeps their order.
+    pub fn set_post_list(&mut self, mentions: bool, list: &PostList) -> Vec<StoreDelta> {
+        let mut changed = Vec::new();
+        for post in list.ordered() {
+            if self
+                .posts
+                .get(&post.id)
+                .is_none_or(|old| old.update_at < post.update_at)
+            {
+                self.posts.insert(post.id.clone(), Arc::new(post.clone()));
+                changed.push(post.id.clone());
+            }
+        }
+        let ids = list.ordered().map(|post| post.id.clone()).collect();
+        if mentions {
+            self.mentions = Some(ids);
+        } else {
+            self.saved = Some(ids);
+        }
+        let mut deltas = vec![StoreDelta::ActivityChanged];
+        if !changed.is_empty() {
+            deltas.insert(0, StoreDelta::PostsChanged(changed));
+        }
+        deltas
+    }
+
+    pub fn set_scheduled(
+        &mut self,
+        team: TeamId,
+        mut posts: Vec<mm_model::ScheduledPost>,
+    ) -> Vec<StoreDelta> {
+        posts.sort_by_key(|post| post.scheduled_at);
+        self.scheduled.insert(team, posts);
+        vec![StoreDelta::ActivityChanged]
+    }
+
+    /// Scheduled posts are offered (`isScheduledPostsEnabled`): on in the config and the
+    /// server licensed (the API refuses them otherwise).
+    pub fn scheduled_posts_enabled(&self) -> bool {
+        self.config.get("ScheduledPosts") == Some("true")
+            && self.license.get("IsLicensed") == Some("true")
+    }
+
+    /// The keys the recent mentions search looks for (`mentionKeysForTypes` over
+    /// `getCurrentUserMentionKeys`): my custom keys, my first name if it counts, and
+    /// `@username`; never `@channel`, `@all` or `@here`.
+    pub fn mention_search_keys(&self) -> Vec<String> {
+        let Some(me) = self.users.get(&self.me) else {
+            return Vec::new();
+        };
+        let props = &me.notify_props;
+        let mut keys: Vec<String> = props
+            .get("mention_keys")
+            .map(|keys| {
+                keys.split(',')
+                    .map(str::trim)
+                    .filter(|key| !key.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if props.get("first_name").map(String::as_str) == Some("true") && !me.first_name.is_empty()
+        {
+            keys.push(me.first_name.clone());
+        }
+        let username = format!("@{}", me.username);
+        if !keys.contains(&username) {
+            keys.push(username.clone());
+        }
+        keys.retain(|key| !["@channel", "@all", "@here"].contains(&key.as_str()));
+        // The username first, as the webapp's "direct" keys come first.
+        keys.sort_by_key(|key| *key != username);
+        keys.dedup();
+        keys
+    }
+
     /// A post's earlier versions (`None`: they couldn't be loaded).
     pub fn set_edit_history(
         &mut self,
