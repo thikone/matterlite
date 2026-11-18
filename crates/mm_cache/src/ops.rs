@@ -298,6 +298,7 @@ pub fn ops_for(store: &Store, deltas: &[StoreDelta]) -> Vec<Op> {
             | StoreDelta::PendingChanged(_)
             | StoreDelta::EditHistoryChanged(_)
             | StoreDelta::ActivityChanged
+            | StoreDelta::ServerSearchChanged(_)
             | StoreDelta::Fetch(_) => {}
         }
     }

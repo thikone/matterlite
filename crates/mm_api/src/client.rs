@@ -726,17 +726,28 @@ impl Client {
         .await
     }
 
-    /// `POST /posts/search`: posts matching `terms` in all my teams (`is_or_search`: any
-    /// term), newest first; `time_zone_offset` in seconds east of UTC.
+    /// `GET /posts/{id}`.
+    pub async fn get_post(&self, post_id: &PostId) -> Result<Post, ApiError> {
+        self.json(self.get(&["posts", post_id.as_str()])).await
+    }
+
+    /// `POST /teams/{id}/posts/search` (or `/posts/search` in all my teams without a team):
+    /// posts matching `terms` (`is_or_search`: any term), newest first; `time_zone_offset` in
+    /// seconds east of UTC.
     pub async fn search_posts(
         &self,
+        team: Option<&TeamId>,
         terms: &str,
         is_or_search: bool,
         time_zone_offset: i32,
         page: u32,
         per_page: u32,
     ) -> Result<PostList, ApiError> {
-        self.json(self.post(&["posts", "search"]).json(&json!({
+        let route = match team {
+            Some(team) => self.post(&["teams", team.as_str(), "posts", "search"]),
+            None => self.post(&["posts", "search"]),
+        };
+        self.json(route.json(&json!({
             "terms": terms,
             "is_or_search": is_or_search,
             "include_deleted_channels": true,

@@ -199,3 +199,26 @@ fn the_queue_orders_by_priority_and_skips_duplicates() {
     assert_eq!(queue.pop().unwrap().1, Job::Newest("c".into()));
     assert_eq!(queue.pop_interactive(), None);
 }
+
+#[test]
+fn a_post_and_the_pages_around_it_make_one_page() {
+    let post = |id: &str, at: i64| json!({"id": id, "channel_id": "c", "create_at": at});
+    let list = |posts: &[(&str, i64)], prev: &str, next: &str| -> PostList {
+        serde_json::from_value(json!({
+            "order": posts.iter().rev().map(|(id, _)| *id).collect::<Vec<_>>(),
+            "posts": posts.iter().map(|(id, at)| (id.to_string(), post(id, *at)))
+                .collect::<serde_json::Map<_, _>>(),
+            "prev_post_id": prev, "next_post_id": next,
+        }))
+        .unwrap()
+    };
+    let target: Post = serde_json::from_value(post("t", 30)).unwrap();
+    let older = list(&[("a", 10), ("b", 20)], "z", "");
+    let newer = list(&[("c", 40), ("d", 50)], "", "e");
+    let around = around_list(target, older, newer);
+    assert_eq!(around.order, ["d", "c", "t", "b", "a"].map(PostId::from));
+    assert_eq!(around.posts.len(), 5);
+    // Older posts exist before "a" and newer ones after "d".
+    assert_eq!(around.prev_post_id, PostId::from("z"));
+    assert_eq!(around.next_post_id, PostId::from("e"));
+}

@@ -49,6 +49,8 @@ pub enum StoreDelta {
     ConfigChanged,
     LicenseChanged,
     EmojiChanged,
+    /// A History search of the chat ran on the server.
+    ServerSearchChanged(ChannelId),
     /// A list of the Activity tab (mentions, saved, scheduled) was loaded.
     ActivityChanged,
     /// A post's edit history was loaded (or failed to load).

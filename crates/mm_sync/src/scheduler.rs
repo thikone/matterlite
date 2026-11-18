@@ -7,7 +7,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use mm_api::{ApiError, Client, PostsQuery, ThreadsQuery};
-use mm_model::{ChannelId, Emoji, PostId, PostList, TeamId, ThreadList, User, UserId};
+use mm_model::{ChannelId, Emoji, Post, PostId, PostList, TeamId, ThreadList, User, UserId};
 use mm_store::{PageRequest, Store};
 
 use crate::History;
@@ -57,6 +57,11 @@ pub(crate) enum Job {
         channel: ChannelId,
         anchor: PostId,
     },
+    /// A post and the pages before and after it.
+    Around {
+        channel: ChannelId,
+        post: PostId,
+    },
     Thread(PostId),
     KnownUsers,
     Users(Vec<UserId>),
@@ -89,6 +94,7 @@ impl Job {
             Self::Open { channel, .. } => format!("open {channel}"),
             Self::Older { channel, .. } => format!("older {channel}"),
             Self::Newer { channel, .. } => format!("newer {channel}"),
+            Self::Around { channel, post } => format!("around {channel} {post}"),
             Self::Thread(root) => format!("thread {root}"),
             Self::KnownUsers => "known users".to_owned(),
             Self::Users(ids) => format!("users {}", ids.first().map_or("", |id| id.as_str())),
@@ -341,6 +347,24 @@ pub(crate) async fn run(context: Context, job: Job) -> Result<Outcome, ApiError>
             }
         }
         Job::Older { channel, anchor } => before(client, &context, channel, anchor, PAGE).await?,
+        Job::Around { channel, post } => {
+            let target = client.get_post(&post).await?;
+            let page = |before: bool| PostsQuery {
+                before: before.then(|| post.clone()),
+                after: (!before).then(|| post.clone()),
+                per_page: Some(AROUND_PAGE),
+                ..context.posts()
+            };
+            context.limiter.acquire().await;
+            let older = client.channel_posts(&channel, &page(true)).await?;
+            context.limiter.acquire().await;
+            let newer = client.channel_posts(&channel, &page(false)).await?;
+            Outcome::Page {
+                list: around_list(target, older, newer),
+                channel,
+                request: PageRequest::Around,
+            }
+        }
         Job::Backfill { channel, anchor } => {
             before(client, &context, channel, anchor, BACKFILL_PAGE).await?
         }
@@ -400,6 +424,29 @@ pub(crate) async fn run(context: Context, job: Job) -> Result<Outcome, ApiError>
             page,
         },
     })
+}
+
+/// Posts on each side of a post shown from elsewhere.
+const AROUND_PAGE: u32 = 30;
+
+/// One page of a post with the posts older and newer than it: newest first, from the older
+/// page's previous post to the newer page's next one.
+pub(crate) fn around_list(target: Post, older: PostList, newer: PostList) -> PostList {
+    let mut posts = older.posts;
+    posts.extend(newer.posts);
+    let mut order: Vec<PostId> = newer.order;
+    order.push(target.id.clone());
+    order.extend(older.order);
+    posts.insert(target.id.clone(), target);
+    order.sort_by_key(|id| std::cmp::Reverse(posts.get(id).map_or(0, |post| post.create_at)));
+    order.dedup();
+    PostList {
+        order,
+        posts,
+        next_post_id: newer.next_post_id,
+        prev_post_id: older.prev_post_id,
+        ..PostList::default()
+    }
 }
 
 async fn before(

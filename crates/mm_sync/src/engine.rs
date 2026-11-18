@@ -30,6 +30,8 @@ use crate::{
 
 /// Posts per page of the Activity lists (the webapp asks for 20 mentions, 60 saved).
 const ACTIVITY_PAGE: u32 = 60;
+/// Results of History's server search.
+const SEARCH_PAGE: u32 = 100;
 /// How long a resumed connection may take to be confirmed before the engine bootstraps anyway.
 const RESUME_WAIT: Duration = Duration::from_secs(10);
 /// Unconfirmed WebSocket connections in a row before the token is checked over REST (the
@@ -1038,6 +1040,10 @@ impl Engine {
                 }
             }
             Command::React { post, emoji, add } => self.react(post, emoji, add).await,
+            Command::LoadAround { channel, post } => {
+                self.enqueue(Priority::Interactive, Job::Around { channel, post })
+            }
+            Command::SearchChannel { channel, query } => self.search_channel(channel, query).await,
             Command::LoadMentions => self.load_mentions().await,
             Command::LoadSaved => {
                 let me = self.store.read().expect("store lock").me.clone();
@@ -1293,7 +1299,7 @@ impl Engine {
         self.limiter.acquire().await;
         match self
             .client
-            .search_posts(&terms, true, offset, 0, ACTIVITY_PAGE)
+            .search_posts(None, &terms, true, offset, 0, ACTIVITY_PAGE)
             .await
         {
             Ok(list) => {
@@ -1307,6 +1313,52 @@ impl Engine {
             }
             Err(error) => self.request_failed("Searching mentions", &error).await,
         }
+    }
+
+    /// History's server pass: the webapp's search with `in:` the chat, in its team.
+    async fn search_channel(&mut self, channel: ChannelId, query: String) {
+        let scope = {
+            let store = self.store.read().expect("store lock");
+            store.channels.get(&channel).and_then(|info| {
+                let team = Some(info.team_id.clone())
+                    .filter(|team| !team.is_empty())
+                    .or_else(|| store.team_members.keys().min().cloned())?;
+                let name = match info.channel_type {
+                    ChannelType::Direct => {
+                        let partner = mm_store::dm_partner(&info.name, &store.me)?;
+                        format!("@{}", store.users.get(&partner)?.username)
+                    }
+                    _ => info.name.clone(),
+                };
+                let zone = store
+                    .users
+                    .get(&store.me)
+                    .map_or(mm_store::Zone::Local, |me| mm_store::Zone::of(me));
+                Some((team, name, zone.offset_seconds(now_ms())))
+            })
+        };
+        let Some((team, name, offset)) = scope else {
+            return;
+        };
+        let terms = format!("{query} in:{name}");
+        self.limiter.acquire().await;
+        let result = self
+            .client
+            .search_posts(Some(&team), &terms, false, offset, 0, SEARCH_PAGE)
+            .await;
+        if let Ok(list) = &result {
+            self.fetch_missing_authors(list, Priority::Interactive);
+        }
+        let result = result.map_err(|error| {
+            log::warn!("server search in {channel}: {error}");
+            crate::auth::describe(&error)
+        });
+        let deltas = self
+            .store
+            .write()
+            .expect("store lock")
+            .set_server_search(channel, query, result);
+        self.emit_changes(deltas).await;
     }
 
     async fn load_scheduled(&mut self, team: TeamId) {

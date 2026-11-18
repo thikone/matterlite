@@ -690,8 +690,18 @@ impl RootView {
         });
     }
 
-    /// Shows a post in the open chat (from the Channel tab's Pinned list or History).
+    /// Shows a post in the open chat (from the Channel tab's Pinned list or History); a reply
+    /// under CRT shows in its thread.
     fn show_post(&mut self, post: mm_model::PostId, ctx: &mut ViewContext<Self>) {
+        let thread = Session::as_ref(ctx).store().and_then(|store| {
+            let store = store.read().ok()?;
+            let known = store.posts.get(&post)?;
+            (!known.is_root() && store.crt_enabled()).then(|| known.root_id.clone())
+        });
+        if let Some(root) = thread {
+            self.open_thread(root, true, ctx);
+            return;
+        }
         if let Some(view) = &self.channel {
             let shown = view.update(ctx, |view, ctx| view.show_post(&post, ctx));
             if !shown {

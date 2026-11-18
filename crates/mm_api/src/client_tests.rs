@@ -463,7 +463,7 @@ async fn activity_lists_use_the_webapp_routes() {
     }
     let (user, team) = (UserId::from("u1"), TeamId::from("t1"));
     client
-        .search_posts("\"@alice\"", true, 3600, 0, 20)
+        .search_posts(None, "\"@alice\"", true, 3600, 0, 20)
         .await
         .unwrap();
     client.flagged_posts(&user, 0, 60).await.unwrap();
@@ -473,4 +473,37 @@ async fn activity_lists_use_the_webapp_routes() {
     assert_eq!(scheduled[0].message, "later");
     client.delete_scheduled_post("s1").await.unwrap();
     client.mark_all_threads_read(&user, &team).await.unwrap();
+}
+
+#[tokio::test]
+async fn channel_search_and_single_posts_use_the_webapp_routes() {
+    let (mock, client) = server().await;
+    let client = logged_in(client);
+    Mock::given(method("POST"))
+        .and(path("/api/v4/teams/t1/posts/search"))
+        .and(body_json(
+            json!({"terms": "deploy in:dev", "is_or_search": false,
+            "include_deleted_channels": true, "time_zone_offset": 0, "page": 0,
+            "per_page": 100}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"order": [], "posts": {}, "next_post_id": "", "prev_post_id": ""}),
+        ))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v4/posts/p1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "p1"})))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    client
+        .search_posts(Some(&TeamId::from("t1")), "deploy in:dev", false, 0, 0, 100)
+        .await
+        .unwrap();
+    assert_eq!(
+        client.get_post(&"p1".into()).await.unwrap().id,
+        PostId::from("p1")
+    );
 }

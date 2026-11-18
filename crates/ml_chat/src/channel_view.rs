@@ -288,6 +288,8 @@ pub struct ChannelView {
     /// A post shown from elsewhere (History, Pinned), highlighted for a moment.
     flash: Option<PostId>,
     flashes: u64,
+    /// A post to show once it is loaded (`LoadAround` was asked for).
+    pending_show: Option<PostId>,
     /// The next focus of this view stays on the timeline (a click in it) instead of moving
     /// on to the composer.
     focus_timeline: bool,
@@ -434,6 +436,7 @@ impl ChannelView {
             filter: None,
             flash: None,
             flashes: 0,
+            pending_show: None,
             focus_timeline: false,
             hover,
             toolbar,
@@ -483,8 +486,25 @@ impl ChannelView {
     }
 
     /// Scrolls the open chat to a post and highlights it for a moment (the webapp's permalink
-    /// view). False when the post isn't among the loaded rows.
+    /// view). A post that isn't loaded is fetched with the posts around it and shown then;
+    /// false when it can't be (no chat, or a thread).
     pub fn show_post(&mut self, post: &PostId, ctx: &mut ViewContext<Self>) -> bool {
+        if self.try_show(post, ctx) {
+            self.pending_show = None;
+            return true;
+        }
+        let Some(ChatKey::Channel(channel)) = self.key.clone() else {
+            return false;
+        };
+        self.pending_show = Some(post.clone());
+        Session::as_ref(ctx).send(Command::LoadAround {
+            channel,
+            post: post.clone(),
+        });
+        true
+    }
+
+    fn try_show(&mut self, post: &PostId, ctx: &mut ViewContext<Self>) -> bool {
         let key = timeline::RowKey::Post(post.clone());
         let found = self
             .shared
@@ -572,6 +592,7 @@ impl ChannelView {
         self.editing = None;
         self.menu = None;
         self.picking = None;
+        self.pending_show = None;
         self.following = None;
         self.thread_read = None;
         self.lookup_dirty = true;
@@ -976,6 +997,11 @@ impl ChannelView {
             posts: self.posts,
         });
         self.load_if_near_an_end(ctx);
+        if let Some(post) = self.pending_show.clone()
+            && self.try_show(&post, ctx)
+        {
+            self.pending_show = None;
+        }
         ctx.notify();
     }
 

@@ -35,6 +35,8 @@ pub enum PageRequest {
     After(PostId),
     /// The window around the first unread post (`/posts/unread`).
     AroundUnread,
+    /// A post with the pages before and after it (showing a post not loaded yet).
+    Around,
     /// `since=<ms>`: everything created or changed since then. `complete` is false when the
     /// reply hit the server's cap of 1000 posts (MatterLite.md §8.7), so the posts can't be
     /// assumed contiguous with what's loaded.
@@ -70,6 +72,9 @@ pub struct Store {
     /// Pinned posts as last loaded, newest first (the posts are in `posts`; a post pinned or
     /// unpinned since shows by its `is_pinned`).
     pub pinned: HashMap<ChannelId, Vec<PostId>>,
+    /// The server's matches for a chat's History search, by chat and query (newest first);
+    /// `Err` with why the search failed.
+    pub server_search: HashMap<(ChannelId, String), Result<Vec<PostId>, String>>,
     /// My recent mentions (the search for my mention keys), newest first, as last loaded.
     pub mentions: Option<Vec<PostId>>,
     /// My saved posts, newest first, as last loaded.
@@ -282,6 +287,43 @@ impl Store {
         deltas
     }
 
+    /// The server's matches of a History search (only the chat's posts are kept; their posts
+    /// are stored, newer copies winning). Earlier queries of the chat are forgotten.
+    pub fn set_server_search(
+        &mut self,
+        channel: ChannelId,
+        query: String,
+        result: Result<PostList, String>,
+    ) -> Vec<StoreDelta> {
+        let mut deltas = Vec::new();
+        let result = result.map(|list| {
+            let mut changed = Vec::new();
+            let mut ids = Vec::new();
+            for post in list
+                .ordered()
+                .filter(|post| post.channel_id == channel && !post.is_deleted())
+            {
+                ids.push(post.id.clone());
+                if self
+                    .posts
+                    .get(&post.id)
+                    .is_none_or(|old| old.update_at < post.update_at)
+                {
+                    self.posts.insert(post.id.clone(), Arc::new(post.clone()));
+                    changed.push(post.id.clone());
+                }
+            }
+            if !changed.is_empty() {
+                deltas.push(StoreDelta::PostsChanged(changed));
+            }
+            ids
+        });
+        self.server_search.retain(|(known, _), _| *known != channel);
+        self.server_search.insert((channel.clone(), query), result);
+        deltas.push(StoreDelta::ServerSearchChanged(channel));
+        deltas
+    }
+
     pub fn set_scheduled(
         &mut self,
         team: TeamId,
@@ -475,7 +517,8 @@ impl Store {
             PageRequest::Newest
             | PageRequest::Before(_)
             | PageRequest::After(_)
-            | PageRequest::AroundUnread => {
+            | PageRequest::AroundUnread
+            | PageRequest::Around => {
                 timeline.insert_page(Page {
                     keys,
                     reaches_newest: list.next_post_id.is_empty()

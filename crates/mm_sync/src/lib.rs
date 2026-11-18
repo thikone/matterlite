@@ -188,6 +188,18 @@ pub enum Command {
         emoji: String,
         add: bool,
     },
+    /// Loads a post of a chat with the posts around it, so the chat can show it.
+    LoadAround {
+        channel: ChannelId,
+        post: PostId,
+    },
+    /// Searches a chat's messages on the server (History's "Search older on server"):
+    /// `{query} in:{channel}` (`in:@user` for a DM) in the chat's team
+    /// (`Store::server_search`).
+    SearchChannel {
+        channel: ChannelId,
+        query: String,
+    },
     /// Searches my recent mentions (`Store::mentions`), as the webapp's Recent mentions.
     LoadMentions,
     /// Loads my saved posts (`Store::saved`).

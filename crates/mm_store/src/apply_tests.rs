@@ -559,3 +559,26 @@ fn scheduled_posts_need_the_setting_and_a_licence() {
     );
     assert!(store.scheduled_posts_enabled());
 }
+
+#[test]
+fn server_search_keeps_the_chats_matches_of_the_last_query() {
+    let mut store = new_store("off");
+    let list: PostList = serde_json::from_value(json!({
+        "order": ["old", "other"],
+        "posts": {
+            "old": {"id": "old", "channel_id": "c1", "user_id": "bob", "create_at": 5},
+            "other": {"id": "other", "channel_id": "c2", "user_id": "bob", "create_at": 6},
+        },
+        "next_post_id": "", "prev_post_id": ""
+    }))
+    .unwrap();
+    let deltas = store.set_server_search("c1".into(), "deploy".into(), Ok(list));
+    assert!(deltas.contains(&StoreDelta::ServerSearchChanged("c1".into())));
+    let key = (ChannelId::from("c1"), "deploy".to_owned());
+    assert_eq!(store.server_search[&key], Ok(vec![PostId::from("old")]));
+    assert!(store.posts.contains_key(&PostId::from("old")));
+    // A new query of the chat replaces it.
+    store.set_server_search("c1".into(), "ship".into(), Err("offline".into()));
+    assert!(!store.server_search.contains_key(&key));
+    assert_eq!(store.server_search.len(), 1);
+}

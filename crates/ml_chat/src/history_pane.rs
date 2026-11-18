@@ -9,6 +9,9 @@
 //! case-sensitive ones by scanning. Days with matches open and show their count, the others
 //! hide. A click (or Enter on the selection) shows the message in the chat; "Filter the chat"
 //! makes the chat show only the matches. The footer says what part of the history is here.
+//! "Search older on server" (or Enter with no local match while older history isn't here)
+//! runs the query on the server, in the chat; its matches join their days, marked "server".
+//! Regex and case-sensitive queries can't (the server's search is word-based).
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -75,6 +78,20 @@ pub enum HistoryAction {
     ToggleDay(NaiveDate),
     Show(PostId),
     LoadOlder,
+    SearchServer,
+}
+
+/// Where the server pass of a query stands.
+#[derive(Clone, Debug, PartialEq)]
+enum Server {
+    /// "Search older on server".
+    Offer,
+    Searching,
+    /// Matches found on the server (also those already here).
+    Found(usize),
+    Failed(String),
+    /// Regex or case-sensitive matching.
+    Unavailable,
 }
 
 #[derive(Clone, Debug)]
@@ -90,6 +107,7 @@ enum Line {
     Post(Box<PostLine>),
     LoadOlder,
     Note(String),
+    Server(Server),
 }
 
 #[derive(Clone, Debug)]
@@ -101,6 +119,8 @@ struct PostLine {
     files: usize,
     pinned: bool,
     system: bool,
+    /// Found by the server search, not in the loaded history.
+    from_server: bool,
 }
 
 pub struct HistoryPane {
@@ -117,6 +137,8 @@ pub struct HistoryPane {
     excerpts: RefCell<HashMap<PostId, (i64, String)>>,
     reader: Option<SqliteConnection>,
     sent_filter: Option<ChatFilter>,
+    /// The (chat, query) whose server search is running.
+    searching: Option<(ChannelId, String)>,
     list_state: UniformListState,
     scroll_state: ScrollStateHandle,
     mouse_states: Vec<MouseStateHandle>,
@@ -160,9 +182,18 @@ impl HistoryPane {
             }
             SearchBarEvent::ToggleChanged { .. } => me.refresh(ctx),
             SearchBarEvent::Submit => {
-                let target = me.selected.clone().or_else(|| me.first_post());
-                if let Some(post) = target {
-                    ctx.emit(HistoryEvent::ShowPost(post));
+                match me.selected.clone().or_else(|| me.first_post()) {
+                    Some(post) => ctx.emit(HistoryEvent::ShowPost(post)),
+                    // Nothing here: ask the server, when older history isn't here.
+                    None if me
+                        .lines
+                        .iter()
+                        .any(|line| matches!(line, Line::Server(Server::Offer)))
+                        && me.lines.iter().any(|line| matches!(line, Line::LoadOlder)) =>
+                    {
+                        me.handle_action(&HistoryAction::SearchServer, ctx)
+                    }
+                    None => {}
                 }
             }
             SearchBarEvent::Navigate(NavigationKey::Up) => me.step(-1, ctx),
@@ -191,6 +222,7 @@ impl HistoryPane {
             excerpts: RefCell::default(),
             reader: None,
             sent_filter: None,
+            searching: None,
             list_state: UniformListState::new(),
             scroll_state: ScrollStateHandle::default(),
             mouse_states: Vec::new(),
@@ -216,9 +248,9 @@ impl HistoryPane {
 
     fn affected_by(&self, delta: &StoreDelta) -> bool {
         match delta {
-            StoreDelta::TimelineChanged(channel) | StoreDelta::ChannelChanged(channel) => {
-                self.channel.as_ref() == Some(channel)
-            }
+            StoreDelta::TimelineChanged(channel)
+            | StoreDelta::ChannelChanged(channel)
+            | StoreDelta::ServerSearchChanged(channel) => self.channel.as_ref() == Some(channel),
             StoreDelta::PostsChanged(_)
             | StoreDelta::PostsRemoved(_)
             | StoreDelta::UserChanged(_)
@@ -330,11 +362,50 @@ impl HistoryPane {
         let search = self.search.as_ref(ctx);
         let matcher = search.matcher(ctx);
         let query = search.query(ctx);
-        let posts = history::messages(&store, &channel);
+        let mut posts = history::messages(&store, &channel);
         self.total = posts.len();
         self.matches = matcher
             .as_ref()
             .map(|matcher| Arc::new(self.find(&store, &channel, &posts, matcher, &query, dir)));
+        // The server pass: its matches join the local ones (and their days).
+        let query_key = (channel.clone(), query.trim().to_owned());
+        let plain = matches!(matcher, Some(Matcher::LiteralInsensitive(_)));
+        let mut from_server: HashSet<PostId> = HashSet::new();
+        let server = match (&matcher, store.server_search.get(&query_key)) {
+            (None, _) => None,
+            (Some(_), _) if !plain => Some(Server::Unavailable),
+            (Some(_), Some(Ok(ids))) => {
+                if self.searching.as_ref() == Some(&query_key) {
+                    self.searching = None;
+                }
+                let local: HashSet<PostId> = posts.iter().map(|post| post.id.clone()).collect();
+                for id in ids {
+                    if let Some(post) = store.posts.get(id) {
+                        if !local.contains(id) {
+                            from_server.insert(id.clone());
+                            posts.push(post.clone());
+                        }
+                        if let Some(matches) = &mut self.matches {
+                            Arc::make_mut(matches).insert(id.clone());
+                        }
+                    }
+                }
+                Some(Server::Found(ids.len()))
+            }
+            (Some(_), Some(Err(error))) => {
+                if self.searching.as_ref() == Some(&query_key) {
+                    self.searching = None;
+                }
+                Some(Server::Failed(error.clone()))
+            }
+            (Some(_), None) if self.searching.as_ref() == Some(&query_key) => {
+                Some(Server::Searching)
+            }
+            (Some(_), None) => Some(Server::Offer),
+        };
+        if !from_server.is_empty() {
+            posts.sort_by_key(|post| std::cmp::Reverse(post.create_at));
+        }
         let clock = Clock::of(&store);
         let today = clock.today(now_ms());
         let days = history::days(&posts, &clock, today);
@@ -393,6 +464,7 @@ impl HistoryPane {
                         .map_or(0, |metadata| metadata.files.len()),
                     pinned: post.is_pinned,
                     system: post.is_system(),
+                    from_server: from_server.contains(&post.id),
                 })));
             }
         }
@@ -403,6 +475,9 @@ impl HistoryPane {
                 (None, None) => "Loading…".to_owned(),
                 (None, Some(_)) => "No messages yet.".to_owned(),
             }));
+        }
+        if let Some(server) = server {
+            lines.push(Line::Server(server));
         }
         if timeline.is_some_and(|timeline| {
             !timeline.is_known_empty()
@@ -604,6 +679,22 @@ fn render_line(
                             .finish(),
                     );
                 }
+                if post.from_server {
+                    row.add_child(
+                        Container::new(
+                            Text::new_inline("server", font, size - 2.)
+                                .with_color(palette.link)
+                                .finish(),
+                        )
+                        .with_margin_left(6.)
+                        .with_horizontal_padding(4.)
+                        .with_background_color(fade(palette.link, 0.1))
+                        .with_corner_radius(warpui::elements::CornerRadius::with_all(
+                            warpui::elements::Radius::Pixels(3.),
+                        ))
+                        .finish(),
+                    );
+                }
                 let mut container = Container::new(row.finish())
                     .with_padding_left(24.)
                     .with_padding_right(12.)
@@ -635,6 +726,42 @@ fn render_line(
         .with_cursor(Cursor::PointingHand)
         .on_click(|ctx, _, _| ctx.dispatch_typed_action(HistoryAction::LoadOlder))
         .finish(),
+        Line::Server(Server::Offer) => Hoverable::new(mouse_state, {
+            let palette = palette.clone();
+            move |_| {
+                Container::new(
+                    Text::new_inline("Search older on server", font, size)
+                        .with_color(palette.link)
+                        .finish(),
+                )
+                .with_horizontal_padding(12.)
+                .with_vertical_padding(4.)
+                .finish()
+            }
+        })
+        .with_cursor(Cursor::PointingHand)
+        .on_click(|ctx, _, _| ctx.dispatch_typed_action(HistoryAction::SearchServer))
+        .finish(),
+        Line::Server(server) => {
+            let note = match server {
+                Server::Searching => "Searching the server…".to_owned(),
+                Server::Found(0) => "Nothing more on the server.".to_owned(),
+                Server::Found(1) => "1 match on the server.".to_owned(),
+                Server::Found(count) => format!("{count} matches on the server."),
+                Server::Failed(error) => format!("Server search failed: {error}"),
+                Server::Unavailable => "Regex and case-sensitive searches stay local.".to_owned(),
+                Server::Offer => String::new(),
+            };
+            Container::new(
+                Text::new_inline(note, font, size)
+                    .with_color(palette.muted)
+                    .with_clip(ClipConfig::ellipsis())
+                    .finish(),
+            )
+            .with_horizontal_padding(12.)
+            .with_vertical_padding(4.)
+            .finish()
+        }
         Line::Note(note) => Container::new(
             Text::new_inline(note.clone(), font, size)
                 .with_color(palette.muted)
@@ -747,6 +874,15 @@ impl TypedActionView for HistoryPane {
                 ctx.notify();
             }
             HistoryAction::LoadOlder => Session::as_ref(ctx).send(Command::LoadOlder(channel)),
+            HistoryAction::SearchServer => {
+                let query = self.search.as_ref(ctx).query(ctx).trim().to_owned();
+                if query.is_empty() {
+                    return;
+                }
+                self.searching = Some((channel.clone(), query.clone()));
+                Session::as_ref(ctx).send(Command::SearchChannel { channel, query });
+                self.refresh(ctx);
+            }
         }
     }
 }
