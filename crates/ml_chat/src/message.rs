@@ -10,16 +10,17 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
+use crate::table::{MarkdownTable, TableCell};
 use mm_render::{
-    Alignment, Block, CodeBlock, EmojiRef, Highlight as Syntax, MessageDoc, Span, SpanKind, Table,
+    Block, CodeBlock, EmojiRef, Highlight as Syntax, MessageDoc, Span, SpanKind, Table,
 };
 use warpui::Element;
 use warpui::assets::asset_cache::AssetSource;
 use warpui::color::ColorU;
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Highlight,
-    HighlightedRange, Image, MainAxisSize, ParentElement, PartialClickableElement as _, Radius,
-    Rect, Shrinkable, Text, Wrap,
+    HighlightedRange, Image, ParentElement, PartialClickableElement as _, Radius, Rect, Shrinkable,
+    Text, Wrap,
 };
 use warpui::fonts::{FamilyId, Properties, Style as FontStyle, Weight};
 use warpui::image_cache::CacheOption;
@@ -242,40 +243,22 @@ impl MessageRenderer<'_> {
         .finish()
     }
 
+    /// A table with its columns aligned across rows (`crate::table`).
     fn table(&self, table: &Table) -> Box<dyn Element> {
         let palette = self.palette;
-        let row = |cells: &[Vec<Span>], header: bool| {
-            let mut row = Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-            for (column, cell) in cells.iter().enumerate() {
-                let alignment = table.alignments.get(column).copied().unwrap_or_default();
-                let content = self.inline(cell, palette.size, header);
-                let content = match alignment {
-                    Alignment::Center => warpui::elements::Align::new(content).finish(),
-                    Alignment::Right => warpui::elements::Align::new(content).right().finish(),
-                    Alignment::Left | Alignment::None => content,
-                };
-                row.add_child(
-                    Shrinkable::new(
-                        1.,
-                        Container::new(content)
-                            .with_horizontal_padding(8.)
-                            .with_vertical_padding(4.)
-                            .with_border(Border::all(1.).with_border_fill(palette.border))
-                            .finish(),
-                    )
-                    .finish(),
-                );
-            }
-            row.finish()
+        let row = |cells: &[Vec<Span>], header: bool| -> Vec<TableCell> {
+            cells
+                .iter()
+                .enumerate()
+                .map(|(column, cell)| TableCell {
+                    content: self.inline(cell, palette.size, header),
+                    alignment: table.alignments.get(column).copied().unwrap_or_default(),
+                })
+                .collect()
         };
-        let mut column = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-        column.add_child(row(&table.header, true));
-        for cells in &table.rows {
-            column.add_child(row(cells, false));
-        }
-        column.finish()
+        let mut rows = vec![row(&table.header, true)];
+        rows.extend(table.rows.iter().map(|cells| row(cells, false)));
+        MarkdownTable::new(rows, palette.border).finish()
     }
 
     fn jumbo(&self, spans: &[Span]) -> Box<dyn Element> {

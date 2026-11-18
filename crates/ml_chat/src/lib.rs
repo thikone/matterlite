@@ -25,6 +25,7 @@ mod root_view;
 pub mod session;
 pub mod settings;
 mod switcher_view;
+mod table;
 pub mod tabs;
 pub mod timeline;
 mod timeline_list;
