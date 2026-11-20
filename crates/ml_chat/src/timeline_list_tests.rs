@@ -117,6 +117,48 @@ fn stays_at_the_bottom_and_keeps_its_place_when_older_rows_arrive() {
 }
 
 #[test]
+fn a_page_loaded_at_the_top_goes_above_the_screen() {
+    App::test((), |mut app| async move {
+        let app = &mut app;
+        let (state, _viewports) = TimelineState::new();
+        let day = |d: u32| RowKey::Date(chrono::NaiveDate::from_ymd_opt(2026, 1, d).unwrap());
+        let page = |hole: bool, posts: std::ops::Range<usize>, d: u32| {
+            let mut rows = Vec::new();
+            if hole {
+                rows.push((RowKey::Hole(None), 0));
+            }
+            rows.push((day(d), 0));
+            rows.extend(keys(posts));
+            rows
+        };
+        state.set_rows(page(true, 100..120, 2));
+        let (window_id, _view) = app.add_window(WindowStyle::NotStealFocus, {
+            let state = state.clone();
+            move |_| ListView { state }
+        });
+        layout(app, window_id, &state);
+        // Scrolled to the top: the "load older" hole and the date are on screen.
+        state.0.borrow_mut().scroll_by(10_000.);
+        assert_eq!(layout(app, window_id, &state).first, 0);
+        assert_eq!(
+            state.anchor(),
+            Anchor::Row {
+                key: key(100),
+                offset: 2. * ROW
+            }
+        );
+
+        // The older page arrives: it goes above what was on screen, so the hole is out of
+        // view and asks for nothing more until the user scrolls up again.
+        let mut rows = page(true, 80..100, 1);
+        rows.extend(page(false, 100..120, 2));
+        state.set_rows(rows);
+        let viewport = layout(app, window_id, &state);
+        assert_eq!(viewport.first, 21);
+    });
+}
+
+#[test]
 fn clamps_at_both_ends() {
     App::test((), |mut app| async move {
         let app = &mut app;

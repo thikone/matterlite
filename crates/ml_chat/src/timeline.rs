@@ -69,6 +69,17 @@ pub enum RowKey {
     ReplyCount,
 }
 
+impl RowKey {
+    /// A post's row: rows loaded later go above or below it, never between it and the row
+    /// above it, so the list anchors on it. A hole (often the top row while older posts load),
+    /// a date or the start can get rows right below them: anchored on the "load older" hole,
+    /// each page went in under it, the hole stayed in view and asked for the next page, to the
+    /// start of the history.
+    pub fn holds_place(&self) -> bool {
+        matches!(self, Self::Post(_) | Self::Activity(_))
+    }
+}
+
 impl Row {
     pub fn key(&self, next: Option<&Row>) -> RowKey {
         match self {

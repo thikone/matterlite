@@ -355,8 +355,12 @@ impl Element for TimelineList {
                 placed.insert(0, (index, y));
             }
             inner.anchor = Anchor::Bottom;
-        } else if let Some(&(index, top)) = placed.first() {
-            // Anchor at the first visible row, so rows loaded above it don't move it.
+        } else if let Some(&(index, top)) = placed
+            .iter()
+            .find(|(index, _)| inner.rows[*index].0.holds_place())
+            .or(placed.first())
+        {
+            // Anchor at the first visible post, so rows loaded above it don't move it.
             inner.anchor = Anchor::Row {
                 key: inner.rows[index].0.clone(),
                 offset: top,
